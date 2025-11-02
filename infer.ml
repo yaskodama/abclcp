@@ -6,6 +6,14 @@ open Ast
 (* ========================================= *)
 (* 名前に対応する全スキームを取得する関数   *)
 (* ========================================= *)
+let set_var_scheme (env : (string, scheme list) Hashtbl.t) (x:string) (sch:scheme) : unit =
+  Hashtbl.replace env x [sch]
+
+let get_var_scheme_exn (env : (string, scheme list) Hashtbl.t) (x:string) : scheme =
+  match Hashtbl.find_opt env x with
+  | Some [sch] -> sch
+  | Some _     -> raise (Type_error ("cannot assign to overloaded name: " ^ x))
+  | None       -> raise (Type_error ("unbound variable: " ^ x))
 
 let find_all (env : (string, scheme list) Hashtbl.t) (name : string) : scheme list =
   match Hashtbl.find_opt env name with
@@ -39,41 +47,6 @@ let pick_overload (name:string) (env:tenv) (arg_tys:ty list) : ty =
       in
       raise (Type_error ("no overload of "^name^" matches "^sigstr))
 
-(* let pick_overload (name:string) (env:env) (arg_tys:ty list) : ty =
-  let cands = find_all env name in
-  let matches = ref [] in
-  List.iter (fun sch ->
-    let tf = instantiate sch |> repr in
-    match tf with
-    | TFun (ps, ret) when List.length ps = List.length arg_tys ->
-        (* 引数毎に単一化を試す。失敗したら次の候補。 *)
-        let snapshot = clone env in
-        (* 型変数 Link を巻き戻す手段が無いので、単一化は型だけに作用。
-           ここでは「試行」で失敗しても他候補に影響しないよう、arg/ps を repr で都度評価。 *)
-        try
-          List.iter2 unify ps arg_tys;
-          matches := (ret) :: !matches
-        with _ ->
-          (* 候補失敗。何もしない *)
-          ()
-      | _ -> ()
-  ) cands;
-  match !matches with
-  | [ret] -> ret
-  | [] ->
-      let msg =
-        Printf.sprintf "no overload of %s matches (%s)"
-          name (String.concat ", " (List.map string_of_ty arg_tys))
-      in
-      raise (Type_error msg)
-  | _ ->
-      let msg =
-        Printf.sprintf "ambiguous overload of %s for (%s)"
-          name (String.concat ", " (List.map string_of_ty arg_tys))
-      in
-      raise (Type_error msg)
-*)
-
 let rec infer_expr (env:env) (e:expr) : ty =
   match e with
   | Int _ -> TInt
@@ -94,14 +67,8 @@ let rec infer_expr (env:env) (e:expr) : ty =
       pick_overload fname env t_args
   | Expr e -> infer_expr env e
   | Var x ->
-      begin match find_all env x with
-      | [] -> raise (Type_error ("unbound variable: " ^ x))
-      | [sch] -> instantiate sch |> repr
-      | schs ->
-          let n = List.length schs in
-          raise (Type_error (Printf.sprintf
-            "ambiguous name: %s has %d overloads" x n))
-      end
+      let sch = get_var_scheme_exn env x in
+        instantiate sch
   | New (cls, args) ->
     List.iter (fun a -> ignore (infer_expr env a)) args;
     TObject cls
@@ -112,22 +79,26 @@ let set (e:env) (name:string) (sch:scheme) =
 let rec check_stmt (env:env) (s:stmt) : unit =
   match s with
   | Assign (x, e) ->
-      let te = infer_expr env e in
-      (* 代入先が既知なら単一化、未知ならその型に確定。 *)
-      begin match find_all env x with
-      | [Forall ([], t0)] ->
-          unify t0 te
-      | [] ->
-          (* ここは単相変数として固定する：将来 let 導入時に generalize へ *)
-          Typing_env.add env x (Forall ([], te))
-      | _ ->
-          raise (Type_error ("cannot assign to overloaded name: " ^ x))
-      end
+    let t_rhs = infer_expr env e in
+    (match Hashtbl.find_opt env x with
+     | None ->
+         let sch = generalize env t_rhs in
+         set_var_scheme env x sch
+     | Some [sch] ->
+         (* 既存の型に RHS を合わせる：必要なら instantiate → unify *)
+         let t_old = instantiate sch in
+         unify t_old t_rhs;
+         let sch' = generalize env t_rhs in   (* 代入後の型を更新（単相にしたいなら Forall([], t_rhs)）*)
+         set_var_scheme env x sch'
+     | Some _ ->
+         raise (Type_error ("cannot assign to overloaded name: " ^ x)));
+    ()
   | VarDecl (name, rhs) ->
       let t   = infer_expr env rhs in
       let sch = generalize env t in
       (* 単一束縛として“置き換え” *)
-        set env name sch
+        set_var_scheme env name sch;
+        ()
   | If (cond, tbr, fbr) ->
       (* 現実装互換: 条件は float（0/非0）扱い。将来 Bool にするならここを TBool へ。 *)
       let tc = infer_expr env cond in
