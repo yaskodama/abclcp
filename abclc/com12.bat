@@ -1,0 +1,2 @@
+load Hello.abcl
+compile

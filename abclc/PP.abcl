@@ -1,0 +1,8 @@
+object Pinger {
+  method start() {
+    call print("Pinger starting");
+    send ponger ping();
+ }
+}
+
+Pinger pinger;

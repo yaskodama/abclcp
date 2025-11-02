@@ -1,0 +1,13 @@
+object LineDrawer {
+  method draw() {
+    call sdl_clear();
+    call sdl_line(100, 100, 400, 300);
+    call sdl_present();
+  }
+  method erase() {
+    call sdl_erase_line(100, 100, 400, 300);
+    call sdl_present();
+  }
+}
+
+LineDrawer dl1;

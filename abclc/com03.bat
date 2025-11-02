@@ -1,0 +1,2 @@
+load LD.abcl
+compile

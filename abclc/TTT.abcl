@@ -1,0 +1,8 @@
+object TTT {
+  method start() {
+    var x = 21;
+    call print(typeof(x));
+  }
+}
+
+TTT t;

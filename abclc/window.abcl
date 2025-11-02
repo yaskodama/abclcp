@@ -1,0 +1,25 @@
+class Window {
+  var x1 = 100;
+  var y1 = 100;
+  var x2 = 100;
+  var y2 = 200;
+
+  method init() {
+    call sdl_init(640,400);
+    call sdl_clear();
+    call sdl_present();
+  }
+
+  method line() {
+    call sdl_line(x1, y1, x2, y2);
+    call sdl_present();
+  }
+
+  method erase() {
+    call sdl_erase_line(x1, y1, x2, y2);
+    call sdl_present();
+  }
+}
+
+var w = new Window();
+send w.line();

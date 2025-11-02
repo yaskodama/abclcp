@@ -1,0 +1,2 @@
+load window.abcl
+compile

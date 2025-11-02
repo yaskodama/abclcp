@@ -1,0 +1,18 @@
+object Ponger {
+  float cnt = 0;
+  method ping(x, y) {
+    cnt = cnt + x + y;
+    call print("pong: " + cnt);
+  }
+}
+
+Ponger ponger;
+
+object Pinger {
+  method start() {
+    send ponger ping(1, 2);
+    send ponger ping(3, 4);
+  }
+}
+
+Pinger pinger;

@@ -1,0 +1,55 @@
+object Fork {
+  int taken = 0;
+
+  method take() {
+    if (taken == 0) {
+      taken = 1;
+    } else {
+      send self take;
+    }
+  }
+
+  method release() {
+    taken = 0;
+  }
+}
+
+object Philosopher {
+  int id = 0;
+  object leftFork;
+  object rightFork;
+
+  method think() {
+    send self hungry;
+  }
+
+  method hungry() {
+    send leftFork take;
+    send rightFork take;
+    send self eat;
+  }
+
+  method eat() {
+    send leftFork release;
+    send rightFork release;
+    send self think;
+  }
+}
+
+Fork fork0;
+Fork fork1;
+Fork fork2;
+Fork fork3;
+Fork fork4;
+
+Philosopher p0 { id = 0; leftFork = fork0; rightFork = fork1; };
+Philosopher p1 { id = 1; leftFork = fork1; rightFork = fork2; };
+Philosopher p2 { id = 2; leftFork = fork2; rightFork = fork3; };
+Philosopher p3 { id = 3; leftFork = fork3; rightFork = fork4; };
+Philosopher p4 { id = 4; leftFork = fork4; rightFork = fork0; };
+
+send p0 think;
+send p1 think;
+send p2 think;
+send p3 think;
+send p4 think;

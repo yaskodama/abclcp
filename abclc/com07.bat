@@ -1,0 +1,2 @@
+load counter.abcl
+compile

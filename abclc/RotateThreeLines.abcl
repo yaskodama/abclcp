@@ -1,0 +1,33 @@
+class Line {
+  var cx = 200.0;
+  var cy = 200.0;
+  var angle = 0.0;
+  var offset = 0.0;
+  var len = 50.0;
+  var x1 = 0; var y1 = 0; var x2 = 0; var y2 = 0;
+
+  method start() {
+    call sdl_init(640,480);
+    call sdl_clear();
+  }
+
+  method rotate(x,y) {
+    angle = angle + 5.0;
+    var rad = (angle + offset) * 3.14159 / 180.0;
+    var dx = len * cos(rad);
+    var dy = len * sin(rad);
+    x1 = cx - dx+x; y1 = cy - dy+y; x2 = cx + dx+x; y2 = cy + dy+y;
+    call sdl_clear();
+    call sdl_line(x1, y1, x2, y2);    
+    call sdl_present();
+    call wait(32);
+    send self.rotate(x,y);
+  }
+}
+var li1 = new Line();
+var li2 = new Line();
+var li3 = new Line();
+send li1.start();
+send li1.rotate(0,0);
+send li2.rotate(0,200);
+send li3.rotate(200,0);

@@ -1,0 +1,9 @@
+object LineDrawer {
+  method draw() {
+    call sdl_init(640, 480);
+    call sdl_clear();
+    call sdl_line(100,100, 540,380);
+    call sdl_present();
+  }
+}
+LineDrawer dl1;

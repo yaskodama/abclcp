@@ -1,0 +1,14 @@
+class TT {
+  var y = 1.0;
+  method init() {
+    var x = 1.5;
+    call print(typeof(x));
+    call print(x);
+    send t1.tt();
+  }
+  method tt() {
+    call print(2.0);
+  }
+}
+
+var t1 = new TT();

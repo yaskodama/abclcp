@@ -1,0 +1,6 @@
+class Pinger {
+  method ping() { call print("ping"); }
+}
+
+var pinger = new Pinger();   // init は未定義
+send pinger ping();
