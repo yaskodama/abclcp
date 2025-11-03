@@ -81,8 +81,8 @@ let rec string_of_ty (t : ty) : string =
        | None ->
            (* 未束縛の型変数は 'a1, 'a2 ... のように表示 *)
            Printf.sprintf "'a%d" (!vref).id)
-  | TAny      -> "any"                       (* ← 追加 *)
-  | TObject n -> Printf.sprintf "object(%s)" n  (* ← 追加 *)
+  | TAny      -> "any"                   
+  | TObject n -> Printf.sprintf "object(%s)" n
 
 (* occurs check: v が t 中に出現するか？ *)
 let rec occurs (v : tvar ref) (t : ty) : bool =
@@ -179,8 +179,8 @@ let rec ftv_ty (t : ty) : ISet.t =
   | TVar vref          -> ISet.singleton (!vref).id
   | TArray t1          -> ftv_ty t1
   | TFun (ps, r)       -> ISet.union (union_list ftv_ty ps) (ftv_ty r)
-  | TAny               -> ISet.empty          (* ← 追加 *)
-  | TObject _          -> ISet.empty          (* ← 追加 *)
+  | TAny               -> ISet.empty
+  | TObject _          -> ISet.empty
   | (TInt | TFloat | TBool | TString | TUnit | TActor) -> ISet.empty
 
 (* scheme の自由型変数集合 = ty の自由変数から量化されたIDを除いたもの *)
@@ -226,12 +226,11 @@ let instantiate (Forall (qs, t) : scheme) : ty =
               Hashtbl.add subst id u;
               u
         else
-          (* 量化されていない TVar はそのまま残す *)
           TVar vref
     | TArray t1      -> TArray (inst t1)
     | TFun (ps, ret) -> TFun (List.map inst ps, inst ret)
-    | TAny               -> TAny                (* ← 追加 *)
-    | TObject _ as c     -> c                   (* ← 追加 *)
+    | TAny               -> TAny
+    | TObject _ as c     -> c
     | (TInt | TFloat | TBool | TString | TUnit | TActor) as c -> c
   in
   inst t

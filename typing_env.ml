@@ -46,6 +46,30 @@ let prelude () : env =
   let a = fresh_tvar () in
   add_poly e "+" (Forall ([(!a).id], TFun ([TVar a; TString], TString)));
 
+(* --- SDL primitives (typing_env.ml / prelude 内のどこかの最後で OK) --- *)
+
+  (* ---- wait: sleep milliseconds ---- *)
+  add_mono e "wait" (TFun ([TInt],   TUnit));
+  add_mono e "wait" (TFun ([TFloat], TUnit));
+
+  (* sdl_init : (float,float) -> unit  と (int,int) -> unit *)
+  add_mono e "sdl_init" (TFun ([TFloat; TFloat], TUnit));
+  add_mono e "sdl_init" (TFun ([TInt;   TInt  ], TUnit));
+
+  (* sdl_clear : unit -> unit *)
+  add_mono e "sdl_clear" (TFun ([], TUnit));
+
+  (* sdl_present : unit -> unit *)
+  add_mono e "sdl_present" (TFun ([], TUnit));
+
+  (* sdl_line : (float,float,float,float) -> unit  と int 版 *)
+  add_mono e "sdl_line" (TFun ([TFloat; TFloat; TFloat; TFloat], TUnit));
+  add_mono e "sdl_line" (TFun ([TInt;   TInt;   TInt;   TInt  ], TUnit));
+
+  (* sdl_erase_line : (float,float,float,float) -> unit  と int 版 *)
+  add_mono e "sdl_erase_line" (TFun ([TFloat; TFloat; TFloat; TFloat], TUnit));
+  add_mono e "sdl_erase_line" (TFun ([TInt;   TInt;   TInt;   TInt  ], TUnit));
+
   (* 3) typeof : 各型 or 多相。ここでは各型を列挙 *)
   add_mono e "typeof" (TFun ([TInt],    TString));
   add_mono e "typeof" (TFun ([TFloat],  TString));

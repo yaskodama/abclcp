@@ -9,18 +9,18 @@ class LineDrawer {
     call print("Line::init called:cx<" + cx + ">:cy<" + cy + ">:len<" + len + ">");
   }
   method draw() {
-    call sdl_init(640., 480.);
+    call sdl_init(640, 480);
     call sdl_clear();
-    call sdl_line(100., 100., 400., 300.);
-    call sdl_line(100., 200., 400., 400.);
+    call sdl_line(100, 100, 400, 300);
+    call sdl_line(100, 200, 400, 400);
     call sdl_present();
   }
   method erase() {
-    call sdl_erase_line(100., 100., 400., 300.);
+    call sdl_erase_line(100, 100, 400, 300);
     call sdl_present();
   }
 }
 
-var dl1 = new LineDrawer(320,240,80);
-var dl2 = new LineDrawer(380,230,90);
+var dl1 = new LineDrawer(320.,240.,80.);
+var dl2 = new LineDrawer(380.,230.,90.);
 send dl1.draw();

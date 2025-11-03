@@ -150,9 +150,17 @@ let as_bool = function
   | VActor _  -> failwith "actor is not allowed as condition"
   | VArray _   -> failwith "array is not allowed as condition"
 
-let as_float = function
+let as_float (v : value) : float =
+  match v with
   | VFloat f -> f
-  | v -> failwith (Printf.sprintf "expected float, got %s" (type_name_of_value v))
+  | VInt i   -> float_of_int i
+  | _        -> failwith "number (int/float) expected"
+
+let as_int (v : value) : int =
+  match v with
+  | VInt i   -> i
+  | VFloat f -> int_of_float f
+  | _        -> failwith "int expected"
 
 let as_string = function
   | VString s -> s
@@ -239,11 +247,6 @@ let set_var_a (actor:actor) (x:string) (v:value) : unit =
   (* その後で通常通りに上書き *)
   Hashtbl.replace actor.env x v
 
-(*  
-let set_var_a (actor:actor) (x:string) (v:value) : unit =
-  Hashtbl.replace actor.env x v
-  *)
-
 let create_actor name =
   {
     name;
@@ -298,39 +301,6 @@ let expect_index (v:value) =
 
 let make_array (a:value array) = VArray a
 
-(*
-let arr_empty : value = VArray [||]
-
-let arr_of_list (xs : value list) : value =
-  VArray (Array.of_list xs)
-
-let arr_length = function
-  | VArray a -> VInt (Array.length a)
-  | _ -> failwith "arr_length: not an array"
-
-let arr_get xs i =
-  match xs, i with
-  | VArray a, VInt k ->
-      if 0 <= k && k < Array.length a then a.(k)
-      else failwith "arr_get: index out of bounds"
-  | _ -> failwith "arr_get: type mismatch"
-
-let arr_set xs i v =
-  match xs, i with
-  | VArray a, VInt k ->
-      if 0 <= k && k < Array.length a then
-        let b = Array.copy a in
-        b.(k) <- v;
-        VArray b
-      else failwith "arr_set: index out of bounds"
-  | _ -> failwith "arr_set: type mismatch"
-
-let arr_push xs v =
-  match xs with
-  | VArray a -> VArray (Array.append a [|v|])
-  | _ -> failwith "arr_push: not an array"
-  *)
-
 (* ===== 5) 組み込み関数 ===== *)
 let prim1_float_float name f = (name, function
   | [VFloat x] -> VFloat (f x)
@@ -377,6 +347,41 @@ let prim_table : (string, value list -> value) Hashtbl.t =
     prim1_print;
     prim_typeof;
     prim_wait;
+    ("wait",
+      (function
+        | [v] ->
+            let ms = as_float v in
+            let sec = ms /. 1000.0 in
+            Thread.delay sec;
+            VUnit
+        | _ -> failwith "wait(ms): arity 1 expected"));
+    ("sdl_init",
+      (function
+        | [VInt w;   VInt h]   -> Sdl_helper.sdl_init ~w ~h; VInt 0  (* or VUnit if you prefer *)
+        | [VFloat wf; VFloat hf] -> Sdl_helper.sdl_init ~w:(int_of_float wf) ~h:(int_of_float hf); VInt 0
+        | [VInt w;   VFloat hf]  -> Sdl_helper.sdl_init ~w ~h:(int_of_float hf); VInt 0
+        | [VFloat wf; VInt h]    -> Sdl_helper.sdl_init ~w:(int_of_float wf) ~h; VInt 0
+        | _ -> failwith "sdl_init(width:int|float, height:int|float): arity 2 expected"));
+    ("sdl_clear",
+      (function
+        | [] -> Sdl_helper.sdl_clear (); VInt 0
+        | _  -> failwith "sdl_clear(): arity 0 expected"));
+    ("sdl_present",
+      (function
+        | [] -> Sdl_helper.sdl_present (); VInt 0
+        | _  -> failwith "sdl_present(): arity 0 expected"));
+    ("sdl_line",
+      (function
+        | [x1; y1; x2; y2] ->
+            let x1 = as_int x1 and y1 = as_int y1 and x2 = as_int x2 and y2 = as_int y2 in
+		Sdl_helper.sdl_draw_line x1 y1 x2 y2; VInt 0
+        | _ -> failwith "sdl_line(x1,y1,x2,y2): arity 4 expected"));
+    ("sdl_erase_line",
+      (function
+        | [x1; y1; x2; y2] ->
+            let x1 = as_int x1 and y1 = as_int y1 and x2 = as_int x2 and y2 = as_int y2 in
+                Sdl_helper.sdl_erase_line x1 y1 x2 y2; VInt 0
+        | _ -> failwith "sdl_erase_line(x1,y1,x2,y2): arity 4 expected"));
     ("array_empty",
       (function
         | [] -> VArray [||]
