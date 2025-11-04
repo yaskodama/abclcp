@@ -1,0 +1,635 @@
+open Ast
+open Thread
+open Mutex
+open Sdl_helper
+
+type message = stmt
+
+type value =
+  | VInt of int
+  | VFloat of float
+  | VString of string
+  | VBool of bool
+  | VUnit
+  | VActor of string
+  | VArray of value array
+  
+type actor = {
+  name : string;
+  queue : message Queue.t;
+  mutex : Mutex.t;
+  cond  : Condition.t;
+  env   : (string, value) Hashtbl.t;
+  methods : (string, method_decl) Hashtbl.t;
+  mutable last_sender : string;
+}
+
+let actor_table : (string, actor) Hashtbl.t = Hashtbl.create 32
+
+let env : (string, value) Hashtbl.t = Hashtbl.create 64
+
+(* === ObjectStore: 再代入で上書きされる「前の値」を保管しておくための簡易仕組み === *)
+
+(* 値を保存するテーブル（id -> value） *)
+let object_store : (int, value) Hashtbl.t = Hashtbl.create 256
+
+(* 採番用のカウンタ *)
+let object_store_index = ref 0
+
+(* 変数ごとの履歴（key -> id list）。key は "<global>.x" や "ActorName.x" など *)
+let var_history : (string, int list) Hashtbl.t = Hashtbl.create 128
+
+(* 値を保存して採番 id を返す *)
+let store_value (v:value) : int =
+  incr object_store_index;
+  Hashtbl.replace object_store !object_store_index v;
+  !object_store_index
+
+(* key で履歴を持たせる。戻り値は保存された id *)
+let remember (key:string) (v:value) : int =
+  let id = store_value v in
+  let ids = match Hashtbl.find_opt var_history key with Some xs -> xs | None -> [] in
+  Hashtbl.replace var_history key (id :: ids);
+  id
+
+(* デバッグ・確認用の簡単ヘルパ *)
+let get_stored (id:int) : value option = Hashtbl.find_opt object_store id
+let get_history (key:string) : int list =
+  match Hashtbl.find_opt var_history key with Some xs -> xs | None -> []
+
+(* === 既存の上部あたりに追加 === *)
+let instance_source : (string, class_decl) Hashtbl.t = Hashtbl.create 64
+
+let register_instance_source (instance_name : string) (src : class_decl) : unit =
+  Hashtbl.replace instance_source instance_name src
+
+let get_instance_source (instance_name : string) : class_decl option =
+  Hashtbl.find_opt instance_source instance_name
+
+(* クラス定義の登録先（REPLに依存しない） *)
+let class_env : (string, class_decl) Hashtbl.t = Hashtbl.create 64
+
+let register_class (c:class_decl) =
+  Hashtbl.replace class_env c.cname c
+
+let find_class_exn (name:string) : class_decl =
+  match Hashtbl.find_opt class_env name with
+  | Some c -> c
+  | None -> failwith ("Class not found: " ^ name)
+
+(* ===== debug switches ===== *)
+let debug_send      = ref true
+let debug_dispatch  = ref true
+let debug_resolve   = ref true
+let debug_mailbox   = ref true
+
+(* 値の表示（未対応の値は <value> とする） *)
+let rec string_of_value v =
+  match v with
+  | VInt n    -> string_of_int n
+  | VFloat f  -> string_of_float f
+  | VString s -> Printf.sprintf "%S" s
+  | VBool b   -> string_of_bool b
+  | VUnit     -> "()"
+  | VActor n -> "<actor:" ^ n ^ ">"
+  | VArray a ->
+      let items =
+        a |> Array.to_list |> List.map string_of_value |> String.concat ", "
+      in
+      "[" ^ items ^ "]"
+
+let pp_recv = function
+  | Var id -> id
+  | _      -> "<expr>"
+
+let type_name_of_value = function
+  | VInt _ -> "int"
+  | VFloat _  -> "float"
+  | VString _ -> "string"
+  | VBool _   -> "bool"
+  | VUnit     -> "unit"
+  | VActor _  -> "actor"
+  | VArray _  -> "array"
+
+let lookup_opt (env : (string, 'a) Hashtbl.t) (k : string) : 'a option =
+  Hashtbl.find_opt env k
+
+let bind (env : (string, 'a) Hashtbl.t) (k : string) (v : 'a) : unit =
+  Hashtbl.replace env k v
+
+let mem  (env : (string, 'a) Hashtbl.t) (k : string) : bool =
+  match lookup_opt env k with Some _ -> true | None -> false
+
+let find_actor_exn name =
+  try Hashtbl.find actor_table name with Not_found ->
+    failwith ("send: unknown actor: " ^ name)
+
+let get_var x =
+  try Hashtbl.find env x
+  with Not_found -> failwith ("unbound variable: " ^ x)
+
+let set_var x v =
+  (match Hashtbl.find_opt env x with
+   | Some old -> ignore (remember ("<global>." ^ x) old)
+   | None -> ());
+  Hashtbl.replace env x v
+
+let to_bool = function
+  | VBool b -> b
+  | VFloat f -> f <> 0.0
+  | VString s -> failwith ("string is not allowed as condition: " ^ s)
+  | VUnit -> false
+  | VActor _   -> failwith "actor is not allowed as condition"
+  | VArray _   -> failwith "array is not allowed as condition"
+  | VInt i -> i <> 0
+
+let as_bool = function
+  | VBool b   -> b
+  | VFloat f  -> f <> 0.0
+  | VString s -> failwith ("string is not allowed as condition: " ^ s)
+  | VUnit     -> false
+  | VActor _  -> failwith "actor is not allowed as condition"
+  | VArray _   -> failwith "array is not allowed as condition"
+  | VInt i -> i <> 0
+
+let as_float (v : value) : float =
+  match v with
+  | VFloat f -> f
+  | VInt i   -> float_of_int i
+  | _        -> failwith "number (int/float) expected"
+
+let as_int (v : value) : int =
+  match v with
+  | VInt i   -> i
+  | VFloat f -> int_of_float f
+  | _        -> failwith "int expected"
+
+let as_string = function
+  | VString s -> s
+  | v -> failwith (Printf.sprintf "expected string, got %s" (type_name_of_value v))
+
+let to_string_plain = function
+  | VString s -> s
+  | VFloat f  -> string_of_float f
+  | VInt n -> string_of_int n
+  | VBool  b  -> if b then "true" else "false"
+  | VUnit     -> "()"
+  | VActor n  -> "<actor:" ^ n ^ ">"
+  | VArray a   ->                           (* 追加：簡易表現でOK *)
+      let items =
+        a |> Array.to_list
+          |> List.map (function
+                | VString s -> "\"" ^ s ^ "\""
+                | VInt n    -> string_of_int n
+                | VFloat f  -> string_of_float f
+                | VBool b   -> if b then "true" else "false"
+                | VUnit     -> "()"
+                | VActor n  -> "<actor:" ^ n ^ ">"
+                | VArray _  -> "<array>")
+          |> String.concat ", "
+      in
+      "[" ^ items ^ "]"
+
+let apply_binop op v1 v2 =
+  match op, v1, v2 with
+  (* 数値演算 *)
+  | ("+"|"-"|"*"|"/"), VFloat a, VFloat b ->
+      VFloat (match op with
+        | "+" -> a +. b | "-" -> a -. b
+        | "*" -> a *. b | "/" -> a /. b
+        | _ -> assert false)
+  (* 比較（float -> bool） *)
+  | (">"|">="|"<"|"<="|"=="|"!="), VFloat a, VFloat b ->
+      VBool (match op with
+        | ">" -> a > b | ">=" -> a >= b
+        | "<" -> a < b | "<=" -> a <= b
+	| "==" -> a = b | "!=" -> a <> b
+        | _ -> assert false)
+  (* 文字列連結（片側が string ならもう片側を文字列化して連結） *)
+  | "+", VString s1, VString s2 -> VString (s1 ^ s2)
+  | "+", VString s1, v2         -> VString (s1 ^ to_string_plain v2)
+  | "+", v1,         VString s2 -> VString (to_string_plain v1 ^ s2)
+
+  | _ ->
+    failwith ("unsupported binop/operands: " ^ op)
+
+let expr_of_value = function
+  | VInt n -> String (string_of_int n)
+  | VFloat f  -> Float f
+  | VString s -> String s
+  | VBool  b  -> String (if b then "true" else "false")  (* Bool/Unit の式型が無ければ文字列化でOK *)
+  | VUnit     -> String "()"
+  | VActor n  -> String ("<actor:" ^ n ^ ">")
+  | VArray a  ->                                        (* 追加：簡易表示でOK *)
+      let items =
+        a |> Array.to_list
+          |> List.map (function
+                | VString s -> "\"" ^ s ^ "\""
+                | VInt n    -> string_of_int n
+                | VFloat f  -> string_of_float f
+                | VBool b   -> if b then "true" else "false"
+                | VUnit     -> "()"
+                | VActor n  -> "<actor:" ^ n ^ ">"
+                | VArray _  -> "<array>")
+          |> String.concat ", "
+      in
+      String ("[" ^ items ^ "]")
+      
+(* === Value extractors === *)
+let get_var_a (actor:actor) (x:string) : value =
+  match Hashtbl.find_opt actor.env x with
+  | Some v -> v
+  | None   -> failwith ("unbound variable: " ^ x)
+
+let set_var_a (actor:actor) (x:string) (v:value) : unit =
+  (* いま actor.env に x が既にあるなら、上書き前の値を保存して履歴に追加 *)
+  (match Hashtbl.find_opt actor.env x with
+   | Some old -> ignore (remember (actor.name ^ "." ^ x) old)
+   | None -> ());
+  (* その後で通常通りに上書き *)
+  Hashtbl.replace actor.env x v
+
+let create_actor name =
+  {
+    name;
+    queue = Queue.create ();
+    mutex = Mutex.create ();
+    cond = Condition.create ();
+    env = Hashtbl.create 32;
+    methods = Hashtbl.create 32;
+    last_sender = "";
+  }
+
+let send_message ~from target_name msg =
+  let log_message () =
+    let oc = open_out_gen [Open_creat; Open_append; Open_text] 0o644 "message_log.txt" in
+    Printf.fprintf oc "[SEND] to %s: %s\n" target_name
+      (match msg with CallStmt(m,_) -> m | _ -> "stmt");
+    close_out oc
+  in
+  log_message ();
+  match Hashtbl.find_opt actor_table target_name with
+  | Some actor ->
+      Mutex.lock actor.mutex;
+      actor.last_sender <- from;
+      Queue.push msg actor.queue;
+      Condition.signal actor.cond;
+      Mutex.unlock actor.mutex
+  | None ->
+      Printf.printf "Actor %s not found\n" target_name
+
+let prim_typeof =
+  ("typeof", function
+     | [VInt _] -> VString "int"
+     | [VFloat _]  -> VString "float"
+     | [VString _] -> VString "string"
+     | [VBool _]   -> VString "bool"
+     | [VUnit]     -> VString "unit"
+     | [VActor _] -> VString "actor"
+     | [VArray _] -> VString "array"
+     | _ -> failwith "typeof: expected exactly one argument")
+
+(* ---- Helpers for array prims ---- *)
+let expect_array (v:value) =
+  match v with
+  | VArray a -> a
+  | _ -> failwith "array_*: not an array"
+
+let expect_index (v:value) =
+  match v with
+  | VInt i -> i
+  | VFloat f -> int_of_float f     (* float しかリテラルが無い場合の救済 *)
+  | _ -> failwith "array_*: index must be int/float"
+
+let make_array (a:value array) = VArray a
+
+(* ===== 5) 組み込み関数 ===== *)
+let prim1_float_float name f = (name, function
+  | [VFloat x] -> VFloat (f x)
+  | _ -> failwith (name ^ ": expected (float)"))
+
+let prim1_print =
+  ("print", function
+     | [VInt i] -> print_endline (string_of_int i); VUnit
+     | [VString s] -> print_endline s; VUnit
+     | [VFloat  f] -> print_endline (string_of_float f); VUnit
+     | [VBool   b] -> print_endline (if b then "true" else "false"); VUnit
+     | [VUnit]     -> print_endline "()"; VUnit
+     | _ -> failwith "print: expected (string|float|bool|unit)")
+
+let prim_wait =
+  ("wait",
+   function
+   | [VFloat f] ->
+       Thread.delay (f /. 1000.0);  (* ミリ秒 → 秒に換算 *)
+       VUnit
+   | [VString s] ->
+       let f = float_of_string s in
+       Thread.delay (f /. 1000.0);
+       VUnit
+   | _ -> failwith "wait: expected one float (ms)")
+
+let prim_table : (string, value list -> value) Hashtbl.t =
+  let h = Hashtbl.create 32 in
+  let add (n,f) = Hashtbl.replace h n f in
+  List.iter add [
+    prim1_float_float "sin" sin;
+    prim1_float_float "cos" cos;
+    prim1_float_float "tan" tan;
+    prim1_float_float "asin" asin;
+    prim1_float_float "acos" acos;
+    prim1_float_float "atan" atan;
+    prim1_float_float "sqrt" sqrt;
+    prim1_float_float "exp" exp;
+    prim1_float_float "log10" (fun x -> log10 x);
+    prim1_float_float "abs" abs_float;
+    prim1_float_float "floor" (fun x -> floor x);
+    prim1_float_float "ceil" (fun x -> ceil x);
+    prim1_float_float "round" (fun x -> Float.round x);
+    prim1_print;
+    prim_typeof;
+    prim_wait;
+    ("wait",
+      (function
+        | [v] ->
+            let ms = as_float v in
+            let sec = ms /. 1000.0 in
+            Thread.delay sec;
+            VUnit
+        | _ -> failwith "wait(ms): arity 1 expected"));
+    ("sdl_init",
+      (function
+        | [VInt w; VInt h] ->
+            Sdl_helper.sdl_init ~w ~h ~title:"ABCL/c+"; VUnit
+        | [VFloat wf; VFloat hf] ->
+            Sdl_helper.sdl_init ~w:(int_of_float wf) ~h:(int_of_float hf) ~title:"ABCL/c+"; VUnit
+        | [VInt w; VFloat hf] ->
+            Sdl_helper.sdl_init ~w ~h:(int_of_float hf) ~title:"ABCL/c+"; VUnit
+        | [VFloat wf; VInt h] ->
+            Sdl_helper.sdl_init ~w:(int_of_float wf) ~h ~title:"ABCL/c+"; VUnit
+        | _ -> failwith "sdl_init(width:int|float, height:int|float): arity 2 expected"));
+    ("sdl_clear",
+      (function
+        | [] -> Sdl_helper.sdl_clear (); VInt 0
+        | _  -> failwith "sdl_clear(): arity 0 expected"));
+    ("sdl_present",
+      (function
+        | [] -> Sdl_helper.sdl_present (); VInt 0
+        | _  -> failwith "sdl_present(): arity 0 expected"));
+    ("sdl_line",
+      (function
+        | [x1; y1; x2; y2] ->
+            let x1 = as_int x1 and y1 = as_int y1 and x2 = as_int x2 and y2 = as_int y2 in
+		Sdl_helper.sdl_draw_line x1 y1 x2 y2; VInt 0
+        | _ -> failwith "sdl_line(x1,y1,x2,y2): arity 4 expected"));
+    ("sdl_erase_line",
+      (function
+        | [x1; y1; x2; y2] ->
+            let x1 = as_int x1 and y1 = as_int y1 and x2 = as_int x2 and y2 = as_int y2 in
+                Sdl_helper.sdl_erase_line x1 y1 x2 y2; VInt 0
+        | _ -> failwith "sdl_erase_line(x1,y1,x2,y2): arity 4 expected"));
+    ("array_empty",
+      (function
+        | [] -> VArray [||]
+        | _  -> failwith "array_empty(): arity 0 expected"));
+    ("array_len",
+      (function
+        | [VArray a] -> VInt (Array.length a)
+        | [_]        -> failwith "array_len(xs): xs must be array"
+        | _          -> failwith "array_len(xs): arity 1 expected"));
+    ("array_get",
+      (function
+        | [VArray a; VInt i] ->
+            if 0 <= i && i < Array.length a then a.(i)
+            else failwith "array_get: index out of bounds"
+        | [VArray a; VFloat f] ->
+            let i = int_of_float f in
+            if 0 <= i && i < Array.length a then a.(i)
+            else failwith "array_get: index out of bounds"
+        | [_; _]     -> failwith "array_get(xs,i): xs must be array and i must be int/float"
+        | _          -> failwith "array_get(xs,i): arity 2 expected"));
+    ("array_set",
+      (function
+        | [VArray a; VInt i; v] ->
+            if 0 <= i && i < Array.length a then
+              let b = Array.copy a in b.(i) <- v; VArray b
+            else failwith "array_set: index out of bounds"
+        | [VArray a; VFloat f; v] ->
+            let i = int_of_float f in
+            if 0 <= i && i < Array.length a then
+              let b = Array.copy a in b.(i) <- v; VArray b
+            else failwith "array_set: index out of bounds"
+        | [_; _; _]  -> failwith "array_set(xs,i,v): xs must be array and i must be int/float"
+        | _          -> failwith "array_set(xs,i,v): arity 3 expected"));
+    ("array_push",
+      (function
+	| [xs; v] ->
+          let a = expect_array xs in  (* ここだけ array か検査 *)
+            VArray (Array.append a [| v |])  (* v はそのまま入る → 何でもOK *)
+        | _ -> failwith "array_push(xs,v): arity 2 expected"));
+  ];
+  h
+
+let call_prim name args =
+(*  Printf.printf "[debug] call_prim %s, argc=%d\n%!" name (List.length args);  *)
+  match Hashtbl.find_opt prim_table name with
+  | Some f -> f args
+  | None ->
+      print_endline "[debug] prim_table keys:";
+      Hashtbl.iter (fun k _ -> print_endline ("  - " ^ k)) prim_table;
+      failwith ("Unknown function: " ^ name)
+
+let add_prim name fn = Hashtbl.replace prim_table name fn
+
+(* グローバル actor_table から名前で取得（なければ例外） *)
+let find_actor_exn name =
+  try Hashtbl.find actor_table name
+  with Not_found -> failwith ("send: unknown actor: " ^ name)
+
+let rec eval_expr (actor:actor) = function
+  | Int i -> VInt i
+  | Float f  -> VFloat f
+  | String s -> VString s
+  | Var x    -> get_var_a actor x
+  | Binop (op, e1, e2) ->
+      let v1 = eval_expr actor e1 in
+      let v2 = eval_expr actor e2 in
+      apply_binop op v1 v2
+  | Call (fname, arg1) ->
+      let vs = List.map (eval_expr actor) arg1 in
+      call_prim fname vs
+  | Expr e -> eval_expr actor e
+and eval_stmt (actor:actor) = function
+  | Assign (x, e) ->
+      set_var_a actor x (eval_expr actor e)
+  | VarDecl (name, New (cls, arg_es)) ->
+    let cobj = find_class_exn cls in
+    let obj  = { cobj with cname = name } in
+    (* 1) 生成 *)
+    spawn_actor obj;
+    (* 2) 引数を送信側で評価→即値式にし、init を一度だけ呼ぶ *)
+    let arg_vals  = List.map (eval_expr actor) arg_es in
+    let expr_of_value = function
+      | VFloat f  -> Float f
+      | VString s -> String s
+      | VBool b   -> String (if b then "true" else "false")
+      | VUnit     -> String "()"
+      | VActor n  -> String ("<actor:" ^ n ^ ">")
+    in
+    let arg_exprs = List.map expr_of_value arg_vals in
+    send_message ~from:actor.name name (CallStmt ("init", arg_exprs));
+    (* 3) 環境へ束縛（以後 send name.xxx が使える） *)
+    set_var_a actor name (VActor name)
+  | VarDecl (name, rhs) ->
+      set_var_a actor name (eval_expr actor rhs)
+  | If (cond, tbr, fbr) ->
+      if to_bool (eval_expr actor cond)
+      then eval_stmt actor tbr
+      else eval_stmt actor fbr
+  | While (cond, body) ->
+      while to_bool (eval_expr actor cond) do
+        eval_stmt actor body
+      done
+  | Seq ss ->
+      List.iter (eval_stmt actor) ss
+  (* SDL primitives: eval_expr actor で評価→float にしてから呼ぶ *)
+  | CallStmt ("sdl_init", [w; h]) ->
+      let w = int_of_float (as_float (eval_expr actor w))
+      and h = int_of_float (as_float (eval_expr actor h)) in
+      Sdl_helper.sdl_init ~w ~h ~title:"ABCL/c+"
+  | CallStmt ("sdl_clear", []) ->
+      Sdl_helper.sdl_clear ()
+  | CallStmt ("sdl_line", [x1; y1; x2; y2]) ->
+      let x1 = int_of_float (as_float (eval_expr actor x1))
+      and y1 = int_of_float (as_float (eval_expr actor y1))
+      and x2 = int_of_float (as_float (eval_expr actor x2))
+      and y2 = int_of_float (as_float (eval_expr actor y2)) in
+      Sdl_helper.sdl_draw_line x1 y1 x2 y2
+  | CallStmt ("sdl_present", []) ->
+      Sdl_helper.sdl_present ()
+  | CallStmt ("sdl_erase_line", [e1; e2; e3; e4]) ->
+      let x1 = int_of_float (as_float (eval_expr actor e1))
+      and y1 = int_of_float (as_float (eval_expr actor e2))
+      and x2 = int_of_float (as_float (eval_expr actor e3))
+      and y2 = int_of_float (as_float (eval_expr actor e4)) in
+      Sdl_helper.sdl_erase_line x1 y1 x2 y2
+(* ★ ここから追加：ユーザ定義メソッドを優先して呼ぶ ★ *)
+  | CallStmt (mname, args) ->
+    begin match Hashtbl.find_opt actor.methods mname with
+    | Some mdecl ->
+        let arg_vals = List.map (eval_expr actor) args in
+        let params   = mdecl.params in
+          if List.length params <> List.length arg_vals then
+            Printf.printf "[%s] arity mismatch: %s expects %d but %d given\n%!"
+            actor.name mname (List.length params) (List.length arg_vals);
+        let saved = List.map (fun p -> (p, Hashtbl.find_opt actor.env p)) params in
+          List.iter2 (fun p v -> Hashtbl.replace actor.env p v) params arg_vals;
+          Hashtbl.replace actor.env "self" (VActor actor.name);
+          if actor.last_sender <> "" then
+            Hashtbl.replace actor.env "sender" (VActor actor.last_sender);
+            eval_stmt actor mdecl.body;
+            List.iter (fun (p, ov) ->
+              match ov with Some v -> Hashtbl.replace actor.env p v | None -> Hashtbl.remove actor.env p
+            ) saved
+    | None ->
+      let vs = List.map (eval_expr actor) args in
+        ignore (call_prim mname vs)
+    end
+(*  | Send (tgt, meth, args) ->
+    let actual_target =
+      if tgt = "self" then actor.name
+      else if tgt = "sender" then actor.last_sender
+      else tgt
+    in
+      send_message ~from:actor.name actual_target (CallStmt (meth, args)) *)
+  | Send (tgt, meth, args) ->
+    let actual_target =
+      if tgt = "self" then actor.name
+      else if tgt = "sender" then actor.last_sender
+      else tgt
+    in
+    (* ★ 送信側（actor）の環境で引数を先に評価し、即値式へ変換してから送る *)
+    let arg_vals = List.map (eval_expr actor) args in
+    let arg_exprs = List.map expr_of_value arg_vals in
+    send_message ~from:actor.name actual_target (CallStmt (meth, arg_exprs))
+  | SSend (recv_term, mname, arg_exprs) ->
+    let target = resolve_actor_from_term env recv_term in
+    let self_name =
+      match lookup_opt env "self" with Some (VActor n) -> n | _ -> "REPL"
+    in
+    let self_actor = find_actor_exn self_name in
+    let arg_vals = List.map (fun e -> eval_expr self_actor e) arg_exprs in
+(*     post_message target { mname; args = arg_vals; sender = self_name }; *)
+       ()
+and spawn_actor obj =
+  let actor = create_actor obj.cname in
+  List.iter (function
+    | VarDecl (k,init) ->
+      let v = eval_expr actor init in
+      Hashtbl.replace actor.env k v
+    | _ -> ()
+  ) obj.fields;
+
+  (* 2. InstantiateInit 用の初期化フィールドがあれば上書き *)
+  (match obj with
+  | { fields = initvals; _ } ->
+    List.iter (fun (VarDecl(k, v)) ->
+      match v with
+      | Float f -> Hashtbl.replace actor.env k (VFloat f)
+      | String s -> Hashtbl.replace actor.env k (VString s)
+      | _ -> ()
+    ) initvals
+  );
+  print_endline ("----[Actor created] " ^ obj.cname ^ " with variables:");
+  Hashtbl.iter (fun key value ->
+    Printf.printf "  %s = %s\n" key (string_of_value(value))
+  ) actor.env;
+  List.iter (fun (m:method_decl)  -> Hashtbl.replace actor.methods m.mname m) obj.methods;
+  Hashtbl.add actor_table obj.cname actor;
+  ignore (Thread.create (fun () -> actor_loop actor) ())
+and actor_loop actor =
+  let log_queue () =
+    let oc = open_out_gen [Open_creat; Open_append; Open_text] 0o644 ("queue_" ^ actor.name ^ ".txt") in
+    Queue.iter (fun msg ->
+      match msg with
+      | CallStmt (m, _) -> Printf.fprintf oc "[%s] %s\n" actor.name m
+      | _ -> Printf.fprintf oc "[%s] stmt\n" actor.name
+    ) actor.queue;
+    close_out oc
+  in
+  while true do
+    Mutex.lock actor.mutex;
+    while Queue.is_empty actor.queue do
+      Condition.wait actor.cond actor.mutex
+    done;
+    let msg = Queue.pop actor.queue in
+    log_queue ();
+    Mutex.unlock actor.mutex;
+    eval_stmt actor msg
+  done
+and resolve_actor_from_term env recv_term =
+  match recv_term with
+  | Var id ->
+      (match lookup_opt env id with
+       | Some (VActor name) -> find_actor_exn name
+       | _                  -> find_actor_exn id)
+
+  | _ ->
+      let self_name =
+        match lookup_opt env "self" with
+        | Some (VActor name) -> name
+        | _ -> failwith "send: receiver expression requires self; use a name or bind self"
+      in
+      let self_actor = find_actor_exn self_name in
+      match eval_expr self_actor recv_term with
+      | VActor name -> find_actor_exn name
+      | _ -> failwith "send: receiver expr must evaluate to an actor (VActor name)"
+
+let wait_ms ms =
+   let seconds = ms /. 1000.0 in
+   ignore (Unix.select [] [] [] seconds)
+
+let show_actor_env actor =
+  Hashtbl.fold (fun key value acc ->
+    acc ^ Printf.sprintf "   %s = %s\n" key (string_of_value(value))
+  ) actor.env ""

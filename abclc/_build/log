@@ -1,0 +1,6 @@
+# dune init project abclc
+# OCAMLPARAM: unset
+# Shared cache: enabled-except-user-rules
+# Shared cache location: /Users/kodamay/.cache/dune/db
+# Workspace root: /Users/kodamay/ocaml-app/ocaml-abcl18-v17/abclc
+# Auto-detected concurrency: 10
