@@ -4,8 +4,8 @@ class Line {
   var angle = 0.0;
   var offset = 0.0;
   var len = 50.0;
-  var x1 = 0; var y1 = 0; var x2 = 0; var y2 = 0;
-  var xxc = 0; var yyc = 0;
+  var x1 = 0.; var y1 = 0.; var x2 = 0.; var y2 = 0.;
+  var xxc = 0.; var yyc = 0.;
   
   method init(xc,yc) {
     xxc = xc; yyc = yc;
@@ -29,9 +29,9 @@ class Line {
     send self.rotate();
   }
 }
-var li1 = new Line(0,0);
-var li2 = new Line(0,200);
-var li3 = new Line(200,0);
+var li1 = new Line(0.,0.);
+var li2 = new Line(0.,200.);
+var li3 = new Line(200.,0.);
 send li1.start();
 send li1.rotate();
 send li2.rotate();

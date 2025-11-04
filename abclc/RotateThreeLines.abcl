@@ -4,7 +4,7 @@ class Line {
   var angle = 0.0;
   var offset = 0.0;
   var len = 50.0;
-  var x1 = 0; var y1 = 0; var x2 = 0; var y2 = 0;
+  var x1 = 0.; var y1 = 0.; var x2 = 0.; var y2 = 0.;
 
   method start() {
     call sdl_init(640,480);
@@ -28,6 +28,6 @@ var li1 = new Line();
 var li2 = new Line();
 var li3 = new Line();
 send li1.start();
-send li1.rotate(0,0);
-send li2.rotate(0,200);
-send li3.rotate(200,0);
+send li1.rotate(0.,0.);
+send li2.rotate(0.,200.);
+send li3.rotate(200.,0.);

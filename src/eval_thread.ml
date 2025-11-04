@@ -190,26 +190,39 @@ let to_string_plain = function
       in
       "[" ^ items ^ "]"
 
+(* 追加: 数値かどうか判定＆Floatに昇格するヘルパ *)
+let is_number = function
+  | VInt _ | VFloat _ -> true
+  | _ -> false
+
+let as_float_value = function
+  | VFloat f -> f
+  | VInt n   -> float_of_int n
+  | v        -> failwith (Printf.sprintf "expected number, got %s" (type_name_of_value v))
+      
 let apply_binop op v1 v2 =
   match op, v1, v2 with
-  (* 数値演算 *)
-  | ("+"|"-"|"*"|"/"), VFloat a, VFloat b ->
+ (* --- 数値演算: Int/Float 混在を許可（Float に昇格） --- *)
+  | ("+"|"-"|"*"|"/"), v1, v2 when is_number v1 && is_number v2 ->
+      let a = as_float_value v1 and b = as_float_value v2 in
       VFloat (match op with
         | "+" -> a +. b | "-" -> a -. b
         | "*" -> a *. b | "/" -> a /. b
         | _ -> assert false)
-  (* 比較（float -> bool） *)
-  | (">"|">="|"<"|"<="|"=="|"!="), VFloat a, VFloat b ->
+
+  (* --- 比較演算: 数値同士は昇格して比較 --- *)
+  | (">"|">="|"<"|"<="|"=="|"!="), v1, v2 when is_number v1 && is_number v2 ->
+      let a = as_float_value v1 and b = as_float_value v2 in
       VBool (match op with
         | ">" -> a > b | ">=" -> a >= b
         | "<" -> a < b | "<=" -> a <= b
-	| "==" -> a = b | "!=" -> a <> b
+        | "==" -> a = b | "!=" -> a <> b
         | _ -> assert false)
-  (* 文字列連結（片側が string ならもう片側を文字列化して連結） *)
+
+  (* --- 文字列連結（片側が string ならもう片側を文字列化して連結） --- *)
   | "+", VString s1, VString s2 -> VString (s1 ^ s2)
   | "+", VString s1, v2         -> VString (s1 ^ to_string_plain v2)
   | "+", v1,         VString s2 -> VString (to_string_plain v1 ^ s2)
-
   | _ ->
     failwith ("unsupported binop/operands: " ^ op)
 
@@ -535,13 +548,6 @@ and eval_stmt (actor:actor) = function
       let vs = List.map (eval_expr actor) args in
         ignore (call_prim mname vs)
     end
-(*  | Send (tgt, meth, args) ->
-    let actual_target =
-      if tgt = "self" then actor.name
-      else if tgt = "sender" then actor.last_sender
-      else tgt
-    in
-      send_message ~from:actor.name actual_target (CallStmt (meth, args)) *)
   | Send (tgt, meth, args) ->
     let actual_target =
       if tgt = "self" then actor.name

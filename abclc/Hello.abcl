@@ -1,5 +1,5 @@
 class Hello {
-  float count = 0;
+  float count = 0.;
 
   method init(n) {
     count = n;
@@ -11,7 +11,7 @@ class Hello {
   }
 
   method inc() {
-    count = count + 1;
+    count = count + 1.;
     call print("count incremented to " + count);
   }
 }
