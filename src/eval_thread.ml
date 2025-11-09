@@ -440,6 +440,12 @@ let prim_table : (string, value list -> value) Hashtbl.t =
           let a = expect_array xs in  (* ここだけ array か検査 *)
             VArray (Array.append a [| v |])  (* v はそのまま入る → 何でもOK *)
         | _ -> failwith "array_push(xs,v): arity 2 expected"));
+    ("print",
+      (function
+        | [v] ->
+          print_endline (string_of_value v);
+          VUnit
+        | _ -> failwith "print(s): arity 1 expected"));
   ];
   h
 

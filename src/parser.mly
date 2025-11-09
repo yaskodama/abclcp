@@ -86,6 +86,7 @@ stmt:
   | LBRACE stmt_list RBRACE { Seq $2 }
   | VAR ID ASSIGN expr SEMICOLON { VarDecl ($2, $4) }
   | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON { VarDecl($2, New($5,$7)) }
+  | ID LPAREN args RPAREN SEMICOLON { CallStmt ($1, $3) }
   
 args:
   /* empty */    { [] }
@@ -104,7 +105,7 @@ expr:
   | expr MINUS expr { Binop ("-", $1, $3) }
   | expr TIMES expr { Binop ("*", $1, $3) }
   | expr DIV expr { Binop ("/", $1, $3) }
-  | NEW ID LPAREN args RPAREN { New ($2, $4) }      /* ★ 追加：new Line(…) を式として構文木へ */
+  | NEW ID LPAREN args RPAREN { New ($2, $4) }
   | ID LPAREN args RPAREN { Call ($1, $3) }
   | expr GE expr { Binop (">=", $1, $3) }
   | expr LE expr { Binop ("<=", $1, $3) }

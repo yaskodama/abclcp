@@ -2,12 +2,12 @@ class Counter {
   var count = 0.;
   method inc() {
     count = count + 1.;
-    call print(count);
+    print(count);
     send self.dec(3.);
   }
   method dec(x) {
     count = count - x;
-    call print(count);
+    print(count);
   }
 }
 
