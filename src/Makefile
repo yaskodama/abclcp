@@ -14,8 +14,8 @@ lexer.ml: lexer.mll
 	$(LEX) lexer.mll
 
 thread_repl: parser.ml parser.mli lexer.ml ast.ml eval_thread.ml sdl_helper.ml compiler.ml repl_thread.ml
-	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -c ast.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -c types.ml
+	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -c ast.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -c typing_env.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -c infer.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -c typecheck.ml

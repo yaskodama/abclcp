@@ -31,7 +31,7 @@ decls:
 
 arg_list:
   expr                       { [$1] }
-| arg_list COMMA expr        { $1 @ [$3] }
+  | arg_list COMMA expr        { $1 @ [$3] }
 
 decl:
   | CLASS ID LBRACE fields methods RBRACE { Class { cname = $2; fields = $4; methods = $5 } }
@@ -41,8 +41,10 @@ decl:
   | ID ID SEMICOLON                        { Instantiate ($1, $2) }
   | ID ID ASSIGN LBRACE inits RBRACE SEMICOLON   { InstantiateInit ($1, $2, $5) }
   | ID ID LPAREN args RPAREN SEMICOLON           { InstantiateArgs ($1, $2, $4) }
+  | VAR ID ASSIGN expr SEMICOLON { Global (VarDecl ($2, $4)) }
   | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON   { Global (VarDecl ($2, New ($5, $7))) }
   | SEND ID DOT ID LPAREN args RPAREN SEMICOLON      { Global (Send ($2, $4, $6)) }
+  | ID LPAREN args RPAREN SEMICOLON { Global (CallStmt ($1, $3)) }
 
 fields:
   | field { [$1] }

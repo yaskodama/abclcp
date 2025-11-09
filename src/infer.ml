@@ -72,7 +72,15 @@ let rec infer_expr (env:env) (e:expr) : ty =
   | New (cls, args) ->
     List.iter (fun a -> ignore (infer_expr env a)) args;
     TObject cls
-
+  | Array (elems, _) ->
+   begin match elems with
+    | [] -> TArray TUnit   (* 空配列は unit[] として扱う *)
+    | e1 :: rest ->
+        let t1 = infer_expr env e1 in
+        List.iter (fun e -> unify (infer_expr env e) t1) rest;
+        TArray t1
+    end
+    
 let set (e:env) (name:string) (sch:scheme) =
   Hashtbl.replace e name [sch]
 
@@ -116,7 +124,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
   | Send (_tgt, _meth, args) ->
       (* まずは送信引数は float と仮定。将来、クラスのメソッド表を env に載せて精密化 *)
       List.iter (fun a -> unify (infer_expr env a) TFloat) args
-  | SSend (_cls, _meth, _args) -> ()   (* TODO: 必要なら精密化 *)
+(*  | SSend (_cls, _meth, _args) -> ()  *)
   | _ -> ()                            (* フォールバックで静かにする *)
 
 (* ---- shallow clone for env (string -> scheme list) ---- *)

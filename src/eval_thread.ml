@@ -11,9 +11,11 @@ type value =
   | VString of string
   | VBool of bool
   | VUnit
-  | VActor of string
-  | VArray of value array
-  
+  | VActor of string * (string, value) Hashtbl.t
+  | VArray of value array * Types.ty option
+
+(* | VObject of string * (string, value) Hashtbl.t  *)
+
 type actor = {
   name : string;
   queue : message Queue.t;
@@ -88,12 +90,11 @@ let rec string_of_value v =
   match v with
   | VInt n    -> string_of_int n
   | VFloat f  -> string_of_float f
-(*  | VString s -> Printf.sprintf "%S" s *)
   | VString s -> s
   | VBool b   -> string_of_bool b
   | VUnit     -> "()"
-  | VActor n -> "<actor:" ^ n ^ ">"
-  | VArray a ->
+  | VActor (n,_) -> "<actor:" ^ n ^ ">"
+  | VArray (a,_) ->
       let items =
         a |> Array.to_list |> List.map string_of_value |> String.concat ", "
       in
@@ -141,7 +142,7 @@ let to_bool = function
   | VString s -> failwith ("string is not allowed as condition: " ^ s)
   | VUnit -> false
   | VActor _   -> failwith "actor is not allowed as condition"
-  | VArray _   -> failwith "array is not allowed as condition"
+  | VArray (_,_)   -> failwith "array is not allowed as condition"
   | VInt i -> i <> 0
 
 let as_bool = function
@@ -150,7 +151,7 @@ let as_bool = function
   | VString s -> failwith ("string is not allowed as condition: " ^ s)
   | VUnit     -> false
   | VActor _  -> failwith "actor is not allowed as condition"
-  | VArray _   -> failwith "array is not allowed as condition"
+  | VArray (_,_)   -> failwith "array is not allowed as condition"
   | VInt i -> i <> 0
 
 let as_float (v : value) : float =
@@ -175,8 +176,8 @@ let to_string_plain = function
   | VInt n -> string_of_int n
   | VBool  b  -> if b then "true" else "false"
   | VUnit     -> "()"
-  | VActor n  -> "<actor:" ^ n ^ ">"
-  | VArray a   ->                           (* 追加：簡易表現でOK *)
+  | VActor (n,_)  -> "<actor:" ^ n ^ ">"
+  | VArray (a,_)   ->                           (* 追加：簡易表現でOK *)
       let items =
         a |> Array.to_list
           |> List.map (function
@@ -185,8 +186,8 @@ let to_string_plain = function
                 | VFloat f  -> string_of_float f
                 | VBool b   -> if b then "true" else "false"
                 | VUnit     -> "()"
-                | VActor n  -> "<actor:" ^ n ^ ">"
-                | VArray _  -> "<array>")
+                | VActor (n,_)  -> "<actor:" ^ n ^ ">"
+                | VArray (_,_)  -> "<array>")
           |> String.concat ", "
       in
       "[" ^ items ^ "]"
@@ -233,8 +234,8 @@ let expr_of_value = function
   | VString s -> String s
   | VBool  b  -> String (if b then "true" else "false")  (* Bool/Unit の式型が無ければ文字列化でOK *)
   | VUnit     -> String "()"
-  | VActor n  -> String ("<actor:" ^ n ^ ">")
-  | VArray a  ->                                        (* 追加：簡易表示でOK *)
+  | VActor (n,_)  -> String ("<actor:" ^ n ^ ">")
+  | VArray (a,_)  ->                                        (* 追加：簡易表示でOK *)
       let items =
         a |> Array.to_list
           |> List.map (function
@@ -243,8 +244,8 @@ let expr_of_value = function
                 | VFloat f  -> string_of_float f
                 | VBool b   -> if b then "true" else "false"
                 | VUnit     -> "()"
-                | VActor n  -> "<actor:" ^ n ^ ">"
-                | VArray _  -> "<array>")
+                | VActor (n,_)  -> "<actor:" ^ n ^ ">"
+                | VArray (_,_)  -> "<array>")
           |> String.concat ", "
       in
       String ("[" ^ items ^ "]")
@@ -299,14 +300,17 @@ let prim_typeof =
      | [VString _] -> VString "string"
      | [VBool _]   -> VString "bool"
      | [VUnit]     -> VString "unit"
-     | [VActor _] -> VString "actor"
-     | [VArray _] -> VString "array"
+     | [VActor (c,_)] -> VString "actor"
+     | [VArray (_, Some ty)] ->
+       let s = Types.string_of_ty ty in
+	VString (s^"[]")
+     | [VArray (_, None)] -> VString "array"
      | _ -> failwith "typeof: expected exactly one argument")
 
 (* ---- Helpers for array prims ---- *)
 let expect_array (v:value) =
   match v with
-  | VArray a -> a
+  | VArray (a,_) -> a
   | _ -> failwith "array_*: not an array"
 
 let expect_index (v:value) =
@@ -315,7 +319,7 @@ let expect_index (v:value) =
   | VFloat f -> int_of_float f     (* float しかリテラルが無い場合の救済 *)
   | _ -> failwith "array_*: index must be int/float"
 
-let make_array (a:value array) = VArray a
+let make_array (a:value array) = VArray (a,None)
 
 (* ===== 5) 組み込み関数 ===== *)
 let prim1_float_float name f = (name, function
@@ -342,6 +346,17 @@ let prim_wait =
        Thread.delay (f /. 1000.0);
        VUnit
    | _ -> failwith "wait: expected one float (ms)")
+
+(* 値から対応する型を推定する関数 *)
+let rec type_of_value = function
+  | VInt _ -> Types.TInt
+  | VFloat _ -> Types.TFloat
+  | VBool _ -> Types.TBool
+  | VString _ -> Types.TString
+  | VArray (_, Some t) -> Types.TArray t
+  | VArray (_, None) -> Types.TArray Types.TUnit
+  | VUnit -> Types.TUnit
+  | _ -> Types.TUnit
 
 let prim_table : (string, value list -> value) Hashtbl.t =
   let h = Hashtbl.create 32 in
@@ -404,19 +419,19 @@ let prim_table : (string, value list -> value) Hashtbl.t =
         | _ -> failwith "sdl_erase_line(x1,y1,x2,y2): arity 4 expected"));
     ("array_empty",
       (function
-        | [] -> VArray [||]
+        | [] -> VArray ([||], None)
         | _  -> failwith "array_empty(): arity 0 expected"));
     ("array_len",
       (function
-        | [VArray a] -> VInt (Array.length a)
+        | [VArray (a,_)] -> VInt (Array.length a)
         | [_]        -> failwith "array_len(xs): xs must be array"
         | _          -> failwith "array_len(xs): arity 1 expected"));
     ("array_get",
       (function
-        | [VArray a; VInt i] ->
+        | [VArray (a,_); VInt i] ->
             if 0 <= i && i < Array.length a then a.(i)
             else failwith "array_get: index out of bounds"
-        | [VArray a; VFloat f] ->
+        | [VArray (a,_); VFloat f] ->
             let i = int_of_float f in
             if 0 <= i && i < Array.length a then a.(i)
             else failwith "array_get: index out of bounds"
@@ -424,22 +439,38 @@ let prim_table : (string, value list -> value) Hashtbl.t =
         | _          -> failwith "array_get(xs,i): arity 2 expected"));
     ("array_set",
       (function
-        | [VArray a; VInt i; v] ->
+        | [VArray (a,ty); VInt i; v] ->
             if 0 <= i && i < Array.length a then
-              let b = Array.copy a in b.(i) <- v; VArray b
+              let b = Array.copy a in b.(i) <- v;
+	      let elem_ty =
+  	        match ty with
+	        | Some _ -> ty
+                | None -> Some(type_of_value v)
+	      in
+	        VArray (b,elem_ty)
             else failwith "array_set: index out of bounds"
-        | [VArray a; VFloat f; v] ->
+        | [VArray (a,ty); VFloat f; v] ->
             let i = int_of_float f in
             if 0 <= i && i < Array.length a then
-              let b = Array.copy a in b.(i) <- v; VArray b
+              let b = Array.copy a in b.(i) <- v;
+	      let elem_ty =
+  	        match ty with
+	        | Some _ -> ty
+                | None -> Some(type_of_value v)
+	      in
+	        VArray (b,elem_ty)
             else failwith "array_set: index out of bounds"
         | [_; _; _]  -> failwith "array_set(xs,i,v): xs must be array and i must be int/float"
         | _          -> failwith "array_set(xs,i,v): arity 3 expected"));
     ("array_push",
       (function
-	| [xs; v] ->
-          let a = expect_array xs in  (* ここだけ array か検査 *)
-            VArray (Array.append a [| v |])  (* v はそのまま入る → 何でもOK *)
+	| [VArray(a,ty); v] ->
+	  let elem_ty =
+  	    match ty with
+	    | Some _ -> ty
+            | None -> Some(type_of_value v)
+	  in
+  	    VArray (Array.append a [| v |],elem_ty)
         | _ -> failwith "array_push(xs,v): arity 2 expected"));
     ("print",
       (function
@@ -480,26 +511,23 @@ let rec eval_expr (actor:actor) = function
       call_prim fname vs
   | Expr e -> eval_expr actor e
 and eval_stmt (actor:actor) = function
-  | Assign (x, e) ->
-      set_var_a actor x (eval_expr actor e)
+  | Assign (x, e) -> set_var_a actor x (eval_expr actor e)
   | VarDecl (name, New (cls, arg_es)) ->
     let cobj = find_class_exn cls in
-    let obj  = { cobj with cname = name } in
-    (* 1) 生成 *)
-    spawn_actor obj;
-    (* 2) 引数を送信側で評価→即値式にし、init を一度だけ呼ぶ *)
-    let arg_vals  = List.map (eval_expr actor) arg_es in
-    let expr_of_value = function
-      | VFloat f  -> Float f
-      | VString s -> String s
-      | VBool b   -> String (if b then "true" else "false")
-      | VUnit     -> String "()"
-      | VActor n  -> String ("<actor:" ^ n ^ ">")
-    in
-    let arg_exprs = List.map expr_of_value arg_vals in
-    send_message ~from:actor.name name (CallStmt ("init", arg_exprs));
-    (* 3) 環境へ束縛（以後 send name.xxx が使える） *)
-    set_var_a actor name (VActor name)
+      register_instance_source name cobj;
+      let obj  = { cobj with cname = name } in
+        spawn_actor obj;
+        let arg_vals  = List.map (eval_expr actor) arg_es in
+        let expr_of_value = function
+          | VFloat f  -> Float f
+          | VString s -> String s
+          | VBool b   -> String (if b then "true" else "false")
+          | VUnit     -> String "()"
+          | VActor (n,_)  -> String ("<actor:" ^ n ^ ">")
+        in
+          let arg_exprs = List.map expr_of_value arg_vals in
+            send_message ~from:actor.name name (CallStmt ("init", arg_exprs));
+            set_var_a actor name (VActor (name,Hashtbl.create 0))
   | VarDecl (name, rhs) ->
       set_var_a actor name (eval_expr actor rhs)
   | If (cond, tbr, fbr) ->
@@ -512,7 +540,6 @@ and eval_stmt (actor:actor) = function
       done
   | Seq ss ->
       List.iter (eval_stmt actor) ss
-  (* SDL primitives: eval_expr actor で評価→float にしてから呼ぶ *)
   | CallStmt ("sdl_init", [w; h]) ->
       let w = int_of_float (as_float (eval_expr actor w))
       and h = int_of_float (as_float (eval_expr actor h)) in
@@ -533,7 +560,6 @@ and eval_stmt (actor:actor) = function
       and x2 = int_of_float (as_float (eval_expr actor e3))
       and y2 = int_of_float (as_float (eval_expr actor e4)) in
       Sdl_helper.sdl_erase_line x1 y1 x2 y2
-(* ★ ここから追加：ユーザ定義メソッドを優先して呼ぶ ★ *)
   | CallStmt (mname, args) ->
     begin match Hashtbl.find_opt actor.methods mname with
     | Some mdecl ->
@@ -544,9 +570,9 @@ and eval_stmt (actor:actor) = function
             actor.name mname (List.length params) (List.length arg_vals);
         let saved = List.map (fun p -> (p, Hashtbl.find_opt actor.env p)) params in
           List.iter2 (fun p v -> Hashtbl.replace actor.env p v) params arg_vals;
-          Hashtbl.replace actor.env "self" (VActor actor.name);
+          Hashtbl.replace actor.env "self" (VActor (actor.name, Hashtbl.create 0));
           if actor.last_sender <> "" then
-            Hashtbl.replace actor.env "sender" (VActor actor.last_sender);
+            Hashtbl.replace actor.env "sender" (VActor (actor.last_sender, Hashtbl.create 0));
             eval_stmt actor mdecl.body;
             List.iter (fun (p, ov) ->
               match ov with Some v -> Hashtbl.replace actor.env p v | None -> Hashtbl.remove actor.env p
@@ -565,15 +591,16 @@ and eval_stmt (actor:actor) = function
     let arg_vals = List.map (eval_expr actor) args in
     let arg_exprs = List.map expr_of_value arg_vals in
     send_message ~from:actor.name actual_target (CallStmt (meth, arg_exprs))
-  | SSend (recv_term, mname, arg_exprs) ->
+(*  | SSend (recv_term, mname, arg_exprs) ->
     let target = resolve_actor_from_term env recv_term in
     let self_name =
-      match lookup_opt env "self" with Some (VActor n) -> n | _ -> "REPL"
+      match lookup_opt env "self" with
+      | Some (VActor (n, _)) -> n
+      | _ -> "REPL"
     in
     let self_actor = find_actor_exn self_name in
     let arg_vals = List.map (fun e -> eval_expr self_actor e) arg_exprs in
-(*     post_message target { mname; args = arg_vals; sender = self_name }; *)
-       ()
+      () *)
 and spawn_actor obj =
   let actor = create_actor obj.cname in
   List.iter (function
@@ -624,18 +651,18 @@ and resolve_actor_from_term env recv_term =
   match recv_term with
   | Var id ->
       (match lookup_opt env id with
-       | Some (VActor name) -> find_actor_exn name
+       | Some (VActor (name,_)) -> find_actor_exn name
        | _                  -> find_actor_exn id)
 
   | _ ->
       let self_name =
         match lookup_opt env "self" with
-        | Some (VActor name) -> name
+        | Some (VActor (name,_)) -> name
         | _ -> failwith "send: receiver expression requires self; use a name or bind self"
       in
       let self_actor = find_actor_exn self_name in
       match eval_expr self_actor recv_term with
-      | VActor name -> find_actor_exn name
+      | VActor (name,_) -> find_actor_exn name
       | _ -> failwith "send: receiver expr must evaluate to an actor (VActor name)"
 
 let wait_ms ms =

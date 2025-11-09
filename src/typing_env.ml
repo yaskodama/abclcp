@@ -77,10 +77,13 @@ let prelude () : env =
   add_mono e "typeof" (TFun ([TString], TString));
   add_mono e "typeof" (TFun ([TUnit],   TString));
   add_mono e "typeof" (TFun ([TActor],  TString));
+  add_mono e "typeof" (TFun ([TObject "Any"],  TString));
+
   (* 要素型つき配列にも対応（多相にしたいなら下の多相版を使う） *)
   let a_to = fresh_tvar () in
   add_poly e "typeof" (Forall ([(!a_to).id], TFun ([TArray (TVar a_to)], TString)));
-
+  let a_to = fresh_tvar () in
+    add_poly e "typeof" (Forall ([(!a_to).id], TFun ([TVar a_to], TString)));
   (* 4) 配列 API（要素型付き・多相） *)
   let a = fresh_tvar () in
   add_poly e "array_empty" (Forall ([(!a).id], TFun ([], TArray (TVar a))));

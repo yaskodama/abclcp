@@ -8,7 +8,7 @@ type expr =
   | Expr of expr
   | Var of string
   | New of string * expr list    (* new Line(10,20) *)
-
+  | Array of expr list * Types.ty option
 type stmt =
   | Assign of string * expr
   | CallStmt of string * expr list
@@ -17,7 +17,6 @@ type stmt =
   | If of expr * stmt * stmt
   | While of expr * stmt
   | VarDecl of string * expr
-  | SSend of expr * string * expr list
 
 type method_decl = {
    mname : string;
@@ -71,9 +70,9 @@ let rec string_of_stmt = function
   | Send (tgt,meth,args)  ->
       let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "Send(%s.%s, [%s])" tgt meth xs
-  | SSend (tgt,meth,args)  ->
+(*  | SSend (tgt,meth,args)  ->
       let xs = args |> List.map string_of_expr |> String.concat ", " in
-      Printf.sprintf "Send(%s.%s, [%s])" (string_of_expr tgt) meth xs
+      Printf.sprintf "Send(%s.%s, [%s])" (string_of_expr tgt) meth xs    *)
   | Seq ss                ->
       let xs = ss |> List.map string_of_stmt |> String.concat "; " in
       Printf.sprintf "Seq([%s])" xs
@@ -151,7 +150,7 @@ let label_of_stmt = function
   | If _                 -> "If"
   | While _              -> "While"
   | VarDecl (x,_)        -> "VarDecl " ^ x
-  | SSend (tgt,m,_)       -> "Send " ^ (string_of_expr tgt) ^ "." ^ m
+(*   | SSend (tgt,m,_)       -> "Send " ^ (string_of_expr tgt) ^ "." ^ m    *)
 
 let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
   let branch = if is_last then "└─ " else "├─ " in
@@ -175,7 +174,7 @@ let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
       dump_stmt ~prefix:child_pref ~is_last:true  body
     | VarDecl (_x,e) ->
       dump_expr ~prefix:child_pref ~is_last:true e
-    | SSend (t, m, args) ->
+(*    | SSend (t, m, args) ->
       Printf.printf "%s└─ ssend\n" prefix;
       let child = prefix ^ "   " in
       Printf.printf "%s├─ target\n" child;
@@ -186,7 +185,7 @@ let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
         let last = (i = List.length args - 1) in
         let p = child ^ (if last then "   " else "│  ") in
         dump_expr ~prefix:p ~is_last:last e
-      ) args
+      ) args *)
 end
 
 let dump_decl ?(prefix="") ?(is_last=true) = function
@@ -295,7 +294,7 @@ let rec pprint_stmt ?(lvl=0) = function
   | Send (tgt,meth,args) ->
       Printf.sprintf "%ssend %s.%s(%s);" (indent lvl) tgt meth
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
-  | SSend (_,_,_) -> "<ssend>"
+(*  | SSend (_,_,_) -> "<ssend>" *)
   | Seq ss ->
       String.concat "\n" (List.map (pprint_stmt ~lvl) ss)
   | If (e,s1,s2) ->

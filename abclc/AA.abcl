@@ -15,7 +15,9 @@ class Hello {
     var xz = array_empty();
     print("type: "+typeof(xz));
     xz = array_push(xz, 10.);
+    print("type: "+typeof(xz));
     xz = array_push(xz, 20.);
+    print("type: "+typeof(xz));
     var c = 3;
     print(c);
     print(array_len(xz));
@@ -34,4 +36,7 @@ class Hello {
 }
 
 var h = new Hello(10.);
+print(typeof(h));
+var t = 1;
+print(typeof(t));
 send h.greet();

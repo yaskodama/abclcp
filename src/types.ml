@@ -93,14 +93,6 @@ let rec occurs (v : tvar ref) (t : ty) : bool =
   | _            -> false
 
 
-(* occurs check: v が t の中に出現してないか *)
-(* let rec occurs (v:tvar) (t:ty) =
-  match repr t with
-  | TVar v'      -> v == v'
-  | TArray t'    -> occurs v t'
-  | TFun (ps, r) -> List.exists (occurs v) ps || occurs v r
-  | _            -> false   *)
-
 (* 単一化 *)
 let rec unify (t1 : ty) (t2 : ty) : unit =
   match repr t1, repr t2 with
@@ -119,53 +111,6 @@ let rec unify (t1 : ty) (t2 : ty) : unit =
       if List.length ps1 <> List.length ps2 then raise (Type_error "arity mismatch");
       List.iter2 unify ps1 ps2; unify r1 r2
   | _ -> raise (Type_error "type mismatch")
-
-(*
-let rec unify t1 t2 =
-  match (repr t1, repr t2) with
-  | (t1, t2) when t1 == t2 -> ()
-  | (TVar v, t) | (t, TVar v) ->
-      if occurs v t then raise (Type_error "occurs check failed") else v.link <- Some t
-  | (TInt,   TInt)
-  | (TFloat, TFloat)
-  | (TBool,  TBool)
-  | (TString,TString)
-  | (TUnit,  TUnit)
-  | (TActor, TActor) -> ()
-  | (TArray a, TArray b) ->
-      unify a b
-  | (TFun (ps1, r1), TFun (ps2, r2)) ->
-      if List.length ps1 <> List.length ps2 then
-        raise (Type_error "arity mismatch");
-      List.iter2 unify ps1 ps2;
-      unify r1 r2
-  | _ ->
-    raise (Type_error "type mismatch")
-    *)
-
-(*
-let rec unify a b =
-  match repr a, repr b with
-  | TVar ({contents = Unbound id} as ra), t
-  | t, TVar ({contents = Unbound id} as ra) ->
-      if occurs id t then raise (Type_error "occurs check failed");
-      ra := Link t
-  | TAny, _ | _, TAny -> ()
-  | TArray a, TArray b -> unify a b
-  | TInt, TInt
-  | TFloat, TFloat
-  | TString, TString
-  | TBool,  TBool
-  | TUnit,  TUnit -> ()
-  | TObject c1, TObject c2 when c1 = c2 -> ()
-  | TFun (as1, r1), TFun (as2, r2) ->
-      if List.length as1 <> List.length as2 then
-        raise (Type_error "arity mismatch");
-      List.iter2 unify as1 as2; unify r1 r2
-  | t1, t2 ->
-      raise (Type_error (Printf.sprintf "type mismatch: %s vs %s"
-                           (string_of_ty t1) (string_of_ty t2)))
-*)
 
 (* 自由型変数集合（ID の集合） *)
 module ISet = Set.Make(Int)

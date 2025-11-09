@@ -162,7 +162,6 @@ let parse_file_safe (filename : string) : (Ast.program, string) result =
   with
   | Sys_error e -> Error (Printf.sprintf "Sys_error: %s" e)
 
-(* ==== REPL セッション状態 ==== *)
 type session = {
   mutable ast      : Ast.program option;  (* 直近にロード/パース成功した AST *)
   mutable filename : string option;       (* 直近に成功したファイル名 *)
@@ -277,7 +276,7 @@ let rec string_of_stmt = function
   | If (cond, t, f) -> "if " ^ string_of_expr cond ^ " then (" ^ string_of_stmt t ^ ") else (" ^ string_of_stmt f ^ ")"
   | While (cond, body) -> "while " ^ string_of_expr cond ^ " do (" ^ string_of_stmt body ^ ")"
   | VarDecl (vname, e) -> vname ^ " = " ^ string_of_expr e
-  | SSend (t,m,args) -> "ssend " ^ (string_of_expr t) ^ "." ^ m ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
+(*  | SSend (t,m,args) -> "ssend " ^ (string_of_expr t) ^ "." ^ m ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"  *)
 
 let string_of_decl = function
   | Class obj ->
@@ -326,7 +325,6 @@ let rec process_command line =
   end
   else if line = "compile" then (
     compiled := true;
-  (* pass1: クラス登録だけ先にやる *)
     List.iter (function
     | Class obj ->
       Printf.printf "[Defined class %s]\n%!" obj.cname;
@@ -372,58 +370,39 @@ let rec process_command line =
               Eval_thread.send_message ~from:"<ctor>" var (CallStmt ("init", args))
           | _ -> Printf.printf "[Error] Class %s not found\n" cls)
     | Global (VarDecl (name, New (cls, args))) ->
-              let cobj = Eval_thread.find_class_exn cls in
-	        Eval_thread.register_instance_source name cobj;  (* ★ 追加 *)
-	        let obj  = { cobj with cname = name } in
-                let actor_inst = Eval_thread.create_actor obj.cname in
-                (* フィールド初期化 *)
-                  List.iter (function
-                  | VarDecl (k, init) ->
-                    let v = Eval_thread.eval_expr actor_inst init in
-                      Hashtbl.replace actor_inst.env k v
-                  | _ -> ()
-                  ) obj.fields;
-                (* メソッド登録 *)
-                  List.iter (fun (m:method_decl) ->
-                    Hashtbl.replace actor_inst.methods m.mname m
-                  ) obj.methods;
-                (* 登録＆起動 *)
-                  Hashtbl.add Eval_thread.actor_table obj.cname actor_inst;
-                  ignore (Thread.create (fun () -> Eval_thread.actor_loop actor_inst) ());
-                (*  ここから：init があるときだけ、個数が合うときだけ送る ★ *)
-                  let init_opt =
-                    List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods
-                in
-                  (match init_opt with
-                  | None ->
-                    (* init 未定義なら何もしない（静かにスキップ／ログするなら下行のコメントを外す） *)
-                    Printf.printf "[Actor] %s: no init; skipped\n%!" name;
-                  ()
-                  | Some m ->
-                    let need = List.length m.params
-                    and got  = List.length args in
-                      if need <> got then
-                        (* 個数不一致でも落とさずスキップ（警告だけにする） *)
-                        Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
-                        name need got
-                      else
-                        (* 引数は expr のまま送り、受信側 CallStmt で評価→束縛する *)
-                        Eval_thread.send_message ~from:"<new>" name (CallStmt ("init", args))
-                  )
+      let cobj = Eval_thread.find_class_exn cls in
+        Eval_thread.register_instance_source name cobj;
+        let obj  = { cobj with cname = name } in
+        let actor_inst = Eval_thread.create_actor obj.cname in
+          List.iter (function
+          | VarDecl (k, init) ->
+            let v = Eval_thread.eval_expr actor_inst init in
+              Hashtbl.replace actor_inst.env k v
+          | _ -> ()
+          ) obj.fields;
+          List.iter (fun (m:method_decl) ->
+            Hashtbl.replace actor_inst.methods m.mname m
+          ) obj.methods;
+          Hashtbl.add Eval_thread.actor_table obj.cname actor_inst;
+          ignore (Thread.create (fun () -> Eval_thread.actor_loop actor_inst) ());
+          let init_opt = List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods in
+            (match init_opt with
+            | None ->
+              Printf.printf "[Actor] %s: no init; skipped\n%!" name;
+              ()
+            | Some m ->
+              let need = List.length m.params and got  = List.length args in
+                if need <> got then
+                  Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
+                    name need got
+                else
+                  Eval_thread.send_message ~from:"<new>" name (CallStmt ("init", args))
+            )
     | Global (Send (tgt, mname, args)) ->
               pending_global_sends := (fun () ->
                 Eval_thread.send_message ~from:"<top>" tgt (CallStmt (mname, args))
               ) :: !pending_global_sends
-    | Global (SSend (recv_term, mname, args)) ->
-      (match recv_term with
-      | Var id ->
-        pending_global_sends := (fun () ->
-        (* 受信者は名前で解決してそのまま送る *)
-          Eval_thread.send_message ~from:"<top>" id (CallStmt (mname, args))
-        ) :: !pending_global_sends
-      | _ ->
-        Printf.printf "[Warn] top-level ssend: receiver must be a name (Var id)\n%!"
-      )
+    | Global (CallStmt(_,_)) -> ()
     | Global _ -> ()
     | Class _ -> ()
     | _ -> ()
