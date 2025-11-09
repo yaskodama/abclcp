@@ -1,20 +1,20 @@
 class Pinger {
   method init() {
     var x = 1.;
-    call print("Pinger starting");
+    print("Pinger starting");
     send ponger.ping(x);
   }
   method pong() {
     var x = 2.;
-    call print("Pinger got pong");
+    print("Pinger got pong");
     send sender.ping(x);
   }
 }
 
 class Ponger {
   method ping(x) {
-    call print(x);
-    call print("Ponger got ping");
+    print(x);
+    print("Ponger got ping");
     send sender.pong();
   }
 }

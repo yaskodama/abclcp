@@ -88,7 +88,8 @@ let rec string_of_value v =
   match v with
   | VInt n    -> string_of_int n
   | VFloat f  -> string_of_float f
-  | VString s -> Printf.sprintf "%S" s
+(*  | VString s -> Printf.sprintf "%S" s *)
+  | VString s -> s
   | VBool b   -> string_of_bool b
   | VUnit     -> "()"
   | VActor n -> "<actor:" ^ n ^ ">"
@@ -179,7 +180,7 @@ let to_string_plain = function
       let items =
         a |> Array.to_list
           |> List.map (function
-                | VString s -> "\"" ^ s ^ "\""
+                | VString s -> s
                 | VInt n    -> string_of_int n
                 | VFloat f  -> string_of_float f
                 | VBool b   -> if b then "true" else "false"
@@ -237,7 +238,7 @@ let expr_of_value = function
       let items =
         a |> Array.to_list
           |> List.map (function
-                | VString s -> "\"" ^ s ^ "\""
+                | VString s -> s
                 | VInt n    -> string_of_int n
                 | VFloat f  -> string_of_float f
                 | VBool b   -> if b then "true" else "false"

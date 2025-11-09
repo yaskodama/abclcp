@@ -261,7 +261,7 @@ let usage_msg = "Usage: abclrepl_thread [-f script_file]"
 
 let rec string_of_expr = function
   | Float f -> string_of_float f
-  | String s -> "\"" ^ s ^ "\""
+  | String s -> s
   | Var v -> v
   | Binop (op, e1, e2) -> "(" ^ string_of_expr e1 ^ " " ^ op ^ " " ^ string_of_expr e2 ^ ")"
   | Call (fname, args) -> fname ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"

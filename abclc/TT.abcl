@@ -2,12 +2,12 @@ class TT {
   var y = 1.0;
   method init() {
     var x = 1.5;
-    call print(typeof(x));
-    call print(x);
+    print(typeof(x));
+    print(x);
     send t1.tt();
   }
   method tt() {
-    call print(2.0);
+    print(2.0);
   }
 }
 

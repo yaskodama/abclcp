@@ -1,17 +1,17 @@
 class Pinger {
   method init() {
-    call print("Pinger starting");
+    print("Pinger starting");
     send ponger.ping();
   }
   method pong() {
-    call print("Pinger got pong");
+    print("Pinger got pong");
     send sender.ping();
   }
 }
 
 class Ponger {
   method ping() {
-    call print("Ponger got ping");
+    print("Ponger got ping");
     send sender.pong();
   }
 }

@@ -4,32 +4,32 @@ class Hello {
   method init(n) {
     var i = 1;
     count = n;
-    call print("Hello object initialized with " + n);
+    print("Hello object initialized with " + n);
   }
 
   method greet() {
-    call print("Hello! count = " + count);
+    print("Hello! count = " + count);
     var xs = typeof(count);
     var xy = "aaaa";
-    call print(typeof(xy));
+    print(typeof(xy));
     var xz = array_empty();
-    call print("type: "+typeof(xz));
+    print("type: "+typeof(xz));
     xz = array_push(xz, 10.);
     xz = array_push(xz, 20.);
     var c = 3;
-    call print(c);
-    call print(array_len(xz));
-    call print(array_get(xz, 0));
+    print(c);
+    print(array_len(xz));
+    print(array_get(xz, 0));
     xz = array_set(xz, 1, 99.);
-    call print(array_get(xz, 1));
+    print(array_get(xz, 1));
     var i = 23;
-    call print(typeof(i));
+    print(typeof(i));
   }
 
   method inc() {
     var i = 1;
     count = count + 1.;
-    call print("count incremented to " + count);
+    print("count incremented to " + count);
   }
 }
 
