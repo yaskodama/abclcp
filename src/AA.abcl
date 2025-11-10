@@ -44,7 +44,4 @@ class Hello {
 }
 
 var h = new Hello(10.);
-print(typeof(h));
-var t = 1;
-print(typeof(t));
 send h.greet();

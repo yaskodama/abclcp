@@ -296,7 +296,13 @@ let prim_typeof =
      | [VString _] -> VString "string"
      | [VBool _]   -> VString "bool"
      | [VUnit]     -> VString "unit"
-     | [VActor (c,_)] -> VString "actor"
+     | [VActor (cls_name, _)] ->
+       let ms = Types.lookup_class_methods cls_name in
+         if ms = [] then
+	   VString ("actor("^cls_name^")")
+	 else
+	 let ty = Types.TActor(cls_name,ms) in
+	   VString(Types.string_of_ty ty)
      | [VArray (_, Some ty)] ->
        let s = Types.string_of_ty ty in
 	VString (s^"[]")
@@ -537,7 +543,7 @@ and eval_stmt (actor:actor) = function
                 else
                   send_message ~from:"<new>" name (CallStmt ("init", args))
             );
-            set_var_a actor name (VActor (name, Hashtbl.create 0))
+            set_var_a actor name (VActor (cls, Hashtbl.create 0))
   | VarDecl (name, rhs) ->
       set_var_a actor name (eval_expr actor rhs)
   | If (cond, tbr, fbr) ->

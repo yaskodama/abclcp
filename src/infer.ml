@@ -70,8 +70,9 @@ let rec infer_expr (env:env) (e:expr) : ty =
       let sch = get_var_scheme_exn env x in
         instantiate sch
   | New (cls, args) ->
-    List.iter (fun a -> ignore (infer_expr env a)) args;
-    TObject cls
+    let _ = List.map (infer_expr env) args in
+    let ms = Types.lookup_class_methods cls in
+      TActor (cls, ms)
   | Array (elems, _) ->
    begin match elems with
     | [] -> TArray TUnit   (* 空配列は unit[] として扱う *)
@@ -113,8 +114,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
       unify tc TFloat;
       check_stmt env tbr; check_stmt env fbr
   | While (cond, body) ->
-      let tc = infer_expr env cond in
-      unify tc TFloat;
+      let tc = infer_expr env cond in unify tc TFloat;
       check_stmt env body
   | Seq ss -> List.iter (check_stmt env) ss
   | CallStmt (fname, args) ->
@@ -124,7 +124,6 @@ let rec check_stmt (env:env) (s:stmt) : unit =
   | Send (_tgt, _meth, args) ->
       (* まずは送信引数は float と仮定。将来、クラスのメソッド表を env に載せて精密化 *)
       List.iter (fun a -> unify (infer_expr env a) TFloat) args
-(*  | SSend (_cls, _meth, _args) -> ()  *)
   | _ -> ()                            (* フォールバックで静かにする *)
 
 (* ---- shallow clone for env (string -> scheme list) ---- *)
@@ -154,14 +153,14 @@ let check_decl (env:env) = function
       ) c.methods;
 
       (* 3) 本文は“ローカル環境”で検査：ローカル変数が外へ漏れない *)
-        List.iter (fun m ->
-          let env_m = clone env in
-          (* ★ 追加：メソッド仮引数をローカル環境に束縛（型は float 想定） *)
-            List.iter (fun p ->
-              set env_m p (Forall ([], TFloat))
-            ) m.params;
-            check_stmt env_m m.body
-        ) c.methods
+      List.iter (fun m ->
+        let env_m = clone env in
+        (* ★ 追加：メソッド仮引数をローカル環境に束縛（型は float 想定） *)
+          List.iter (fun p ->
+            set env_m p (Forall ([], TFloat))
+          ) m.params;
+          check_stmt env_m m.body
+      ) c.methods
   | Instantiate (_obj, _class) -> ()
   | InstantiateInit (_obj, _class, inits) ->
     List.iter (fun st ->
@@ -169,9 +168,9 @@ let check_decl (env:env) = function
       | VarDecl (_f, e) -> ignore (infer_expr env e)
       | _ -> ()
     ) inits
-  | InstantiateArgs (_cls, _var, args) ->             (* ★ 追加 *)
+  | InstantiateArgs (_cls, _var, args) ->  
       List.iter (fun a -> unify (infer_expr env a) TFloat) args
-  | Global s ->                           (* ★ 追加 *)
+  | Global s ->                         
       check_stmt env s
 
 let check_program (p:program) : (Typing_env.env, string) result =

@@ -22,7 +22,6 @@ let add_poly (e:env) (name:string) (sch:scheme) : unit =
 let find_all (e:env) (name:string) : scheme list =
   match Hashtbl.find_opt e name with Some xs -> xs | None -> []
 
-(* 初期ビルトイン環境 *)
 let prelude () : env =
   let e = empty_env () in
 
@@ -46,7 +45,17 @@ let prelude () : env =
   let a = fresh_tvar () in
   add_poly e "+" (Forall ([(!a).id], TFun ([TVar a; TString], TString)));
 
-(* --- SDL primitives (typing_env.ml / prelude 内のどこかの最後で OK) --- *)
+  Types.register_class "H" [
+    ("greet", Types.TFun ([], Types.TUnit));
+  ];
+
+(* クラス Hello の例：init(n:float) : unit / greet() : unit *)
+  Types.register_class "Hello" [
+    ("init",  Types.TFun ([Types.TFloat], Types.TUnit));
+    ("greet", Types.TFun ([],             Types.TUnit));
+  ];
+
+  (* --- SDL primitives (typing_env.ml / prelude 内のどこかの最後で OK) --- *)
 
   (* ---- wait: sleep milliseconds ---- *)
   add_mono e "wait" (TFun ([TInt],   TUnit));
@@ -76,8 +85,7 @@ let prelude () : env =
   add_mono e "typeof" (TFun ([TBool],   TString));
   add_mono e "typeof" (TFun ([TString], TString));
   add_mono e "typeof" (TFun ([TUnit],   TString));
-  add_mono e "typeof" (TFun ([TActor],  TString));
-  add_mono e "typeof" (TFun ([TObject "Any"],  TString));
+  add_mono e "typeof" (TFun ([TActor("Hello",[])],  TString));
 
   (* 要素型つき配列にも対応（多相にしたいなら下の多相版を使う） *)
   let a_to = fresh_tvar () in
