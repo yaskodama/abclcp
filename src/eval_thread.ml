@@ -14,8 +14,6 @@ type value =
   | VActor of string * (string, value) Hashtbl.t
   | VArray of value array * Types.ty option
 
-(* | VObject of string * (string, value) Hashtbl.t  *)
-
 type actor = {
   name : string;
   queue : message Queue.t;
@@ -59,7 +57,6 @@ let get_stored (id:int) : value option = Hashtbl.find_opt object_store id
 let get_history (key:string) : int list =
   match Hashtbl.find_opt var_history key with Some xs -> xs | None -> []
 
-(* === 既存の上部あたりに追加 === *)
 let instance_source : (string, class_decl) Hashtbl.t = Hashtbl.create 64
 
 let register_instance_source (instance_name : string) (src : class_decl) : unit =
@@ -68,7 +65,6 @@ let register_instance_source (instance_name : string) (src : class_decl) : unit 
 let get_instance_source (instance_name : string) : class_decl option =
   Hashtbl.find_opt instance_source instance_name
 
-(* クラス定義の登録先（REPLに依存しない） *)
 let class_env : (string, class_decl) Hashtbl.t = Hashtbl.create 64
 
 let register_class (c:class_decl) =
@@ -282,7 +278,7 @@ let send_message ~from target_name msg =
       (match msg with CallStmt(m,_) -> m | _ -> "stmt");
     close_out oc
   in
-  log_message ();
+(*  log_message (); *)
   match Hashtbl.find_opt actor_table target_name with
   | Some actor ->
       Mutex.lock actor.mutex;
@@ -512,22 +508,36 @@ let rec eval_expr (actor:actor) = function
   | Expr e -> eval_expr actor e
 and eval_stmt (actor:actor) = function
   | Assign (x, e) -> set_var_a actor x (eval_expr actor e)
-  | VarDecl (name, New (cls, arg_es)) ->
+  | VarDecl (name, New (cls, args)) ->
     let cobj = find_class_exn cls in
       register_instance_source name cobj;
       let obj  = { cobj with cname = name } in
-        spawn_actor obj;
-        let arg_vals  = List.map (eval_expr actor) arg_es in
-        let expr_of_value = function
-          | VFloat f  -> Float f
-          | VString s -> String s
-          | VBool b   -> String (if b then "true" else "false")
-          | VUnit     -> String "()"
-          | VActor (n,_)  -> String ("<actor:" ^ n ^ ">")
-        in
-          let arg_exprs = List.map expr_of_value arg_vals in
-            send_message ~from:actor.name name (CallStmt ("init", arg_exprs));
-            set_var_a actor name (VActor (name,Hashtbl.create 0))
+      let actor_inst = create_actor obj.cname in
+          List.iter (function
+          | VarDecl (k, init) ->
+            let v = eval_expr actor_inst init in
+              Hashtbl.replace actor_inst.env k v
+          | _ -> ()
+          ) obj.fields;
+          List.iter (fun (m:method_decl) ->
+            Hashtbl.replace actor_inst.methods m.mname m
+          ) obj.methods;
+          Hashtbl.add actor_table obj.cname actor_inst;
+          ignore (Thread.create (fun () -> actor_loop actor_inst) ());
+          let init_opt = List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods in
+            (match init_opt with
+            | None ->
+              Printf.printf "[Actor] %s: no init; skipped\n%!" name;
+              ()
+            | Some m ->
+              let need = List.length m.params and got  = List.length args in
+                if need <> got then
+                  Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
+                    name need got
+                else
+                  send_message ~from:"<new>" name (CallStmt ("init", args))
+            );
+            set_var_a actor name (VActor (name, Hashtbl.create 0))
   | VarDecl (name, rhs) ->
       set_var_a actor name (eval_expr actor rhs)
   | If (cond, tbr, fbr) ->
@@ -591,16 +601,6 @@ and eval_stmt (actor:actor) = function
     let arg_vals = List.map (eval_expr actor) args in
     let arg_exprs = List.map expr_of_value arg_vals in
     send_message ~from:actor.name actual_target (CallStmt (meth, arg_exprs))
-(*  | SSend (recv_term, mname, arg_exprs) ->
-    let target = resolve_actor_from_term env recv_term in
-    let self_name =
-      match lookup_opt env "self" with
-      | Some (VActor (n, _)) -> n
-      | _ -> "REPL"
-    in
-    let self_actor = find_actor_exn self_name in
-    let arg_vals = List.map (fun e -> eval_expr self_actor e) arg_exprs in
-      () *)
 and spawn_actor obj =
   let actor = create_actor obj.cname in
   List.iter (function

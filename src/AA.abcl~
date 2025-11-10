@@ -11,7 +11,9 @@ class Hello {
     var i = 1;
     count = n;
     print("Hello object initialized with " + n);
-    var hh = new H();
+//    var hh = new H();
+    var hh = 1;
+    print(typeof(hh));
   }
 
   method greet() {

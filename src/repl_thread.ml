@@ -276,7 +276,6 @@ let rec string_of_stmt = function
   | If (cond, t, f) -> "if " ^ string_of_expr cond ^ " then (" ^ string_of_stmt t ^ ") else (" ^ string_of_stmt f ^ ")"
   | While (cond, body) -> "while " ^ string_of_expr cond ^ " do (" ^ string_of_stmt body ^ ")"
   | VarDecl (vname, e) -> vname ^ " = " ^ string_of_expr e
-(*  | SSend (t,m,args) -> "ssend " ^ (string_of_expr t) ^ "." ^ m ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"  *)
 
 let string_of_decl = function
   | Class obj ->
@@ -399,10 +398,12 @@ let rec process_command line =
                   Eval_thread.send_message ~from:"<new>" name (CallStmt ("init", args))
             )
     | Global (Send (tgt, mname, args)) ->
-              pending_global_sends := (fun () ->
-                Eval_thread.send_message ~from:"<top>" tgt (CallStmt (mname, args))
-              ) :: !pending_global_sends
-    | Global (CallStmt(_,_)) -> ()
+      pending_global_sends := (fun () -> Eval_thread.send_message ~from:"<top>" tgt (CallStmt (mname, args))
+      ) :: !pending_global_sends
+(*    | Global stmts ->
+      List.iter (fun s -> ()
+        ignore (Eval_thread.eval_stmt Eval_thread.actor s)
+        ) stmts; *)
     | Global _ -> ()
     | Class _ -> ()
     | _ -> ()
@@ -558,7 +559,6 @@ let start_repl () =
         in
           back !i
         in
-      (* まだブレース開いている or セミコロン/クローズ無しなら続行 *)
           if (!depth > 0) || (not last_nonspace_is_term) then (
           building := true;
           loop ()
@@ -571,7 +571,6 @@ let start_repl () =
               match parse_program_safe src with
               | Error msg ->
                 Printf.printf "[Parse error] %s\n%!" msg;
-            (* 失敗しても REPL へ戻る *)
                 loop ()
               | Ok decls ->
             (* AST表示（既存のダンプ関数を使う） *)
