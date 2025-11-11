@@ -10,6 +10,7 @@ class Hello {
   method init(n) {
     var i = 1;
     count = n;
+    print(typeof(count));
     print("Hello object initialized with " + n);
     var hh = new H();
     print(typeof(hh));
@@ -43,5 +44,5 @@ class Hello {
   }
 }
 
-var h = new Hello(10.);
-send h.greet();
+var h = new Hello(10);
+//send h.greet();

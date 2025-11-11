@@ -8,7 +8,19 @@ type env = (string, scheme list) Hashtbl.t
 let add (e:env) (name:string) (sch:scheme) : unit =
   let prev = match Hashtbl.find_opt e name with Some xs -> xs | None -> [] in
   Hashtbl.replace e name (sch :: prev)
-
+(*
+let ftv_env (env : env) : Types.ISet.t =
+  (* env 内の各値の型（ty or scheme）から自由型変数を集めて合併する *)
+  Env.fold (fun _name binding acc ->
+    match binding with
+    | Scheme sch -> Types.ISet.union acc (Types.ftv_scheme sch)
+    | Mono   ty  -> Types.ISet.union acc (Types.ftv_ty ty)
+  ) env Types.ISet.empty
+*)
+(*
+let generalize_env (env : env) (t : Types.ty) : Types.scheme =
+  Types.generalize (ftv_env env) t
+*)
 let empty_env () : env = Hashtbl.create 97
 
 let add_mono (e:env) (name:string) (t:ty) : unit =
@@ -45,15 +57,15 @@ let prelude () : env =
   let a = fresh_tvar () in
   add_poly e "+" (Forall ([(!a).id], TFun ([TVar a; TString], TString)));
 
-  Types.register_class "H" [
+(*  Types.register_class "H" [
     ("greet", Types.TFun ([], Types.TUnit));
-  ];
+  ]; *)
 
 (* クラス Hello の例：init(n:float) : unit / greet() : unit *)
-  Types.register_class "Hello" [
+(*  Types.register_class "Hello" [
     ("init",  Types.TFun ([Types.TFloat], Types.TUnit));
     ("greet", Types.TFun ([],             Types.TUnit));
-  ];
+  ]; *)
 
   (* --- SDL primitives (typing_env.ml / prelude 内のどこかの最後で OK) --- *)
 

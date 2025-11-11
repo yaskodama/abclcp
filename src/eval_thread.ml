@@ -16,6 +16,7 @@ type value =
 
 type actor = {
   name : string;
+  cls  : string;
   queue : message Queue.t;
   mutex : Mutex.t;
   cond  : Condition.t;
@@ -29,6 +30,20 @@ let actor_table : (string, actor) Hashtbl.t = Hashtbl.create 32
 let env : (string, value) Hashtbl.t = Hashtbl.create 64
 
 (* === ObjectStore: 再代入で上書きされる「前の値」を保管しておくための簡易仕組み === *)
+
+let iter_active_actors (k : string -> string -> unit) : unit =
+  Hashtbl.iter
+    (fun aname (a : actor) ->
+       let cls_name =
+         match Hashtbl.find_opt a.env "__class" with
+         | Some (VString cn) -> cn
+         | _ ->
+           (match Hashtbl.find_opt a.env "self" with
+            | Some (VActor (cn, _)) -> cn
+            | _ -> aname)  (* フォールバック：不明なら名前 *)
+       in
+       k aname cls_name)
+    actor_table
 
 (* 値を保存するテーブル（id -> value） *)
 let object_store : (int, value) Hashtbl.t = Hashtbl.create 256
@@ -52,7 +67,6 @@ let remember (key:string) (v:value) : int =
   Hashtbl.replace var_history key (id :: ids);
   id
 
-(* デバッグ・確認用の簡単ヘルパ *)
 let get_stored (id:int) : value option = Hashtbl.find_opt object_store id
 let get_history (key:string) : int list =
   match Hashtbl.find_opt var_history key with Some xs -> xs | None -> []
@@ -253,16 +267,16 @@ let get_var_a (actor:actor) (x:string) : value =
   | None   -> failwith ("unbound variable: " ^ x)
 
 let set_var_a (actor:actor) (x:string) (v:value) : unit =
-  (* いま actor.env に x が既にあるなら、上書き前の値を保存して履歴に追加 *)
   (match Hashtbl.find_opt actor.env x with
    | Some old -> ignore (remember (actor.name ^ "." ^ x) old)
    | None -> ());
   (* その後で通常通りに上書き *)
   Hashtbl.replace actor.env x v
 
-let create_actor name =
+let create_actor name cls =
   {
     name;
+    cls;
     queue = Queue.create ();
     mutex = Mutex.create ();
     cond = Condition.create ();
@@ -297,12 +311,9 @@ let prim_typeof =
      | [VBool _]   -> VString "bool"
      | [VUnit]     -> VString "unit"
      | [VActor (cls_name, _)] ->
-       let ms = Types.lookup_class_methods cls_name in
-         if ms = [] then
-	   VString ("actor("^cls_name^")")
-	 else
-	 let ty = Types.TActor(cls_name,ms) in
-	   VString(Types.string_of_ty ty)
+       let methods = Types.lookup_class_methods_inst cls_name in
+         if methods = [] then VString ("actor(" ^ cls_name ^ ")")
+         else VString (Types.string_of_ty (TActor (cls_name, methods)))
      | [VArray (_, Some ty)] ->
        let s = Types.string_of_ty ty in
 	VString (s^"[]")
@@ -480,11 +491,27 @@ let prim_table : (string, value list -> value) Hashtbl.t =
           print_endline (string_of_value v);
           VUnit
         | _ -> failwith "print(s): arity 1 expected"));
+    ("actor_dump",
+     (function
+       | [VActor (cls_name, _)] ->
+         let ms = Types.lookup_class_methods_inst cls_name in
+         let s =
+           if ms = [] then ("actor(" ^ cls_name ^ ")")
+           else Types.string_of_ty (TActor (cls_name, ms))
+         in
+           print_endline s; VUnit
+       | [v] ->
+         print_endline ("(not an actor) typeof=" ^
+           (match v with
+            | VString _ -> "string" | VInt _ -> "int" | VFloat _ -> "float"
+            | VBool _ -> "bool" | VArray _ -> "array" | VUnit -> "unit"
+            | VActor (c,_) -> "actor("^c^")"));
+           VUnit
+       | _ -> failwith "actor_dump(x): arity 1 expected"));
   ];
   h
 
 let call_prim name args =
-(*  Printf.printf "[debug] call_prim %s, argc=%d\n%!" name (List.length args);  *)
   match Hashtbl.find_opt prim_table name with
   | Some f -> f args
   | None ->
@@ -494,7 +521,6 @@ let call_prim name args =
 
 let add_prim name fn = Hashtbl.replace prim_table name fn
 
-(* グローバル actor_table から名前で取得（なければ例外） *)
 let find_actor_exn name =
   try Hashtbl.find actor_table name
   with Not_found -> failwith ("send: unknown actor: " ^ name)
@@ -517,33 +543,33 @@ and eval_stmt (actor:actor) = function
   | VarDecl (name, New (cls, args)) ->
     let cobj = find_class_exn cls in
       register_instance_source name cobj;
-      let obj  = { cobj with cname = name } in
-      let actor_inst = create_actor obj.cname in
-          List.iter (function
-          | VarDecl (k, init) ->
-            let v = eval_expr actor_inst init in
-              Hashtbl.replace actor_inst.env k v
-          | _ -> ()
-          ) obj.fields;
-          List.iter (fun (m:method_decl) ->
-            Hashtbl.replace actor_inst.methods m.mname m
-          ) obj.methods;
-          Hashtbl.add actor_table obj.cname actor_inst;
-          ignore (Thread.create (fun () -> actor_loop actor_inst) ());
-          let init_opt = List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods in
-            (match init_opt with
-            | None ->
-              Printf.printf "[Actor] %s: no init; skipped\n%!" name;
-              ()
-            | Some m ->
-              let need = List.length m.params and got  = List.length args in
-                if need <> got then
-                  Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
-                    name need got
-                else
-                  send_message ~from:"<new>" name (CallStmt ("init", args))
-            );
-            set_var_a actor name (VActor (cls, Hashtbl.create 0))
+      let obj  = { cobj with cname = cls } in
+      let actor_inst = create_actor obj.cname cls in
+        List.iter (function
+        | VarDecl (k, init) ->
+          let v = eval_expr actor_inst init in
+            Hashtbl.replace actor_inst.env k v
+        | _ -> ()
+        ) obj.fields;
+        List.iter (fun (m:method_decl) ->
+          Hashtbl.replace actor_inst.methods m.mname m
+        ) obj.methods;
+        Hashtbl.add actor_table name actor_inst;
+        ignore (Thread.create (fun () -> actor_loop actor_inst) ());
+        let init_opt = List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods in
+          (match init_opt with
+          | None ->
+            Printf.printf "[Actor] %s: no init; skipped\n%!" name;
+            ()
+          | Some m ->
+            let need = List.length m.params and got  = List.length args in
+              if need <> got then
+                Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
+                  name need got
+              else
+                send_message ~from:"<new>" name (CallStmt ("init", args))
+          );
+          set_var_a actor name (VActor (cls, Hashtbl.create 0))
   | VarDecl (name, rhs) ->
       set_var_a actor name (eval_expr actor rhs)
   | If (cond, tbr, fbr) ->
@@ -586,13 +612,14 @@ and eval_stmt (actor:actor) = function
             actor.name mname (List.length params) (List.length arg_vals);
         let saved = List.map (fun p -> (p, Hashtbl.find_opt actor.env p)) params in
           List.iter2 (fun p v -> Hashtbl.replace actor.env p v) params arg_vals;
-          Hashtbl.replace actor.env "self" (VActor (actor.name, Hashtbl.create 0));
+          Hashtbl.replace actor.env "self" (VActor (actor.cls, Hashtbl.create 0));
+          Hashtbl.replace actor.env "__class" (VString actor.cls);
           if actor.last_sender <> "" then
             Hashtbl.replace actor.env "sender" (VActor (actor.last_sender, Hashtbl.create 0));
             eval_stmt actor mdecl.body;
             List.iter (fun (p, ov) ->
               match ov with Some v -> Hashtbl.replace actor.env p v | None -> Hashtbl.remove actor.env p
-            ) saved
+          ) saved
     | None ->
       let vs = List.map (eval_expr actor) args in
         ignore (call_prim mname vs)
@@ -607,8 +634,8 @@ and eval_stmt (actor:actor) = function
     let arg_vals = List.map (eval_expr actor) args in
     let arg_exprs = List.map expr_of_value arg_vals in
     send_message ~from:actor.name actual_target (CallStmt (meth, arg_exprs))
-and spawn_actor obj =
-  let actor = create_actor obj.cname in
+and spawn_actor obj cls =
+  let actor = create_actor obj.cname cls in
   List.iter (function
     | VarDecl (k,init) ->
       let v = eval_expr actor init in

@@ -327,7 +327,13 @@ let rec process_command line =
     List.iter (function
     | Class obj ->
       Printf.printf "[Defined class %s]\n%!" obj.cname;
-      Eval_thread.register_class obj
+      Eval_thread.register_class obj;
+      let ms_arity : (string * int) list =
+        obj.methods |> List.map (fun (md:Ast.method_decl) -> (md.mname, List.length md.params))
+      in
+        Types.register_class_auto obj.cname ms_arity;
+        Printf.printf "[Registered types for class %s: %s]->register_class.\n%!" obj.cname
+        (String.concat ", " (List.map (fun (m,a)-> Printf.sprintf "%s/%d" m a) ms_arity));
     | _ -> ()
     ) !program_buffer;
     List.iter (function
@@ -340,7 +346,7 @@ let rec process_command line =
           match List.find_opt (function Class c -> c.cname = cls | _ -> false) !program_buffer with
           | Some (Class cobj) -> (
 	    let obj = { cobj with cname = var } in
-              spawn_actor obj)
+              spawn_actor obj cls)
 	  | _ -> Printf.printf "[Error] Class %s not found\n" cls)
     | InstantiateInit (cls, var, initvals) ->
       if Hashtbl.mem Eval_thread.actor_table var then
@@ -352,27 +358,27 @@ let rec process_command line =
           | Some (Class cobj) ->
 	    let obj = { cobj with cname = var } in
 	      Printf.printf "------[Defined class %s]\n" cobj.cname;
-	      Eval_thread.spawn_actor obj
-          | _ -> Printf.printf "[Error] Class %s not found\n" cls)
+	      Eval_thread.spawn_actor obj cls;
+	  | _ -> Printf.printf "[Error] Class %s not found\n" cls)
     | InstantiateArgs (cls, var, args) ->
       if Hashtbl.mem Eval_thread.actor_table var then
         Printf.printf "[Error] Instance '%s' already exists]\n" var
       else
         (let cobj = Eval_thread.find_class_exn cls in
 	  Eval_thread.register_instance_source var cobj;  (* ★ 追加 *)
-          match List.find_opt (function Class c -> c.cname = cls | _ -> false) !program_buffer with
+	  match List.find_opt (function Class c -> c.cname = cls | _ -> false) !program_buffer with
           | Some (Class cobj) ->
             let obj = { cobj with cname = var } in
               (* 1) まず生成 *)
-              Eval_thread.spawn_actor obj;
-              (* 2) 生成直後に一度だけ init(...) を送る *)
+              Eval_thread.spawn_actor obj cls;
+	      (* 2) 生成直後に一度だけ init(...) を送る *)
               Eval_thread.send_message ~from:"<ctor>" var (CallStmt ("init", args))
           | _ -> Printf.printf "[Error] Class %s not found\n" cls)
     | Global (VarDecl (name, New (cls, args))) ->
       let cobj = Eval_thread.find_class_exn cls in
         Eval_thread.register_instance_source name cobj;
-        let obj  = { cobj with cname = name } in
-        let actor_inst = Eval_thread.create_actor obj.cname in
+        let obj  = { cobj with cname = cls } in
+        let actor_inst = Eval_thread.create_actor obj.cname cls in
           List.iter (function
           | VarDecl (k, init) ->
             let v = Eval_thread.eval_expr actor_inst init in
@@ -382,7 +388,7 @@ let rec process_command line =
           List.iter (fun (m:method_decl) ->
             Hashtbl.replace actor_inst.methods m.mname m
           ) obj.methods;
-          Hashtbl.add Eval_thread.actor_table obj.cname actor_inst;
+          Hashtbl.add Eval_thread.actor_table name actor_inst;
           ignore (Thread.create (fun () -> Eval_thread.actor_loop actor_inst) ());
           let init_opt = List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods in
             (match init_opt with
@@ -485,41 +491,50 @@ let rec process_command line =
             Printf.printf "[Error] no AST found for '%s' (not an instance nor a class)\n%!" name)
         )
   else if line = "list" then (
-    print_endline "Active objects:";
-    Hashtbl.iter (fun name _ -> Printf.printf " - %s\n" name) Eval_thread.actor_table
+    print_endline "[Registered actors and types]";
+    Eval_thread.iter_active_actors (fun aname cls_name ->
+      let methods = Types.lookup_class_methods_inst cls_name in
+      let ty_str =
+        if methods = [] then
+          "actor(" ^ cls_name ^ ")"
+        else
+          Types.string_of_ty (TActor (cls_name, methods))
+      in
+      Printf.printf "- %s : %s\n%!" aname ty_str
+    );
+    flush stdout;
   )
   else if line = "vlist" then (
-            print_endline "Active objects:";
-            Hashtbl.iter (fun name (actor:Eval_thread.actor) ->
-            (* 見出し：オブジェクト名のみ *)
-            Printf.printf "- %s\n" name;
-            (* 変数（状態） *)
-            if Hashtbl.length actor.env = 0 then
-              Printf.printf "    (no vars)\n"
-            else
-              Hashtbl.iter (fun key v ->
-                Printf.printf "    var %s = %s\n" key (string_of_value v)
-              ) actor.env;
-              (* メソッド一覧：methods のキーを列挙 *)
-            let method_names =
-              Hashtbl.fold (fun mname _ acc -> mname :: acc) actor.methods []
-              |> List.sort String.compare
-            in
-              Printf.printf "    methods: %s\n" (String.concat ", " method_names);
-            ) Eval_thread.actor_table
+    print_endline "Active objects:";
+    Hashtbl.iter (fun name (actor:Eval_thread.actor) ->
+    (* 見出し：オブジェクト名のみ *)
+    Printf.printf "- %s\n" name;
+    (* 変数（状態） *)
+    if Hashtbl.length actor.env = 0 then
+      Printf.printf "    (no vars)\n"
+    else
+      Hashtbl.iter (fun key v ->
+      Printf.printf "    var %s = %s\n" key (string_of_value v)
+      ) actor.env;
+      (* メソッド一覧：methods のキーを列挙 *)
+      let method_names =
+        Hashtbl.fold (fun mname _ acc -> mname :: acc) actor.methods []
+        |> List.sort String.compare
+      in
+        Printf.printf "    methods: %s\n" (String.concat ", " method_names);
+    ) Eval_thread.actor_table
   )    
   else if String.length line > 7 && String.sub line 0 7 = "pprint " then (
-            let name = String.trim (String.sub line 7 (String.length line - 7)) in
-              match Eval_thread.get_instance_source name with
-              | Some cdecl ->
-                print_endline (Ast.pprint_class cdecl)
-              | None ->
-              (* クラス名として検索 *)
-              (match Hashtbl.find_opt Eval_thread.class_env name with
-                | Some cdecl ->
-                  print_endline (Ast.pprint_class cdecl)
-                | None ->
-                  Printf.printf "[Error] cannot find source for '%s'\n%!" name)
+    let name = String.trim (String.sub line 7 (String.length line - 7)) in
+      match Eval_thread.get_instance_source name with
+      | Some cdecl ->
+        print_endline (Ast.pprint_class cdecl)
+      | None ->
+        (match Hashtbl.find_opt Eval_thread.class_env name with
+        | Some cdecl ->
+          print_endline (Ast.pprint_class cdecl)
+        | None ->
+          Printf.printf "[Error] cannot find source for '%s'\n%!" name)
   )
 
 let start_repl () =

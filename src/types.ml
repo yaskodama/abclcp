@@ -12,33 +12,68 @@ and ty =
   | TArray of ty
   | TAny
   | TRecord of (string * ty) list
-
-type scheme = Forall of int list * ty
+and scheme = Forall of int list * ty
 
 exception Type_error of string
 
 let counter = ref 0
+let next_scheme_var = ref 0
 
 let fresh_id =
   let r = ref 0 in
   fun () -> incr r; !r
 
-let fresh_tvar () : tvar ref = ref { id = fresh_id (); link = None }
+let next_tvar = ref 0
+let fresh_tvar () =
+  let id = !next_tvar in
+  incr next_tvar;
+  ref { id; link = None }
 
+(* スキーム用の新しい型変数ID（int）を発行するカウンタ *)
+let fresh_scheme_var () =
+  let v = !next_scheme_var in
+  incr next_scheme_var;
+  v
 
-let class_methods : (string, (string * ty) list) Hashtbl.t = Hashtbl.create 17
+(* n 個の新しい int 型変数IDを作る：Forall([id0; id1; ...], ty) 用 *)
+let freshes (n : int) : int list =
+  let rec go k acc =
+    if k = n then List.rev acc
+    else go (k + 1) (fresh_scheme_var () :: acc)
+  in
+  go 0 []
 
-let register_class (name : string) (methods : (string * ty) list) =
-  Hashtbl.replace class_methods name methods
+let class_methods_schemes : (string, (string * scheme) list) Hashtbl.t =
+  Hashtbl.create 17
 
-let lookup_class_methods name =
-  match Hashtbl.find_opt class_methods name with
-  | Some ms -> ms
-  | None -> []
+let register_class (name : string) (methods : (string * scheme) list) : unit =
+  Hashtbl.replace class_methods_schemes name methods
 
-(* ========================================= *)
-(* 代表元をたどって正規化する関数          *)
-(* ========================================= *)
+let lookup_class_method_scheme (cls : string) (m : string) : scheme option =
+  match Hashtbl.find_opt class_methods_schemes cls with
+  | Some lst -> List.assoc_opt m lst
+  | None -> None
+
+(* ★ ここがポイント：引数個数 arity から、tvar ref と その id を同時に作る *)
+let register_class_auto (name : string) (methods_arity : (string * int) list) : unit =
+  let ms =
+    methods_arity
+    |> List.map (fun (m, arity) ->
+         (* arity 個の tvar ref を作る *)
+         let tvars : tvar ref list =
+           let rec go k acc =
+             if k = arity then List.rev acc
+             else go (k+1) (fresh_tvar () :: acc)
+           in
+           go 0 []
+         in
+         let qs : int list    = List.map (fun tv -> (!tv).id) tvars in
+         let params : ty list = List.map (fun tv -> TVar tv) tvars in
+         let ty : ty          = TFun (params, TUnit) in
+         (m, Forall (qs, ty))
+       )
+  in
+    register_class name ms
 
 let rec repr (t : ty) : ty =
   match t with
@@ -57,18 +92,6 @@ let rec repr (t : ty) : ty =
   | _ ->
       (* 型変数以外（int, float, arrayなど）はそのまま *)
       t
-
-(* 代表元をたどって圧縮 *)
-(* let rec repr (t : ty) : ty =
-  match t with
-  | TVar vref ->
-      (match !vref with
-       | { link = Some t' } ->
-           let t'' = repr t' in
-           vref := { !vref with link = Some t'' };   (* 経路圧縮 *)
-           t''
-       | _ -> t)
-  | _ -> t   *)
 
 (* ========================================= *)
 (* 型 ty を文字列に変換する関数             *)
@@ -137,15 +160,6 @@ let rec unify (t1 : ty) (t2 : ty) : unit =
       List.iter2 unify ps1 ps2; unify r1 r2
   | _ -> raise (Type_error "type mismatch")
 
-(* 既存の unify を前提にしています。名前が違う場合は合わせてください *)
-let unify_many (ps : ty list) (as_ : ty list) =
-  try
-    List.iter2 unify ps as_
-  with Invalid_argument _ ->
-    raise (Type_error (Printf.sprintf
-      "arity mismatch: expected %d args, got %d"
-      (List.length ps) (List.length as_)))
-
 (* 受信側の型からメソッド型を見つける *)
 let rec lookup_method_type (tobj : ty) (mname : string) : ty option =
   match tobj with
@@ -155,26 +169,72 @@ let rec lookup_method_type (tobj : ty) (mname : string) : ty option =
       List.assoc_opt mname ms
   | _ ->
       None
-
-(* 自由型変数集合（ID の集合） *)
+(* --- 自由型変数集合 --- *)
 module ISet = Set.Make(Int)
+
+(* --- 再帰的置換ユーティリティ --- *)
+let rec prune t =
+  match t with
+  | TVar tv ->
+      (match (!tv).link with
+       | None -> t
+       | Some t' ->
+           let t'' = prune t' in
+           (!tv).link <- Some t'';
+           t'')
+  | TArray t1 -> TArray (prune t1)
+  | TRecord fs -> TRecord (List.map (fun (l,t1) -> (l, prune t1)) fs)
+  | TActor (n,ms) -> TActor (n, List.map (fun (m,t1)->(m,prune t1)) ms)
+  | TFun (ps,r) -> TFun (List.map prune ps, prune r)
+  | _ -> t
+
+let rec ftv_ty t =
+  match prune t with
+  | TVar tv ->
+      (match (!tv).link with
+       | None -> ISet.singleton (!tv).id
+       | Some t' -> ftv_ty t')
+  | TArray t1 -> ftv_ty t1
+  | TRecord fs ->
+      List.fold_left (fun acc (_,t1)->ISet.union acc (ftv_ty t1)) ISet.empty fs
+  | TActor (_n,ms) ->
+      List.fold_left (fun acc (_,t1)->ISet.union acc (ftv_ty t1)) ISet.empty ms
+  | TFun (ps,r) ->
+      List.fold_left (fun acc ti->ISet.union acc (ftv_ty ti)) (ftv_ty r) ps
+  | _ -> ISet.empty
+
+(* --- generalize --- *)
+let generalize (env_ftv : ISet.t) (t : ty) : scheme =
+  let fv_t = ftv_ty t in
+  let qs = ISet.elements (ISet.diff fv_t env_ftv) in
+  Forall (qs, t)
+
+(* --- instantiate --- *)
+let instantiate (Forall (qs, t)) : ty =
+  let tbl : (int, tvar ref) Hashtbl.t = Hashtbl.create (List.length qs) in
+  List.iter (fun q -> Hashtbl.replace tbl q (fresh_tvar ())) qs;
+  let rec inst ty =
+    match ty with
+    | TInt | TFloat | TBool | TString | TUnit -> ty
+    | TArray t1 -> TArray (inst t1)
+    | TRecord fs -> TRecord (List.map (fun (l,t1)->(l,inst t1)) fs)
+    | TActor (n,ms) -> TActor (n, List.map (fun (m,t1)->(m,inst t1)) ms)
+    | TFun (ps,r) -> TFun (List.map inst ps, inst r)
+    | TVar tv ->
+        let id = (!tv).id in
+        match Hashtbl.find_opt tbl id with
+        | Some tv' -> TVar tv'
+        | None -> TVar tv
+  in
+  inst t
+
+(* 自由型変数: 量化された変数ID(qs)を t の自由変数集合から取り除く *)
+let ftv_scheme (Forall (qs, t) : scheme) : ISet.t =
+  let fv = ftv_ty t in
+  List.fold_left (fun acc q -> ISet.remove q acc) fv qs
 
 let union_list f xs =
   List.fold_left (fun acc x -> ISet.union acc (f x)) ISet.empty xs
-
-(* ty の自由型変数集合 *)
-let rec ftv_ty (t : ty) : ISet.t =
-  match repr t with
-  | TVar vref          -> ISet.singleton (!vref).id
-  | TArray t1          -> ftv_ty t1
-  | TFun (ps, r)       -> ISet.union (union_list ftv_ty ps) (ftv_ty r)
-  | TAny               -> ISet.empty
-  | (TInt | TFloat | TBool | TString | TUnit | TActor(_,_)) -> ISet.empty
-
-(* scheme の自由型変数集合 = ty の自由変数から量化されたIDを除いたもの *)
-let ftv_scheme (Forall (qs, t)) : ISet.t =
-  let qs_set = List.fold_left (fun s q -> ISet.add q s) ISet.empty qs in
-  ISet.diff (ftv_ty t) qs_set
 
 (* 環境の自由型変数集合（env は名前→スキーマの “複数候補” を持つ想定） *)
 type tenv = (string, scheme list) Hashtbl.t
@@ -187,37 +247,8 @@ let ftv_env (env : tenv) : ISet.t =
          acc schemes)
     env ISet.empty
 
-(* 一般化: env に自由でない型変数を ∀ で量化する *)
-let generalize (env : tenv) (t : ty) : scheme =
-  let env_fv = ftv_env env in
-  let t_fv   = ftv_ty t in
-  let qs     = ISet.elements (ISet.diff t_fv env_fv) in
-  Forall (qs, t)
-
-(* インスタンス化: 量化されたIDを fresh TVar に差し替える *)
-let instantiate (Forall (qs, t) : scheme) : ty =
-  (* 量化ID -> 新規 ty の写像 *)
-  let subst : (int, ty) Hashtbl.t = Hashtbl.create 8 in
-  let qset =
-    List.fold_left (fun s q -> ISet.add q s) ISet.empty qs
-  in
-  let rec inst (ty : ty) : ty =
-    match repr ty with
-    | TVar vref ->
-        let id = (!vref).id in
-        if ISet.mem id qset then
-          (* 量化IDは fresh に置換（同じIDは同じ fresh を再利用） *)
-          match Hashtbl.find_opt subst id with
-          | Some u -> u
-          | None ->
-              let u = TVar (fresh_tvar ()) in
-              Hashtbl.add subst id u;
-              u
-        else
-          TVar vref
-    | TArray t1      -> TArray (inst t1)
-    | TFun (ps, ret) -> TFun (List.map inst ps, inst ret)
-    | TAny               -> TAny
-    | (TInt | TFloat | TBool | TString | TUnit | TActor(_,_)) as c -> c
-  in
-  inst t
+(* 取得：typeof 表示用に、全メソッドを instantiate 済 ty で返す *)
+let lookup_class_methods_inst (cls : string) : (string * ty) list =
+  match Hashtbl.find_opt class_methods_schemes cls with
+  | None -> []
+  | Some lst -> List.map (fun (m, sch) -> (m, instantiate sch)) lst

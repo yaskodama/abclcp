@@ -25,6 +25,18 @@ let ty_of_binop_as_function (op:string) : ty option =
   match op with
   | _ -> None
 
+(* env : Typing_env.env = (string, Types.scheme list) Hashtbl.t *)
+let ftv_env (env : Typing_env.env) : Types.ISet.t =
+  Hashtbl.fold
+    (fun _name (schemes : Types.scheme list) acc ->
+       List.fold_left
+         (fun acc sch -> Types.ISet.union acc (Types.ftv_scheme sch))
+         acc schemes)
+    env Types.ISet.empty
+
+let generalize_env (env : Typing_env.env) (t : Types.ty) : Types.scheme =
+  Types.generalize (ftv_env env) t
+
 let pick_overload (name:string) (env:tenv) (arg_tys:ty list) : ty =
   let schemes =
     match Hashtbl.find_opt env name with Some ss -> ss | None -> []
@@ -46,6 +58,21 @@ let pick_overload (name:string) (env:tenv) (arg_tys:ty list) : ty =
         "(" ^ String.concat ", " (List.map string_of_ty arg_tys) ^ ")"
       in
       raise (Type_error ("no overload of "^name^" matches "^sigstr))
+
+let unify_many (ps : Types.ty list) (as_ : Types.ty list) =
+  try List.iter2 Types.unify ps as_
+  with Invalid_argument _ ->
+    raise (Type_error (Printf.sprintf
+		       "arity mismatch: expected %d args, got %d" (List.length ps) (List.length as_)))
+
+(* 補助: 受信オブジェクトの型からメソッドの “具体 ty” を引く（instantiate 済） *)
+let lookup_method_type (tobj : Types.ty) (mname : string) : Types.ty option =
+  match tobj with
+  | Types.TActor (nm, _) ->
+     Option.map Types.instantiate (Types.lookup_class_method_scheme nm mname)
+  | Types.TRecord ms ->
+      List.assoc_opt mname ms
+  | _ -> None
 
 let rec infer_expr (env:env) (e:expr) : ty =
   match e with
@@ -70,11 +97,27 @@ let rec infer_expr (env:env) (e:expr) : ty =
       let sch = get_var_scheme_exn env x in
         instantiate sch
   | New (cls, args) ->
-    let _ = List.map (infer_expr env) args in
-    let ms = Types.lookup_class_methods cls in
-      TActor (cls, ms)
+    let targs = List.map (infer_expr env) args in
+    (match Types.lookup_class_method_scheme cls "init" with
+     | Some sch ->
+         (match Types.instantiate sch with
+          | Types.TFun (params, _ret) ->
+              let unify_many ps qs =
+                try List.iter2 Types.unify ps qs with Invalid_argument _ ->
+                    raise (Type_error
+                      (Printf.sprintf "constructor %s: arity mismatch (expected %d, got %d)"
+                         cls (List.length ps) (List.length qs)))
+              in
+                unify_many params targs
+          | ty ->
+              raise (Type_error
+                (Printf.sprintf "constructor %s: init is not a function: %s"
+                   cls (Types.string_of_ty ty)))
+          )
+     | None -> ());
+    let ms = Types.lookup_class_methods_inst cls in TActor (cls, ms)
   | Array (elems, _) ->
-   begin match elems with
+    begin match elems with
     | [] -> TArray TUnit   (* 空配列は unit[] として扱う *)
     | e1 :: rest ->
         let t1 = infer_expr env e1 in
@@ -91,20 +134,20 @@ let rec check_stmt (env:env) (s:stmt) : unit =
     let t_rhs = infer_expr env e in
     (match Hashtbl.find_opt env x with
      | None ->
-         let sch = generalize env t_rhs in
+         let sch = Types.generalize (ftv_env env) t_rhs in
          set_var_scheme env x sch
      | Some [sch] ->
          (* 既存の型に RHS を合わせる：必要なら instantiate → unify *)
          let t_old = instantiate sch in
          unify t_old t_rhs;
-         let sch' = generalize env t_rhs in   (* 代入後の型を更新（単相にしたいなら Forall([], t_rhs)）*)
+         let sch' = Types.generalize (ftv_env env) t_rhs in   (* 代入後の型を更新（単相にしたいなら Forall([], t_rhs)）*)
          set_var_scheme env x sch'
      | Some _ ->
          raise (Type_error ("cannot assign to overloaded name: " ^ x)));
     ()
   | VarDecl (name, rhs) ->
       let t   = infer_expr env rhs in
-      let sch = generalize env t in
+      let sch = Types.generalize (ftv_env env) t in
       (* 単一束縛として“置き換え” *)
         set_var_scheme env name sch;
         ()
@@ -121,10 +164,38 @@ let rec check_stmt (env:env) (s:stmt) : unit =
       let arg_tys = List.map (infer_expr env) args in
       ignore (pick_overload fname env arg_tys);
       ()
-  | Send (_tgt, _meth, args) ->
-      (* まずは送信引数は float と仮定。将来、クラスのメソッド表を env に載せて精密化 *)
-      List.iter (fun a -> unify (infer_expr env a) TFloat) args
-  | _ -> ()                            (* フォールバックで静かにする *)
+  | Send (recv_name, mname, args) ->
+    let trecv = infer_expr env (Ast.Var recv_name) in
+    let lookup_method_type (tobj:Types.ty) (m:string) : Types.ty option =
+      match tobj with
+      | Types.TActor (nm, _) ->
+        Option.map Types.instantiate (Types.lookup_class_method_scheme nm m)
+      | Types.TRecord ms -> List.assoc_opt m ms
+      | _ -> None
+    in
+    (match lookup_method_type trecv mname with
+     | Some (Types.TFun (ps, _)) ->
+       let tas = List.map (infer_expr env) args in
+       (try List.iter2 Types.unify ps tas with Invalid_argument _ ->
+          raise (Type_error (Printf.sprintf
+            "send %s: arity mismatch (expected %d, got %d)"
+            mname (List.length ps) (List.length tas))));
+       ()
+     | Some t ->
+       raise (Type_error (Printf.sprintf
+         "send %s: method is not a function: %s" mname (Types.string_of_ty t)))
+     | None ->
+       let hint =
+         match trecv with
+         | Types.TActor (nm, _) ->
+             let ms = Types.lookup_class_methods_inst nm in
+             if ms = [] then Printf.sprintf "registered: <none for %s>" nm
+             else Printf.sprintf "registered: %s"
+                    (Types.string_of_ty (Types.TActor (nm, ms)))
+         | _ -> "registered: <not an actor/object>"
+       in
+         raise (Type_error (Printf.sprintf "send %s: no such method for receiver type %s; %s"
+         mname (Types.string_of_ty trecv) hint)))
 
 (* ---- shallow clone for env (string -> scheme list) ---- *)
 let clone (e : (string, scheme list) Hashtbl.t) : (string, scheme list) Hashtbl.t =
@@ -134,11 +205,10 @@ let clone (e : (string, scheme list) Hashtbl.t) : (string, scheme list) Hashtbl.
 
 let check_decl (env:env) = function
   | Class c ->
-      (* 1) フィールドを env に載せる（既存でOK） *)
       List.iter (function
         | VarDecl (name, init) ->
             let t   = infer_expr env init in
-            let sch = generalize env t in
+            let sch = Types.generalize (ftv_env env) t in
             add env name sch
         | _ -> ()
       ) c.fields;
