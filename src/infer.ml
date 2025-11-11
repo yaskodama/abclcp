@@ -55,7 +55,7 @@ let pick_overload (name:string) (env:tenv) (arg_tys:ty list) : ty =
   | r::_ -> r     (* 単一に絞れない場合の方針は実装に合わせて *)
   | [] ->
       let sigstr =
-        "(" ^ String.concat ", " (List.map string_of_ty arg_tys) ^ ")"
+        "(" ^ String.concat ", " (List.map Types.string_of_ty_pretty arg_tys) ^ ")"
       in
       raise (Type_error ("no overload of "^name^" matches "^sigstr))
 
@@ -112,7 +112,7 @@ let rec infer_expr (env:env) (e:expr) : ty =
           | ty ->
               raise (Type_error
                 (Printf.sprintf "constructor %s: init is not a function: %s"
-                   cls (Types.string_of_ty ty)))
+                   cls (Types.string_of_ty_pretty ty)))
           )
      | None -> ());
     let ms = Types.lookup_class_methods_inst cls in TActor (cls, ms)
@@ -183,7 +183,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
        ()
      | Some t ->
        raise (Type_error (Printf.sprintf
-         "send %s: method is not a function: %s" mname (Types.string_of_ty t)))
+         "send %s: method is not a function: %s" mname (Types.string_of_ty_pretty t)))
      | None ->
        let hint =
          match trecv with
@@ -191,11 +191,11 @@ let rec check_stmt (env:env) (s:stmt) : unit =
              let ms = Types.lookup_class_methods_inst nm in
              if ms = [] then Printf.sprintf "registered: <none for %s>" nm
              else Printf.sprintf "registered: %s"
-                    (Types.string_of_ty (Types.TActor (nm, ms)))
+                    (Types.string_of_ty_pretty (Types.TActor (nm, ms)))
          | _ -> "registered: <not an actor/object>"
        in
          raise (Type_error (Printf.sprintf "send %s: no such method for receiver type %s; %s"
-         mname (Types.string_of_ty trecv) hint)))
+         mname (Types.string_of_ty_pretty trecv) hint)))
 
 (* ---- shallow clone for env (string -> scheme list) ---- *)
 let clone (e : (string, scheme list) Hashtbl.t) : (string, scheme list) Hashtbl.t =

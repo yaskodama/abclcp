@@ -188,6 +188,45 @@ let rec prune t =
   | TFun (ps,r) -> TFun (List.map prune ps, prune r)
   | _ -> t
 
+let string_of_ty_pretty (t : ty) : string =
+  (* TVar の id を 'a, 'b, … に割り当てて見やすくする *)
+  let names : (int, string) Hashtbl.t = Hashtbl.create 16 in
+  let next = ref 0 in
+  let name_of id =
+    match Hashtbl.find_opt names id with
+    | Some n -> n
+    | None ->
+        let base = Char.code 'a' + (!next mod 26) in
+        let suffix = !next / 26 in
+        incr next;
+        if suffix = 0 then Printf.sprintf "'%c" (Char.chr base)
+        else Printf.sprintf "'%c%d" (Char.chr base) suffix
+  in
+  let rec go ty =
+    match prune ty with
+    | TVar v      -> name_of (!v).id
+    | TArray t1   -> go t1 ^ "[]"
+    | TRecord fs  ->
+        "{" ^ (fs |> List.map (fun (l,t)-> l ^ " : " ^ go t) |> String.concat "; ") ^ "}"
+    | TActor(n,ms) ->
+        "actor(" ^ n ^ ") { "
+        ^ (ms |> List.map (fun (m,t)-> m ^ " : " ^ go t) |> String.concat "; ")
+        ^ " }"
+    | TFun(ps,r)  ->
+        let ps_s =
+          match ps with
+          | [] -> "()"
+          | _  -> "(" ^ (ps |> List.map go |> String.concat " * ") ^ ")"
+        in
+        ps_s ^ " -> " ^ go r
+    | TInt        -> "int"
+    | TFloat      -> "float"
+    | TBool       -> "bool"
+    | TString     -> "string"
+    | TUnit       -> "unit"
+  in
+  go t
+
 let rec ftv_ty t =
   match prune t with
   | TVar tv ->

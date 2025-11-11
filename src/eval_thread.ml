@@ -29,6 +29,41 @@ let actor_table : (string, actor) Hashtbl.t = Hashtbl.create 32
 
 let env : (string, value) Hashtbl.t = Hashtbl.create 64
 
+(* actor_table を走査する汎用イテレータ *)
+let iter_actor_table (k : string -> actor -> unit) : unit =
+  Hashtbl.iter (fun aname a -> k aname a) actor_table
+
+(* メールボックス長（非同期メッセージキューの長さ） *)
+let mailbox_len (a:actor) : int =
+  try Queue.length a.queue with _ -> 0
+
+(* メソッド名一覧（定義順はハッシュ順） *)
+let method_names (a:actor) : string list =
+  Hashtbl.to_seq_keys a.methods |> List.of_seq
+
+(* クラス名の取得（env の "__class" があれば優先、無ければ a.cls、最後に aname をフォールバック） *)
+let actor_class_name (aname:string) (a:actor) : string =
+  match Hashtbl.find_opt a.env "__class" with
+  | Some (VString cn) -> cn
+  | _ -> (try a.cls with _ -> aname)
+
+(* どこかのトップに置く。a は active actor レコード。 *)
+(* let actor_class_name (an : string) (a : actor) : string =
+  match Hashtbl.find_opt a.env "__class" with
+  | Some (VString cn) -> cn
+  | _ ->
+    (match Hashtbl.find_opt a.env "self" with
+     | Some (VActor (cn, _)) -> cn
+     | _ -> an)
+    *)
+
+let light_lookup_or_empty (cls : string) : (string * Types.ty) list =
+  match Types.lookup_class_methods_inst cls with
+  | ms -> ms
+  (* もしあなたの実装が Hashtbl.find を直接返していて Not_found 例外を投げる場合はこちらを使ってください:
+  | exception Not_found -> [] *)
+
+
 (* === ObjectStore: 再代入で上書きされる「前の値」を保管しておくための簡易仕組み === *)
 
 let iter_active_actors (k : string -> string -> unit) : unit =
@@ -313,9 +348,9 @@ let prim_typeof =
      | [VActor (cls_name, _)] ->
        let methods = Types.lookup_class_methods_inst cls_name in
          if methods = [] then VString ("actor(" ^ cls_name ^ ")")
-         else VString (Types.string_of_ty (TActor (cls_name, methods)))
+         else VString (Types.string_of_ty_pretty (TActor (cls_name, methods)))
      | [VArray (_, Some ty)] ->
-       let s = Types.string_of_ty ty in
+       let s = Types.string_of_ty_pretty ty in
 	VString (s^"[]")
      | [VArray (_, None)] -> VString "array"
      | _ -> failwith "typeof: expected exactly one argument")
@@ -497,7 +532,7 @@ let prim_table : (string, value list -> value) Hashtbl.t =
          let ms = Types.lookup_class_methods_inst cls_name in
          let s =
            if ms = [] then ("actor(" ^ cls_name ^ ")")
-           else Types.string_of_ty (TActor (cls_name, ms))
+           else Types.string_of_ty_pretty (TActor (cls_name, ms))
          in
            print_endline s; VUnit
        | [v] ->

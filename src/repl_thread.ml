@@ -71,7 +71,7 @@ let is_command_line (s:string) =
   let s = String.trim s in
   s = "" ||
   List.exists (fun p -> starts_with s p)
-    ["help"; "exit"; "quit"; "load "; "compile"; "list"; "vlist";
+    ["help"; "exit"; "quit"; "load "; "compile"; "list"; "vlist"; "actors";
      "send "; "ssend "; "ast "; "pprint "; "pprint "; "clear"; "reset"; "script "]
 
 let delta_brace (line : string) : int =
@@ -305,7 +305,6 @@ let compiled = ref false
 
 let rec process_command line =
   if line = "exit" || line = "quit" then (
-(*    print_endline exit_banner; *)
     (try Sdl_helper.sdl_quit () with _ -> ());
     raise Quit
   )
@@ -491,16 +490,41 @@ let rec process_command line =
             Printf.printf "[Error] no AST found for '%s' (not an instance nor a class)\n%!" name)
         )
   else if line = "list" then (
-    print_endline "[Registered actors and types]";
-    Eval_thread.iter_active_actors (fun aname cls_name ->
-      let methods = Types.lookup_class_methods_inst cls_name in
+  print_endline "[Registered actors and types]";
+    (* すでに生きているアクタ（actor_table）から “変数名” と “クラス名” を確実に取得 *)
+    Eval_thread.iter_actor_table (fun aname a ->
+      let cls_name = Eval_thread.actor_class_name aname a in
+      let methods  =
+        match Types.lookup_class_methods_inst cls_name with  (* or lookup_class_methods_inst *)
+        | ms -> ms                                               (* if your function name differs, adjust *)
+        (* if your lookup raises Not_found, wrap it: *)
+        (* | exception Not_found -> [] *)
+      in
+      let ty   = Types.TActor (cls_name, methods) in
+      let show = Types.string_of_ty_pretty ty in
+      Printf.printf "- %s : %s\n%!" aname show
+    );
+    flush stdout;
+  )
+  else if line = "actors" then (
+    print_endline "[actor_table]";
+    Eval_thread.iter_actor_table (fun aname a ->
+      let cls_name = Eval_thread.actor_class_name aname a in
       let ty_str =
-        if methods = [] then
+        let ms = Types.lookup_class_methods_inst cls_name in
+        if ms = [] then
           "actor(" ^ cls_name ^ ")"
         else
-          Types.string_of_ty (TActor (cls_name, methods))
+          Types.string_of_ty_pretty (Types.TActor (cls_name, ms))
       in
-      Printf.printf "- %s : %s\n%!" aname ty_str
+      let mbox_n = Eval_thread.mailbox_len a in
+      let mnames =
+        match Eval_thread.method_names a with
+        | [] -> "(no methods)"
+        | xs -> String.concat ", " xs
+      in
+      Printf.printf "- %s : %s\n    mbox: %d\n    methods: %s\n%!"
+        aname ty_str mbox_n mnames
     );
     flush stdout;
   )
