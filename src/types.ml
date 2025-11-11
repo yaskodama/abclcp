@@ -46,6 +46,27 @@ let freshes (n : int) : int list =
 let class_methods_schemes : (string, (string * scheme) list) Hashtbl.t =
   Hashtbl.create 17
 
+(* ====== クラスのメソッド型レジストリ ===== *)
+
+(* クラス名 → (メソッド名 × 型スキーム) のリスト *)
+let class_method_schemes : (string, (string * scheme) list) Hashtbl.t = Hashtbl.create 97
+
+let register_class_method_schemes (cls : string) (sigs : (string * scheme) list) : unit =
+  Hashtbl.replace class_method_schemes cls sigs
+
+let lookup_method_scheme (cls : string) (mname : string) : scheme option =
+  match Hashtbl.find_opt class_method_schemes cls with
+  | None -> None
+  | Some lst ->
+      (try Some (List.assoc mname lst) with Not_found -> None)
+
+(* 表示用：スキームを具体化して (メソッド名 × 具体化済み型) のリストにする *)
+(* let lookup_class_methods_inst (cls : string) : (string * ty) list =
+  match Hashtbl.find_opt class_method_schemes cls with
+  | None -> []
+  | Some lst ->
+      List.map (fun (m, sch) -> (m, repr (instantiate sch))) lst *)
+
 let register_class (name : string) (methods : (string * scheme) list) : unit =
   Hashtbl.replace class_methods_schemes name methods
 

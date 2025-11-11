@@ -45,4 +45,4 @@ class Hello {
 }
 
 var h = new Hello(10);
-send h.greet();
+//send h.greet();

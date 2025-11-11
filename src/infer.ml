@@ -37,6 +37,12 @@ let ftv_env (env : Typing_env.env) : Types.ISet.t =
 let generalize_env (env : Typing_env.env) (t : Types.ty) : Types.scheme =
   Types.generalize (ftv_env env) t
 
+(* ---- shallow clone for env (string -> scheme list) ---- *)
+let clone (e : (string, scheme list) Hashtbl.t) : (string, scheme list) Hashtbl.t =
+  let e' = Hashtbl.create (Hashtbl.length e) in
+  Hashtbl.iter (fun k v -> Hashtbl.replace e' k v) e;
+  e'
+
 let pick_overload (name:string) (env:tenv) (arg_tys:ty list) : ty =
   let schemes =
     match Hashtbl.find_opt env name with Some ss -> ss | None -> []
@@ -65,14 +71,43 @@ let unify_many (ps : Types.ty list) (as_ : Types.ty list) =
     raise (Type_error (Printf.sprintf
 		       "arity mismatch: expected %d args, got %d" (List.length ps) (List.length as_)))
 
+(* 受け手の型からメソッド mname のモノタイプを取り出す。
+   TActor の第2引数 ms に暫定/確定メソッド表があればそれを優先、
+   無ければクラス名 cls で事前登録テーブルから sc を引いて instantiate します. *)
+let lookup_method_type (tobj : ty) (mname : string) : ty option =
+  match repr tobj with
+  | TActor (cls, ms) -> begin
+      match List.assoc_opt mname (ms : (string * ty) list) with
+      | Some t -> Some t
+      | None ->
+          (* fallback: 事前登録済みのスキーマを具体化して返す *)
+          (match Types.lookup_class_method_scheme cls mname with
+           | Some sc -> Some (Types.instantiate sc)
+           | None    -> None)
+    end
+  | _ -> None
+
+(* let lookup_method_type (tobj : Types.ty) (mname : string) : Types.ty option =
+  match Types.repr tobj with
+  | Types.TActor (cls, ms) ->
+      (* 1st: 既に self に埋めてある暫定/最終のメソッド表を優先 *)
+      (match List.assoc_opt mname ms with
+       | Some t -> Some t
+       | None ->
+           (* 2nd: 事前登録されたスキーマから引いて具体化 *)
+           (match Types.lookup_class_method_scheme cls with
+            | Some sc -> Some (Types.instantiate sc)
+            | None    -> None))
+  | _ -> None   *)
+
 (* 補助: 受信オブジェクトの型からメソッドの “具体 ty” を引く（instantiate 済） *)
-let lookup_method_type (tobj : Types.ty) (mname : string) : Types.ty option =
+(* let lookup_method_type (tobj : Types.ty) (mname : string) : Types.ty option =
   match tobj with
   | Types.TActor (nm, _) ->
      Option.map Types.instantiate (Types.lookup_class_method_scheme nm mname)
   | Types.TRecord ms ->
       List.assoc_opt mname ms
-  | _ -> None
+      | _ -> None   *)
 
 let rec infer_expr (env:env) (e:expr) : ty =
   match e with
@@ -128,6 +163,34 @@ let rec infer_expr (env:env) (e:expr) : ty =
 let set (e:env) (name:string) (sch:scheme) =
   Hashtbl.replace e name [sch]
 
+(*
+let class_name_of_target (env: Types.tenv) (e: Ast.expr) : string =
+  match repr (infer_expr env e) with
+  | TActor (cname, _) -> cname
+  | other -> raise (Type_error ("send target is not an object/actor, got " ^ Types.string_of_ty other))
+*)
+
+(* Send の型付け: Send of string (* var名 *) * expr list という定義を想定 *)
+(* let class_name_of_var (env : Types.t_env) (vname : string) : string =
+  let t = Types.repr (Types.instantiate (get_var_scheme_exn env vname)) in
+  match t with
+  | Types.TActor (cls, _) -> cls
+  | _ -> raise (Types.Error ("send target is not an actor: " ^ Types.string_of_ty t))    *)
+
+let class_name_of_var (env : Types.tenv) (vname : string) : string =
+  let t = repr (Types.instantiate (get_var_scheme_exn env vname)) in
+  match t with
+  | TActor (cls, _) -> cls
+  | other -> raise (Type_error ("send target is not an actor: " ^ string_of_ty(other)))
+
+(* 変数名から、その静的型（TObject/TActor）に埋まっている“クラス名”を取り出す *)
+let class_name_of_var (env : Types.tenv) (vname : string) : string =
+  let t = repr (instantiate (get_var_scheme_exn env vname)) in
+  match t with
+(*  | TObject cname -> cname    *)
+  | TActor (cname, _) -> cname              (* 名義つき Actor 型にも対応 *)
+  | other -> raise (Type_error ("send target is not an object/actor, got "^string_of_ty other))
+
 let rec check_stmt (env:env) (s:stmt) : unit =
   match s with
   | Assign (x, e) ->
@@ -164,8 +227,96 @@ let rec check_stmt (env:env) (s:stmt) : unit =
       let arg_tys = List.map (infer_expr env) args in
       ignore (pick_overload fname env arg_tys);
       ()
-  | Send (recv_name, mname, args) ->
-    let trecv = infer_expr env (Ast.Var recv_name) in
+  | Send (vname, mname, args) ->
+    let cls = class_name_of_var env vname in
+    (* 事前に登録したメソッドのスキーマを取り出す（二引数で呼ぶ！） *)
+    (match Types.lookup_class_method_scheme cls mname with
+     | None ->
+         raise (Type_error ("no method " ^ mname ^ " in actor(" ^ cls ^ ")"))
+     | Some sc ->
+         let tf = repr (Types.instantiate sc) in
+         let (ps, r) =
+           match tf with
+           | TFun (ps, r) -> (ps, r)
+           | _ -> raise (Type_error ("method "^mname^" is not a function: " ^ string_of_ty tf))
+         in
+         let actuals = List.map (fun e -> repr (infer_expr env e)) args in
+         if List.length ps <> List.length actuals then
+           raise (Type_error "arity mismatch in send");
+         List.iter2 (fun p a -> Types.unify p a) ps actuals;
+(*         TActor (cls, [])  *)(* ← send の式自体は unit にしたいなら `TUnit` を返す *)
+         ()
+      )
+(*  | Send (vname, mname, args) ->
+    let cls = class_name_of_var env vname in
+    (* 受け手の型は TActor (cls, …) だとわかっているので、先に受け手の self メソッド表を作る必要はなし *)
+    (match Typing_env.lookup_class_method_scheme cls mname with
+     | None ->
+         raise (Types.Error ("no method "^mname^" in actor("^cls^")"))
+     | Some sc ->
+        let Types.TFun (ps, r) = Types.repr (Types.instantiate sc) in
+         let arg_tys = List.map (fun e -> Types.repr (infer_expr env e)) args in
+         if List.length ps <> List.length arg_tys then
+           raise (Types.Error "arity mismatch in send");
+         List.iter2 (fun p a -> Types.unify p a) ps arg_tys;
+         (* send 弾性: 自身の型は unit *)
+         Types.TUnit
+    )    *)
+(*  | Send (tgt_exp, mname, args) ->
+    let cls = class_name_of_var env mname in
+    (match Types.lookup_class_method_scheme cls mname with
+     | None ->
+         raise (Type_error ("no method " ^ mname ^ " in class " ^ cls))
+     | Some sch ->
+        let tfun = repr (instantiate sch) in
+         let (param_tys, ret_ty) =
+           match tfun with
+           | TFun (ps, r) -> (ps, r)
+           | other -> raise (Type_error ("method "^mname^" is not a function type: " ^ string_of_ty other))
+         in
+         let arg_tys = List.map (fun e -> repr (infer_expr env e)) args in
+         if List.length arg_tys <> List.length param_tys then
+           raise (Type_error "arity mismatch in send");
+         List.iter2 (fun p a -> unify p a) param_tys arg_tys;
+         ()
+    )
+*)
+(*    let cls = class_name_of_target env tgt_exp in
+    begin match Typing_Env.lookup_method_scheme cls mname with
+    | None -> raise (Type_error ("no method "^mname^" in class "^cls))
+    | Some sch ->
+        let TFun (ps, _ret) = repr (instantiate sch) in
+        let arg_tys = List.map (fun a -> repr (infer_expr env a)) args in
+        if List.length ps <> List.length arg_tys then
+          raise (Type_error "arity mismatch in send");
+        List.iter2 (fun p a -> unify p a) ps arg_tys;
+        ()
+    end  *)
+(*   | Send (recv_name, mname, args) ->
+    let t_tgt = repr (instantiate (get_var_scheme_exn env tgt)) in
+    let cls =
+      match t_tgt with
+      | TObject cname -> cname
+      | TActor        -> (* もし TActor を使っている場合、静的にはクラス名が無いのでエラーにするか、
+                            別途 env に “var -> class_name” の表を持って取り出してください。 *)
+                         raise (Type_error "send target has type 'actor' without class; bind as TObject \"C\"")
+      | _             -> raise (Type_error "send target is not an object/actor")
+    in
+    (match Typing_env.lookup_method_scheme cls mname with
+     | None ->
+         raise (Type_error ("no method " ^ mname ^ " in class " ^ cls))
+     | Some sch ->
+         let TFun (ps, _ret) = repr (instantiate sch) in
+         let arg_tys = List.map (infer_expr env) args in
+         if List.length ps <> List.length arg_tys
+           then raise (Type_error "arity mismatch in send");
+         List.iter2 (fun pty aty -> unify pty aty) ps arg_tys;
+         (* send は戻り値を使わないので、ret は unit かどうかは厳密には問わない。
+            厳密化したいなら: unify _ret TUnit; *)
+         ()
+      )
+*)
+(*    let trecv = infer_expr env (Ast.Var recv_name) in
     let lookup_method_type (tobj:Types.ty) (m:string) : Types.ty option =
       match tobj with
       | Types.TActor (nm, _) ->
@@ -196,12 +347,8 @@ let rec check_stmt (env:env) (s:stmt) : unit =
        in
          raise (Type_error (Printf.sprintf "send %s: no such method for receiver type %s; %s"
          mname (Types.string_of_ty_pretty trecv) hint)))
+*)
 
-(* ---- shallow clone for env (string -> scheme list) ---- *)
-let clone (e : (string, scheme list) Hashtbl.t) : (string, scheme list) Hashtbl.t =
-  let e' = Hashtbl.create (Hashtbl.length e) in
-  Hashtbl.iter (fun k v -> Hashtbl.replace e' k v) e;
-  e'
 
 let check_decl (env:env) = function
   | Class c ->
@@ -243,10 +390,211 @@ let check_decl (env:env) = function
   | Global s ->                         
       check_stmt env s
 
-let check_program (p:program) : (Typing_env.env, string) result =
+let build_proto (m : Ast.method_decl) : string * Types.ty =
+  let tvs = List.init (List.length m.Ast.params) (fun _ -> Types.fresh_tvar ()) in
+  let ps  = List.map (fun a -> Types.TVar a) tvs in
+  (* いまは戻り値を unit としておく。必要なら推論後に具体化する *)
+  (m.Ast.mname, Types.TFun (ps, Types.TUnit))
+  (* ↑ ↑ ↑ フィールド名は実際のレコード定義に合わせてください。
+     これまでのコードでは m.Ast.mname / m.Ast.params でした。 *)
+
+(* clone は既存のものを使います *)
+(* 例: クラス1つ分のメソッドを先に推論して (method_name * scheme) のリストにする *)
+let infer_class_methods
+    (gamma0 : Typing_env.env)          (* ここは (string, Types.scheme) Hashtbl.t のはず *)
+    (cls_name : string)
+    (methods : (string * expr) list    (* あるいはあなたの ast の method レコード型 *))
+  : (string * Types.scheme) list =
+  (* 1) このクラス専用の “項の型環境” を用意 *)
+  let env_cls : Typing_env.env = Hashtbl.copy gamma0 in
+
+  (* 2) 各メソッドを型推論し、関数型 t を得たら env から自由変数を集めて generalize *)
+  let infer_one (mname, body_expr) =
+    let t = infer_expr env_cls body_expr in   (* ←あなたの expr 用型付け関数名に合わせて *)
+    let sc = Types.generalize (Types.ftv_env env_cls) t in
+    (mname, sc)
+  in
+  List.map infer_one methods
+
+(* ===== 1st pass: クラスごとのメソッド型を HM で推論し、Typing_env に登録 ===== *)
+(* let ms : (string * Types.scheme) list = infer_class_methods gamma cls_name methods in
+  Types.register_class_methods cls_name ms *)
+
+let infer_class_method_schemes (g0 : env) (c : Ast.class_decl)
+  : (string * Types.scheme) list =
+  (* 0) クラス用の「項レベル環境」(string -> Types.scheme) を用意 *)
+  let env_cls : env = clone g0 in
+
+  (* 1) フィールドの単相バインドを env_cls に入れる *)
+  List.iter
+    (function
+      | Ast.VarDecl (name, rhs) ->
+          let t   = infer_expr env_cls rhs in
+          let sc  = Types.generalize (Types.ftv_env env_cls) t in
+          set_var_scheme env_cls name sc
+      | _ -> ()
+    )
+    c.Ast.fields;
+
+  (* 2) メソッドの暫定型 (相互再帰のため) を name -> TFun([α…] -> unit) で作る *)
+  let proto_tys : (string * Types.ty) list = List.map build_proto c.Ast.methods
+  in
+ (* 3) 各メソッドを、self を TActor(cname, proto_tys) にして型付け *)
+  let infer_one (m : Ast.method_decl) : (string * Types.scheme) =
+    let env_m = clone env_cls in
+    (* self はこのクラス名＋暫定メソッド群 *)
+    set_var_scheme env_m "self" (Forall ([], Types.TActor (c.Ast.cname, proto_tys)));
+
+    (* このメソッド m のパラメータ名群と、proto が持つ m の仮引数型（= TVar の列）を対応づけて単相バインド *)
+    let ps0 =
+      match List.assoc m.Ast.mname proto_tys with
+      | Types.TFun (ps, _) -> ps
+      | _ -> failwith "internal: expected TFun in proto"
+    in
+    List.iter2
+      (fun (pname : string) (pt : Types.ty) ->
+         set_var_scheme (env_m) pname (Forall ([], pt)))
+      m.Ast.params
+      ps0;
+  (* 本体を型検査。ここで param/“self.メソッド”を通じて TVar が具体化される *)
+    let () = check_stmt env_m m.Ast.body in
+
+    (* パラメータの最終的な型を取り出す（monotypeをreprしてやる） *)
+    let inst_param_tys : Types.ty list =
+      List.map
+        (fun pname ->
+           let sc = get_var_scheme_exn env_m pname in
+           Types.repr (Types.instantiate sc))
+        m.Ast.params
+    in
+    let tfun = Types.TFun (inst_param_tys, Types.TUnit) in
+
+    (* env_cls の自由変数を引いた上で generalize *)
+    let sc = Types.generalize (Types.ftv_env env_cls) tfun in
+    (m.Ast.mname, sc)
+  in
+  List.map infer_one c.Ast.methods
+
+(*
+let infer_class_method_schemes (g0 : env) (c : Ast.class_decl)
+  : (string * Types.scheme) list =
+  (* クラス用の環境を作成：Prelude + フィールド型 *)
+  let env_cls = clone g0 in
+  (* 1) フィールド: var f = e; の型を推論し、単相で env_cls へ入れる *)
+  List.iter (function
+    | Ast.VarDecl (name, rhs) ->
+        let t = infer_expr env_cls rhs in
+        let sch = generalize (Types.ftv_env env_cls) t in
+        set_var_scheme env_cls name sch
+    | _ -> ()
+  ) c.Ast.fields;
+  (* 2) 各メソッドの仮引数に新しい型変数を割り当てて body をチェック *)
+  let infer_one (m : Ast.method_decl) : (string * Types.scheme) =
+    (* ローカル環境: クラスのフィールド・プリミティブを含み、self も束縛 *)
+    let env_m = clone env_cls in
+    set_var_scheme env_m "self" (Forall ([], TActor(c.Ast.cname,env_m)));
+    (* 仮引数を新しい型変数で束縛（モノモルフィックに） *)
+    let param_tys =
+      List.map
+        (fun p ->
+           let a = fresh_tvar () in
+           set_var_scheme env_m p (Forall ([ (* no generics at binding *) ], TVar a));
+           TVar a)
+        m.Ast.params
+    in
+   (* 本体を型検査：パラメタの TVar が使用により具体化される *)
+    let () = check_stmt env_m m.Ast.body in
+    let inst_param_tys =
+      List.map
+        (fun p ->
+           let sch = get_var_scheme_exn env_m p in
+           repr (instantiate sch)
+        ) m.Ast.params
+    in
+    let tfun = TFun (inst_param_tys, TUnit) in
+    let sch  = generalize env_cls tfun in
+    (m.Ast.mname, sch)
+  in
+  List.map infer_one c.Ast.methods
+*)
+(* すべてのクラスについてメソッド型（スキーム）を事前に推論して登録する *)
+let preinfer_all_classes (p : Ast.program) (g0 : Types.tenv) : unit =
+  let infer_one_class (c : Ast.class_decl) : (string * Types.scheme) list =
+    let env_cls = clone g0 in
+    (* フィールドを先に単相で env_cls へ *)
+    List.iter (function
+      | Ast.VarDecl (name, rhs) ->
+          let t = infer_expr env_cls rhs in
+          let sch = generalize (ftv_env env_cls) t in
+          set_var_scheme env_cls name sch
+      | _ -> ()
+    ) c.Ast.fields;
+    let infer_method (m : Ast.method_decl) =
+      let env_m = clone env_cls in
+      (* self : TObject cls *)
+(*      set_var_scheme env_m "self" (Types.Forall ([], Types.TActor(c.Ast.cname,[])));   by kodama *)
+      (* 仮引数を新しい型変数で束縛 *)
+      let ps =
+        List.map (fun p -> let a = Types.fresh_tvar () in
+                           set_var_scheme env_m p (Types.Forall ([], Types.TVar a));
+                           Types.TVar a) m.Ast.params
+      in
+      (* 本文を型チェックして各 TVar を具体化させる *)
+      check_stmt env_m m.Ast.body;
+      let ps' = List.map (fun p -> Types.repr (Types.instantiate (get_var_scheme_exn env_m p))) m.Ast.params in
+      let tfun = Types.TFun (ps', Types.TUnit) in
+      let sch  = generalize (ftv_env env_m) tfun in
+      (m.Ast.mname, sch)
+    in
+    List.map infer_method c.Ast.methods
+  in
+  List.iter (function
+    | Ast.Class c ->
+        let sigs = infer_one_class c in
+        Types.register_class_method_schemes c.Ast.cname sigs
+    | _ -> ()
+  ) p
+
+(* プログラム全体のクラス定義を走査し、メソッド型スキームを Typing_env へ登録 *)
+(* let preinfer_all_classes (p : Ast.program) (g0 : env) : unit =
+  List.iter (function
+    | Ast.Class c ->
+        let sigs = infer_class_method_sounds g0 c in
+        Typing_env.register_class_method_schemes c.Ast.cname sigs
+    | _ -> ()
+  ) p
+*)
+
+let check_program (p: Ast.program) : (Types.tenv, string) result =
+  let env0 = Typing_env.prelude () in
+  try
+    preinfer_all_classes p env0;           (* ★ 先に全クラスのメソッド型を登録 *)
+    List.iter (check_decl env0) p;          (* それから通常どおりトップレベルを検査 *)
+    Ok env0
+  with
+  | Types.Type_error msg -> Error msg
+
+(* let check_program (p:program) : (Typing_env.env, string) result =
+  let env = Typing_env.prelude () in
+  try
+    (* ★ まずクラス宣言を走査してメソッド型を前計算し、Typing_env に登録 *)
+    List.iter (function
+      | Class c ->
+          let sigs = infer_class_method_schemes env c in
+          Typing_env.register_class_method_schemes c.cname sigs
+      | _ -> ()
+    ) p;
+    (* その後、通常どおり宣言や本文を型検査（send などもメソッド型を使ってチェック可能） *)
+    List.iter (check_decl env) p;
+    Ok env
+  with
+  | Type_error msg -> Error msg
+*)
+(* let check_program (p:program) : (Typing_env.env, string) result =
   let env = Typing_env.prelude () in
   try
     List.iter (check_decl env) p;
     Ok env
   with
   | Type_error msg -> Error msg
+*)
