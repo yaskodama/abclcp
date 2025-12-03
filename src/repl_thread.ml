@@ -144,14 +144,12 @@ let parse_input (s : string) : Ast.program =
   lb.Lexing.lex_curr_p <- { lb.Lexing.lex_curr_p with Lexing.pos_fname = "<repl>" };
   Parser.program token lb
 
-(* 文字列入力を parse_input でパースして例外を Result に包む *)
 let parse_input_safe (s : string) : (Ast.program, string) result =
   try Ok (parse_input s) with
   | Failure msg -> Error (Printf.sprintf "Failure: %s" msg)
   | Parsing.Parse_error -> Error "Parse error"
   | exn -> Error (Printexc.to_string exn)
 
-(* ファイルを読み込んで parse_input に渡す（位置は出ないが確実に動く） *)
 let parse_file_safe (filename : string) : (Ast.program, string) result =
   try
     let ic = open_in filename in
@@ -168,8 +166,6 @@ type session = {
 }
 
 let sess = { ast = None; filename = None }
-
-(* 既に作ってある parse_file_safe / parse_input_safe を流用します *)
 
 let load_decls ?filename (decls : Ast.program) =
   if not (Typecheck.run decls) then
@@ -222,7 +218,6 @@ let load_file (fname : string) : Ast.program option =
            | SEMICOLON -> print_endline "Token: SEMICOLON"
            | COMMA -> print_endline "Token: COMMA"
            | NEW -> print_endline "Token: NEW"
-           | CLASS -> print_endline "Token: CLASS"
            | SELF -> print_endline "Token: SELF"
            | SENDER -> print_endline "Token: SENDER"
            | IF -> print_endline "Token: IF"
@@ -235,8 +230,6 @@ let load_file (fname : string) : Ast.program option =
           show_tokens ()
     in
 (*    show_tokens (); *)
-
-    (* === AST 表示 === *)
     let decls =
       let lb = Lexing.from_string src in
       Parser.program Lexer.token lb
@@ -251,7 +244,6 @@ let load_file (fname : string) : Ast.program option =
       Printf.printf "[Abort] Type error while loading %s\n%!" fname;
       None
     end
-
   with Sys_error msg ->
     Printf.printf "[Error] could not load %s\n%s\n%!" fname msg;
     None
@@ -267,7 +259,8 @@ let rec string_of_expr = function
   | Expr e -> (string_of_expr e)
   | Int i -> string_of_int i
   | New (cls, args) -> cls ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
-
+  | Array (_,_) -> "array"
+  
 let rec string_of_stmt = function
   | Assign (v, e) -> v ^ " = " ^ string_of_expr e
   | CallStmt (fname, args) -> "call " ^ fname ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
@@ -315,7 +308,6 @@ let rec process_command line =
     print_endline "  compile               - build/spawn from the loaded program";
     print_endline "  list                  - list active objects";
     print_endline "  send obj.method(args) - send async message";
-    print_endline "  ssend obj.method(args)- send with expr receiver (if supported)";
     print_endline "  ast <name>            - show AST of a class or instance's class";
     print_endline "  pprint <name>         - pretty-print the class source";
     print_endline "  script <file>         - run REPL commands from file";
@@ -331,7 +323,7 @@ let rec process_command line =
         obj.methods |> List.map (fun (md:Ast.method_decl) -> (md.mname, List.length md.params))
       in
         Types.register_class_auto obj.cname ms_arity;
-        Printf.printf "[Registered types for class %s: %s]->register_class.\n%!" obj.cname
+        Printf.printf "[Registered types for class %s: %s]\n%!" obj.cname
         (String.concat ", " (List.map (fun (m,a)-> Printf.sprintf "%s/%d" m a) ms_arity));
     | _ -> ()
     ) !program_buffer;
@@ -562,7 +554,7 @@ let rec process_command line =
   )
 
 let start_repl () =
-  let building = ref false in           (* 今、プログラム入力中か？ *)
+  let building = ref false in
   let buf = Buffer.create 4096 in
   let depth = ref 0 in
   let prompt () =
@@ -578,7 +570,7 @@ let start_repl () =
       let s = String.trim line in
       if (not !building) && is_command_line s then (
           (try
-            process_command line   (* ←従来の関数名に合わせて呼び出し *)
+            process_command line
           with
           | Quit -> raise Quit
           | Failure msg -> Printf.printf "[Error] %s\n%!" msg
@@ -647,11 +639,9 @@ let repl_thread_fun () =
   with
   | Quit ->
       print_endline exit_banner;
-      (* 例: SDL を止めたい場合 *)
       (try Sdl_helper.sdl_quit () with _ -> ());
       ()
   | exn ->
-      (* REPLスレッドの予期しない例外はログだけ出して終了 *)
       Printf.printf "[REPL thread error] %s\n%!" (Printexc.to_string exn)
 
 let () =
@@ -667,11 +657,6 @@ let () =
 
   let repl_thr = Thread.create (fun () -> repl_thread_fun ()) () in
 
-  (* SDL を使う設計なら：メインで SDL をブロック実行 *)
   Sdl_helper.main_loop ();
-
   (try Thread.join repl_thr with _ -> ());
-
-  (* SDL を使わない場合は、代わりに join でブロック：
-     Thread.join _thr *)
   Stdlib.exit 0

@@ -8,19 +8,17 @@ type env = (string, scheme list) Hashtbl.t
 let add (e:env) (name:string) (sch:scheme) : unit =
   let prev = match Hashtbl.find_opt e name with Some xs -> xs | None -> [] in
   Hashtbl.replace e name (sch :: prev)
-(*
-let ftv_env (env : env) : Types.ISet.t =
-  (* env 内の各値の型（ty or scheme）から自由型変数を集めて合併する *)
-  Env.fold (fun _name binding acc ->
-    match binding with
-    | Scheme sch -> Types.ISet.union acc (Types.ftv_scheme sch)
-    | Mono   ty  -> Types.ISet.union acc (Types.ftv_ty ty)
-  ) env Types.ISet.empty
-*)
-(*
-let generalize_env (env : env) (t : Types.ty) : Types.scheme =
-  Types.generalize (ftv_env env) t
-*)
+
+(* actor_table を表示するためのフック。
+   デフォルトは no-op。Eval_thread 側で実体をセットする。 *)
+let actor_table_printer : (unit -> unit) ref = ref (fun () -> ())
+
+let set_actor_table_printer (f : unit -> unit) : unit =
+  actor_table_printer := f
+
+let debug_print_actor_table () : unit =
+  (!actor_table_printer) ()
+
 let empty_env () : env = Hashtbl.create 97
 
 let add_mono (e:env) (name:string) (t:ty) : unit =
@@ -37,7 +35,6 @@ let find_all (e:env) (name:string) : scheme list =
 let prelude () : env =
   let e = empty_env () in
 
-  (* 1) 単項 math: float -> float *)
   let add_f1 f = add_mono e f (TFun ([TFloat], TFloat)) in
   List.iter add_f1
     [ "sin"; "cos"; "tan"; "asin"; "acos"; "atan";
@@ -66,8 +63,6 @@ let prelude () : env =
     ("init",  Types.TFun ([Types.TFloat], Types.TUnit));
     ("greet", Types.TFun ([],             Types.TUnit));
   ]; *)
-
-  (* --- SDL primitives (typing_env.ml / prelude 内のどこかの最後で OK) --- *)
 
   (* ---- wait: sleep milliseconds ---- *)
   add_mono e "wait" (TFun ([TInt],   TUnit));

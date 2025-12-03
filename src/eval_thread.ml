@@ -29,6 +29,47 @@ let actor_table : (string, actor) Hashtbl.t = Hashtbl.create 32
 
 let env : (string, value) Hashtbl.t = Hashtbl.create 64
 
+(* 既存の actor テーブルと型を前提にしています：
+   val actor_table : (string, actor) Hashtbl.t
+   type actor = { name: string; cls: string; env: (string, value) Hashtbl.t;
+                  methods: (string, method_decl) Hashtbl.t;
+                  mbox: msg Queue.t; (* 無い場合は 0 を出す *)
+                }
+   など。フィールド名はあなたの定義に合わせて置換してください。 *)
+let debug_print_actor_table () =
+  print_endline "[actor_table]";
+  Hashtbl.iter
+    (fun aname (a:actor) ->
+      (* クラス名の取り出し：__class > self > a.cls の順でフォールバック *)
+      let cls_name =
+        match Hashtbl.find_opt a.env "__class" with
+        | Some (VString cn) -> cn
+        | _ ->
+          (match Hashtbl.find_opt a.env "self" with
+           | Some (VActor (cn, _)) -> cn
+           | _ -> a.cls)
+      in
+      (* 型（メソッド表）を整形して表示 *)
+      let methods = Types.lookup_class_methods_inst cls_name in
+      let ty_str =
+        if methods = [] then
+          "actor(" ^ cls_name ^ ")"
+        else
+          (* string_of_ty_pretty が未導入なら string_of_ty に置換可 *)
+          Types.string_of_ty_pretty (Types.TActor (cls_name, methods))
+      in
+      let mbox_len =
+        try Queue.length a.queue with _ -> 0
+      in
+      let mnames =
+        Hashtbl.to_seq_keys a.methods |> List.of_seq |> String.concat ", "
+      in
+      Printf.printf "- %s : %s\n    mbox: %d\n    methods: %s\n%!"
+        aname ty_str mbox_len (if mnames = "" then "(none)" else mnames)
+    )
+    actor_table;
+  flush stdout
+
 (* actor_table を走査する汎用イテレータ *)
 let iter_actor_table (k : string -> actor -> unit) : unit =
   Hashtbl.iter (fun aname a -> k aname a) actor_table
@@ -741,3 +782,7 @@ let show_actor_env actor =
   Hashtbl.fold (fun key value acc ->
     acc ^ Printf.sprintf "   %s = %s\n" key (string_of_value(value))
   ) actor.env ""
+
+(* ここまでで定義した debug_print_actor_table を Typing_env に登録 *)
+let () =
+  Typing_env.set_actor_table_printer debug_print_actor_table

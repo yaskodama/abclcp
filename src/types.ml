@@ -43,14 +43,16 @@ let freshes (n : int) : int list =
   in
   go 0 []
 
-let class_methods_schemes : (string, (string * scheme) list) Hashtbl.t =
-  Hashtbl.create 17
+(* ======================================== *)
+(*  クラス -> (メソッド名 × 型スキーム) 表 *)
+(* ======================================== *)
 
 (* ====== クラスのメソッド型レジストリ ===== *)
 
 (* クラス名 → (メソッド名 × 型スキーム) のリスト *)
 let class_method_schemes : (string, (string * scheme) list) Hashtbl.t = Hashtbl.create 97
 
+(* preinfer_all_classes から呼ぶ登録関数 *)
 let register_class_method_schemes (cls : string) (sigs : (string * scheme) list) : unit =
   Hashtbl.replace class_method_schemes cls sigs
 
@@ -60,20 +62,15 @@ let lookup_method_scheme (cls : string) (mname : string) : scheme option =
   | Some lst ->
       (try Some (List.assoc mname lst) with Not_found -> None)
 
-(* 表示用：スキームを具体化して (メソッド名 × 具体化済み型) のリストにする *)
-(* let lookup_class_methods_inst (cls : string) : (string * ty) list =
-  match Hashtbl.find_opt class_method_schemes cls with
-  | None -> []
-  | Some lst ->
-      List.map (fun (m, sch) -> (m, repr (instantiate sch))) lst *)
-
 let register_class (name : string) (methods : (string * scheme) list) : unit =
-  Hashtbl.replace class_methods_schemes name methods
+  Hashtbl.replace class_method_schemes name methods
 
-let lookup_class_method_scheme (cls : string) (m : string) : scheme option =
-  match Hashtbl.find_opt class_methods_schemes cls with
-  | Some lst -> List.assoc_opt m lst
+
+(* 1つのメソッドだけ取り出す（send や New の init で使用） *)
+let lookup_class_method_scheme (cls : string) (mname : string) : scheme option =
+  match Hashtbl.find_opt class_method_schemes cls with
   | None -> None
+  | Some lst -> List.assoc_opt mname lst
 
 (* ★ ここがポイント：引数個数 arity から、tvar ref と その id を同時に作る *)
 let register_class_auto (name : string) (methods_arity : (string * int) list) : unit =
@@ -263,13 +260,11 @@ let rec ftv_ty t =
       List.fold_left (fun acc ti->ISet.union acc (ftv_ty ti)) (ftv_ty r) ps
   | _ -> ISet.empty
 
-(* --- generalize --- *)
 let generalize (env_ftv : ISet.t) (t : ty) : scheme =
   let fv_t = ftv_ty t in
   let qs = ISet.elements (ISet.diff fv_t env_ftv) in
   Forall (qs, t)
 
-(* --- instantiate --- *)
 let instantiate (Forall (qs, t)) : ty =
   let tbl : (int, tvar ref) Hashtbl.t = Hashtbl.create (List.length qs) in
   List.iter (fun q -> Hashtbl.replace tbl q (fresh_tvar ())) qs;
@@ -287,6 +282,31 @@ let instantiate (Forall (qs, t)) : ty =
         | None -> TVar tv
   in
   inst t
+
+(* 表示用：具体化済みメソッド型リストを取り出す *)
+let lookup_class_methods_inst (cls : string) : (string * ty) list =
+  match Hashtbl.find_opt class_method_schemes cls with
+  | None -> []
+  | Some lst ->
+      List.map
+        (fun (m, sch) ->
+           let ty = repr (instantiate sch) in
+           (m, ty))
+        lst
+
+(* デバッグ：クラスごとのメソッドスキーム表を表示 *)
+let debug_print_class_method_schemes () : unit =
+  print_endline "[class_method_schemes]";
+  Hashtbl.iter
+    (fun cls sigs ->
+       Printf.printf "class %s\n" cls;
+       List.iter
+         (fun (m, sch) ->
+            let ty = repr (instantiate sch) in
+            Printf.printf "  %s : %s\n" m (string_of_ty_pretty ty))
+         sigs;
+       print_newline ())
+   class_method_schemes
 
 (* 自由型変数: 量化された変数ID(qs)を t の自由変数集合から取り除く *)
 let ftv_scheme (Forall (qs, t) : scheme) : ISet.t =
@@ -306,9 +326,3 @@ let ftv_env (env : tenv) : ISet.t =
          (fun acc sch -> ISet.union acc (ftv_scheme sch))
          acc schemes)
     env ISet.empty
-
-(* 取得：typeof 表示用に、全メソッドを instantiate 済 ty で返す *)
-let lookup_class_methods_inst (cls : string) : (string * ty) list =
-  match Hashtbl.find_opt class_methods_schemes cls with
-  | None -> []
-  | Some lst -> List.map (fun (m, sch) -> (m, instantiate sch)) lst
