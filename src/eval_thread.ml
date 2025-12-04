@@ -601,7 +601,8 @@ let find_actor_exn name =
   try Hashtbl.find actor_table name
   with Not_found -> failwith ("send: unknown actor: " ^ name)
 
-let rec eval_expr (actor:actor) = function
+let rec eval_expr (actor:actor) (e : expr) =
+  match e.desc with
   | Int i -> VInt i
   | Float f  -> VFloat f
   | String s -> VString s
@@ -616,7 +617,9 @@ let rec eval_expr (actor:actor) = function
   | Expr e -> eval_expr actor e
 and eval_stmt (actor:actor) = function
   | Assign (x, e) -> set_var_a actor x (eval_expr actor e)
-  | VarDecl (name, New (cls, args)) ->
+  | VarDecl (name, rhs) -> (
+    match rhs.desc with
+    | New (cls, args) -> (
     let cobj = find_class_exn cls in
       register_instance_source name cobj;
       let obj  = { cobj with cname = cls } in
@@ -645,9 +648,8 @@ and eval_stmt (actor:actor) = function
               else
                 send_message ~from:"<new>" name (CallStmt ("init", args))
           );
-          set_var_a actor name (VActor (cls, Hashtbl.create 0))
-  | VarDecl (name, rhs) ->
-      set_var_a actor name (eval_expr actor rhs)
+          set_var_a actor name (VActor (cls, Hashtbl.create 0)))
+    | _ -> set_var_a actor name (eval_expr actor rhs))
   | If (cond, tbr, fbr) ->
       if to_bool (eval_expr actor cond)
       then eval_stmt actor tbr
@@ -706,9 +708,9 @@ and eval_stmt (actor:actor) = function
       else if tgt = "sender" then actor.last_sender
       else tgt
     in
-    (* ★ 送信側（actor）の環境で引数を先に評価し、即値式へ変換してから送る *)
     let arg_vals = List.map (eval_expr actor) args in
-    let arg_exprs = List.map expr_of_value arg_vals in
+(*    let arg_exprs = List.map expr_of_value arg_vals in *)
+    let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
     send_message ~from:actor.name actual_target (CallStmt (meth, arg_exprs))
 and spawn_actor obj cls =
   let actor = create_actor obj.cname cls in
@@ -723,7 +725,7 @@ and spawn_actor obj cls =
   (match obj with
   | { fields = initvals; _ } ->
     List.iter (fun (VarDecl(k, v)) ->
-      match v with
+      match v.desc with
       | Float f -> Hashtbl.replace actor.env k (VFloat f)
       | String s -> Hashtbl.replace actor.env k (VString s)
       | _ -> ()
@@ -770,7 +772,7 @@ and resolve_actor_from_term env recv_term =
         | _ -> failwith "send: receiver expression requires self; use a name or bind self"
       in
       let self_actor = find_actor_exn self_name in
-      match eval_expr self_actor recv_term with
+      match eval_expr self_actor (mk_expr recv_term) with
       | VActor (name,_) -> find_actor_exn name
       | _ -> failwith "send: receiver expr must evaluate to an actor (VActor name)"
 

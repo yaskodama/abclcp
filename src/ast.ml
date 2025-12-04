@@ -1,5 +1,8 @@
 (* ast.ml *)
-type expr =
+type expr = {
+  loc : Location.t;
+  desc : expr_desc;
+} and expr_desc =
   | Int of int
   | Float of float
   | String of string
@@ -39,6 +42,12 @@ type decl =
 
 type program = decl list
 
+let mk_var (x : string) : expr = { loc = Location.dummy; desc = Var x }
+
+let mk_int (n : int) : expr = { loc = Location.dummy; desc = Int n }
+let mk_float (f : float) : expr  = { loc = Location.dummy; desc = Float f }
+let mk_expr (d : expr_desc) : expr = { loc = Location.dummy; desc = d }
+
 (*
   ========= AST pretty printer =========
   - string_of_expr / string_of_stmt / string_of_decl:
@@ -47,7 +56,8 @@ type program = decl list
       木構造 (├─ / └─) で多段表示。葉は "Float 10.0" のように直接表示。
 *)
 
-let rec string_of_expr = function
+let rec string_of_expr (e:expr) : string =
+  match e.desc with
   | Int i          -> Printf.sprintf "Int %d" i
   | Float f        -> Printf.sprintf "Float %g" f
   | String s       -> Printf.sprintf "String %S" s
@@ -115,7 +125,8 @@ let string_of_program (p : program) =
 
 (* ---------- 木構造ダンプ（├─ / └─） ---------- *)
 
-let label_of_expr = function
+let label_of_expr (e:expr) : string =
+  match e.desc with
   | Int i          -> Printf.sprintf "Int %d" i
   | Float f        -> Printf.sprintf "Float %g" f
   | String s       -> Printf.sprintf "String %S" s
@@ -126,7 +137,8 @@ let label_of_expr = function
   | New (cls, _)      -> "New " ^ cls                 (* ★ 追加 *)
 ;;
 
-let children_of_expr = function
+let children_of_expr (e:expr) : ('a list) =
+  match e.desc with
   | Binop (_,a,b) -> [a; b]
   | Call (_,arg)  -> arg
   | Expr e        -> [e]
@@ -269,7 +281,8 @@ let dump_program (p : program) =
 
 let indent n = String.make (n*2) ' '   (* インデント：スペース2個×レベル *)
 
-let rec pprint_expr ?(lvl=0) = function
+let rec pprint_expr ?(lvl=0) (e:expr) : string =
+  match e.desc with
   | Int i -> string_of_int i
   | Float f  -> string_of_float f
   | String s -> Printf.sprintf "\"%s\"" s

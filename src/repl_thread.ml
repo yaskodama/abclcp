@@ -108,10 +108,10 @@ let parse_arg_token (t : string) : Ast.expr =
   let t = trim t in
   let n = String.length t in
   if n >= 2 && t.[0] = '"' && t.[n-1] = '"' then
-    Ast.String (String.sub t 1 (n - 2))
+    Ast.mk_expr(Ast.String (String.sub t 1 (n - 2)))
   else
     (* 数値 or 識別子 *)
-    (try Ast.Float (float_of_string t) with _ -> Ast.Var t)
+    (try Ast.mk_expr(Ast.Float (float_of_string t)) with _ -> Ast.mk_expr(Ast.Var t))
 
 let split_args (s : string) : string list =
   (* カンマ区切り（クォート内のカンマは今回非対応：必要なら強化） *)
@@ -250,7 +250,8 @@ let load_file (fname : string) : Ast.program option =
 
 let usage_msg = "Usage: abclrepl_thread [-f script_file]"
 
-let rec string_of_expr = function
+let rec string_of_expr (e : Ast.expr) =
+  match e.desc with
   | Float f -> string_of_float f
   | String s -> s
   | Var v -> v
@@ -365,11 +366,13 @@ let rec process_command line =
 	      (* 2) 生成直後に一度だけ init(...) を送る *)
               Eval_thread.send_message ~from:"<ctor>" var (CallStmt ("init", args))
           | _ -> Printf.printf "[Error] Class %s not found\n" cls)
-    | Global (VarDecl (name, New (cls, args))) ->
+      | Global (VarDecl (name, rhs)) -> (
+        match rhs.desc with
+        | New (cls, args) -> (
       let cobj = Eval_thread.find_class_exn cls in
         Eval_thread.register_instance_source name cobj;
         let obj  = { cobj with cname = cls } in
-        let actor_inst = Eval_thread.create_actor obj.cname cls in
+        let actor_inst = Eval_thread.create_actor name cls in
           List.iter (function
           | VarDecl (k, init) ->
             let v = Eval_thread.eval_expr actor_inst init in
@@ -393,14 +396,11 @@ let rec process_command line =
                     name need got
                 else
                   Eval_thread.send_message ~from:"<new>" name (CallStmt ("init", args))
-            )
+		  ))
+        | _ -> ())
     | Global (Send (tgt, mname, args)) ->
       pending_global_sends := (fun () -> Eval_thread.send_message ~from:"<top>" tgt (CallStmt (mname, args))
       ) :: !pending_global_sends
-(*    | Global stmts ->
-      List.iter (fun s -> ()
-        ignore (Eval_thread.eval_stmt Eval_thread.actor s)
-        ) stmts; *)
     | Global _ -> ()
     | Class _ -> ()
     | _ -> ()

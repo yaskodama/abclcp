@@ -1,21 +1,21 @@
 type token =
   | ID of (
-# 5 "parser.mly"
+# 6 "parser.mly"
         string
 # 6 "parser.mli"
 )
   | FLOATLIT of (
-# 6 "parser.mly"
+# 7 "parser.mly"
         float
 # 11 "parser.mli"
 )
   | INTLIT of (
-# 7 "parser.mly"
+# 8 "parser.mly"
         int
 # 16 "parser.mli"
 )
   | STRINGLIT of (
-# 8 "parser.mly"
+# 9 "parser.mly"
         string
 # 21 "parser.mli"
 )

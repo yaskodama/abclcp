@@ -5,14 +5,14 @@ class Pinger {
   }
   method pong() {
     print("Pinger got pong");
-    send ponger.ping();
+    send sender.ping();
   }
 }
 
 class Ponger {
   method ping() {
     print("Ponger got ping");
-    send pinger.pong();
+    send sender.pong();
   }
 }
 

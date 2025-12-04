@@ -12,8 +12,8 @@ let set_var_scheme (env : (string, scheme list) Hashtbl.t) (x:string) (sch:schem
 let get_var_scheme_exn (env : (string, scheme list) Hashtbl.t) (x:string) : scheme =
   match Hashtbl.find_opt env x with
   | Some [sch] -> sch
-  | Some _     -> raise (Type_error ("cannot assign to overloaded name: " ^ x))
-  | None       -> raise (Type_error ("unbound variable: " ^ x))
+  | Some _     -> raise (Type_error (Location.dummy,("cannot assign to overloaded name: " ^ x)))
+  | None       -> raise (Type_error (Location.dummy,("unbound variable: " ^ x)))
 
 let find_all (env : (string, scheme list) Hashtbl.t) (name : string) : scheme list =
   match Hashtbl.find_opt env name with
@@ -63,13 +63,13 @@ let pick_overload (name:string) (env:tenv) (arg_tys:ty list) : ty =
       let sigstr =
         "(" ^ String.concat ", " (List.map Types.string_of_ty_pretty arg_tys) ^ ")"
       in
-      raise (Type_error ("no overload of "^name^" matches "^sigstr))
+      raise (Type_error (Location.dummy,("no overload of "^name^" matches "^sigstr)))
 
 let unify_many (ps : Types.ty list) (as_ : Types.ty list) =
   try List.iter2 Types.unify ps as_
   with Invalid_argument _ ->
-    raise (Type_error (Printf.sprintf
-		       "arity mismatch: expected %d args, got %d" (List.length ps) (List.length as_)))
+    raise (Type_error (Location.dummy,(Printf.sprintf
+		       "arity mismatch: expected %d args, got %d" (List.length ps) (List.length as_))))
 
 (* 受け手の型からメソッド mname のモノタイプを取り出す。
    TActor の第2引数 ms に暫定/確定メソッド表があればそれを優先、
@@ -88,7 +88,7 @@ let lookup_method_type (tobj : ty) (mname : string) : ty option =
   | _ -> None
 
 let rec infer_expr (env:env) (e:expr) : ty =
-  match e with
+  match e.desc with
   | Int _ -> TInt
   | Float _ -> TFloat
   | String _ -> TString
@@ -106,6 +106,7 @@ let rec infer_expr (env:env) (e:expr) : ty =
       let t_args = List.map (infer_expr env) arg1 in
       pick_overload fname env t_args
   | Expr e -> infer_expr env e
+  | Var x when x = "sender" -> TAny
   | Var x ->
      (* preinfer（1パス目）のときは、未束縛変数は「新しい型変数」として許す *)
       (match Hashtbl.find_opt env x with
@@ -123,7 +124,7 @@ let rec infer_expr (env:env) (e:expr) : ty =
              TVar(Types.fresh_tvar ())
            else
              (* ★ 2パス目（本番）：ここで初めて「未束縛変数はエラー」とする *)
-             raise (Type_error ("unbound variable: " ^ x)))
+             raise (Type_error (e.loc, ("unbound variable: " ^ x))))
   | New (cls, args) ->
     let targs = List.map (infer_expr env) args in
     (match Types.lookup_class_method_scheme cls "init" with
@@ -132,15 +133,15 @@ let rec infer_expr (env:env) (e:expr) : ty =
           | Types.TFun (params, _ret) ->
               let unify_many ps qs =
                 try List.iter2 Types.unify ps qs with Invalid_argument _ ->
-                    raise (Type_error
+                    raise (Type_error (e.loc,
                       (Printf.sprintf "constructor %s: arity mismatch (expected %d, got %d)"
-                         cls (List.length ps) (List.length qs)))
+                         cls (List.length ps) (List.length qs))))
               in
                 unify_many params targs
           | ty ->
-              raise (Type_error
+              raise (Type_error (e.loc,
                 (Printf.sprintf "constructor %s: init is not a function: %s"
-                   cls (Types.string_of_ty_pretty ty)))
+                   cls (Types.string_of_ty_pretty ty))))
           )
      | None -> ());
     let ms = Types.lookup_class_methods_inst cls in TActor (cls, ms)
@@ -160,7 +161,7 @@ let class_name_of_var (env : Types.tenv) (vname : string) : string =
   let t = repr (Types.instantiate (get_var_scheme_exn env vname)) in
   match t with
   | TActor (cls, _) -> cls
-  | other -> raise (Type_error ("send target is not an actor: " ^ string_of_ty(other)))
+  | other -> raise (Type_error (Location.dummy,("send target is not an actor: " ^ string_of_ty(other))))
 
 let rec check_stmt (env:env) (s:stmt) : unit =
   match s with
@@ -177,7 +178,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
          let sch' = Types.generalize (ftv_env env) t_rhs in   (* 代入後の型を更新（単相にしたいなら Forall([], t_rhs)）*)
          set_var_scheme env x sch'
      | Some _ ->
-         raise (Type_error ("cannot assign to overloaded name: " ^ x)));
+         raise (Type_error (Location.dummy,("cannot assign to overloaded name: " ^ x))));
     ()
   | VarDecl (name, rhs) ->
       let t   = infer_expr env rhs in
@@ -202,7 +203,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
         (* ★ 1パス目（preinfer）：
            - 変数や引数の型だけざっくり推論しておく
            - actor かどうか / メソッドが存在するかはチェックしない *)
-        ignore (infer_expr env (Var vname));
+        ignore (infer_expr env (mk_var(vname)));
         List.iter (fun e -> ignore (infer_expr env e)) args;
       end else begin
         (* ★ 2パス目（本番の型チェック） *)
@@ -216,13 +217,13 @@ let rec check_stmt (env:env) (s:stmt) : unit =
         end else begin
           (* 通常の send: vname の型を actor(C) として取り出し、
              preinfer で登録したクラスメソッド表から mname の型を調べる *)
-          let t_actor = infer_expr env (Var vname) in
+          let t_actor = infer_expr env (mk_var(vname)) in
           match repr t_actor with
           | TActor (cls, _) ->
               (match Types.lookup_class_method_scheme cls mname with
                | None ->
-                   raise (Type_error
-                     ("no method " ^ mname ^ " in actor(" ^ cls ^ ")"))
+                   raise (Type_error (Location.dummy,
+                     ("no method " ^ mname ^ " in actor(" ^ cls ^ ")")))
                | Some sc ->
                    let tf = repr (Types.instantiate sc) in
                    match tf with
@@ -230,16 +231,16 @@ let rec check_stmt (env:env) (s:stmt) : unit =
                        let actuals =
                          List.map (fun e -> repr (infer_expr env e)) args in
                        if List.length param_tys <> List.length actuals then
-                         raise (Type_error "arity mismatch in send");
+                         raise (Type_error (Location.dummy,"arity mismatch in send"));
                        List.iter2 Types.unify param_tys actuals;
                        ()
                    | _ ->
-                       raise (Type_error
+                       raise (Type_error (Location.dummy,
                          ("method " ^ mname ^ " is not a function: "
-                          ^ string_of_ty tf)))
+                          ^ string_of_ty tf))))
           | t_non_actor ->
-              raise (Type_error
-                ("send target is not actor: " ^ string_of_ty t_non_actor))
+              raise (Type_error (Location.dummy,
+                ("send target is not actor: " ^ string_of_ty t_non_actor)))
         end
     end
 
@@ -265,12 +266,16 @@ let check_decl (env:env) = function
       (* 3) 本文は“ローカル環境”で検査：ローカル変数が外へ漏れない *)
       List.iter (fun m ->
         let env_m = clone env in
-        (* ★ 追加：メソッド仮引数をローカル環境に束縛（型は float 想定） *)
-          List.iter (fun p ->
-            set env_m p (Forall ([], TFloat))
-          ) m.params;
-          check_stmt env_m m.body
-      ) c.methods
+        (* ★ self をこのクラスのアクターとしてローカル環境に追加 *)
+        set env_m "self" (Forall ([], TActor (c.Ast.cname, [])));
+
+        (* ★ メソッド仮引数をローカル環境に束縛（今は float 想定） *)
+        List.iter (fun p ->
+          set env_m p (Forall ([], TFloat))
+        ) m.params;
+
+        check_stmt env_m m.body
+	) c.methods
   | Instantiate (_obj, _class) -> ()
   | InstantiateInit (_obj, _class, inits) ->
     List.iter (fun st ->
@@ -366,7 +371,7 @@ let infer_class_method_schemes (g0 : env) (c : Ast.class_decl) : (string * Types
    その変数を env に TActor(cls, []) として登録しておく *)
 let prebind_global_actors (p : Ast.program) (env : env) : unit =
   let rec new_class_of_expr (e : expr) : string option =
-    match e with
+    match e.desc with
     | New (cls, _args) -> Some cls
     | _ -> None
   in
@@ -401,7 +406,7 @@ let preinfer_all_classes (p : Ast.program) (g0 : Types.tenv) : unit =
                            set_var_scheme env_m p (Types.Forall ([], Types.TVar a));
                            Types.TVar a) m.Ast.params
       in
-      check_stmt env_m m.Ast.body;
+(*       check_stmt env_m m.Ast.body;     *)
       let ps' = List.map (fun p -> Types.repr (Types.instantiate (get_var_scheme_exn env_m p))) m.Ast.params in
       let tfun = Types.TFun (ps', Types.TUnit) in
       let sch  = generalize (ftv_env env_m) tfun in
@@ -421,15 +426,12 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
   try
     prebind_global_actors p env0;
     in_preinfer := true;
-    Printf.printf "test01.\n";
     preinfer_all_classes p env0;           (* ★ 先に全クラスのメソッド型を登録 *)
     in_preinfer := false;
-    Printf.printf "test02.\n";
-(*    Typing_env.debug_print_actor_table (); *)
     Types.debug_print_class_method_schemes ();
-    Printf.printf "test03.\n";
-    (* end of debug *)
     List.iter (check_decl env0) p;          (* それから通常どおりトップレベルを検査 *)
     Ok env0
   with
-  | Types.Type_error msg -> Error msg
+  | Types.Type_error (loc, msg) ->
+      let loc_s = Location.to_string loc in
+      Error (Printf.sprintf "%s: %s" loc_s msg)

@@ -79,7 +79,7 @@ class Line {
     var rad = (angle + offset) * 3.14159 / 180.0;
     var dx = len * cos(rad);
     var dy = len * sin(rad);
-    ox1 = x1; oy1 = y1; ox2 = x2;oy2 = y2;
+    ox1 = x1; oy1 = y1; ox2 = x2; oy2 = y2;
     x1 = cx - dx; y1 = cy - dy; x2 = cx + dx; y2 = cy + dy;
     call sdl_clear();
     call sdl_line(x1, y1, x2, y2);    

@@ -10,9 +10,11 @@ class Hello {
   method init(n) {
     var i = 1;
     count = n;
+    print(typeof(count));
     print("Hello object initialized with " + n);
     var hh = new H();
     print(typeof(hh));
+//    print(typeof(sender));
   }
 
   method greet() {
@@ -34,6 +36,7 @@ class Hello {
     print(array_get(xz, 1));
     var i = 23;
     print(typeof(i));
+//    print(typeof(sender));
   }
 
   method inc() {
@@ -44,7 +47,4 @@ class Hello {
 }
 
 var h = new Hello(10.);
-print(typeof(h));
-var t = 1;
-print(typeof(t));
-// send h.greet();
+send h.greet();

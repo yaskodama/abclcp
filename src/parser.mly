@@ -1,5 +1,6 @@
 %{
 open Ast
+let mk_expr d : Ast.expr = { loc = Location.dummy; desc = d }
 %}
 
 %token <string> ID
@@ -42,7 +43,7 @@ decl:
   | ID ID ASSIGN LBRACE inits RBRACE SEMICOLON   { InstantiateInit ($1, $2, $5) }
   | ID ID LPAREN args RPAREN SEMICOLON           { InstantiateArgs ($1, $2, $4) }
   | VAR ID ASSIGN expr SEMICOLON { Global (VarDecl ($2, $4)) }
-  | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON   { Global (VarDecl ($2, New ($5, $7))) }
+  | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON   { Global (VarDecl ($2, mk_expr(New ($5, $7)))) }
   | SEND ID DOT ID LPAREN args RPAREN SEMICOLON      { Global (Send ($2, $4, $6)) }
   | ID LPAREN args RPAREN SEMICOLON { Global (CallStmt ($1, $3)) }
 
@@ -87,7 +88,7 @@ stmt:
   | FLOAT ID ASSIGN expr SEMICOLON { VarDecl ($2, $4) }
   | LBRACE stmt_list RBRACE { Seq $2 }
   | VAR ID ASSIGN expr SEMICOLON { VarDecl ($2, $4) }
-  | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON { VarDecl($2, New($5,$7)) }
+  | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON { VarDecl($2, mk_expr(New($5,$7))) }
   | ID LPAREN args RPAREN SEMICOLON { CallStmt ($1, $3) }
   
 args:
@@ -99,16 +100,16 @@ inits:
   | ID ASSIGN expr COMMA inits { VarDecl($1, $3) :: $5 }
 
 expr:
-  | FLOATLIT { Float $1 }
-  | STRINGLIT { String $1 }
-  | INTLIT { Int $1 }
-  | ID { Var $1 }
-  | expr PLUS expr { Binop ("+", $1, $3) }
-  | expr MINUS expr { Binop ("-", $1, $3) }
-  | expr TIMES expr { Binop ("*", $1, $3) }
-  | expr DIV expr { Binop ("/", $1, $3) }
-  | NEW ID LPAREN args RPAREN { New ($2, $4) }
-  | ID LPAREN args RPAREN { Call ($1, $3) }
-  | expr GE expr { Binop (">=", $1, $3) }
-  | expr LE expr { Binop ("<=", $1, $3) }
+  | FLOATLIT { mk_expr(Float $1) }
+  | STRINGLIT { mk_expr(String $1) }
+  | INTLIT { mk_expr(Int $1) }
+  | ID { mk_expr(Var $1) }
+  | expr PLUS expr { mk_expr(Binop ("+", $1, $3)) }
+  | expr MINUS expr { mk_expr(Binop ("-", $1, $3)) }
+  | expr TIMES expr { mk_expr(Binop ("*", $1, $3)) }
+  | expr DIV expr { mk_expr(Binop ("/", $1, $3)) }
+  | NEW ID LPAREN args RPAREN { mk_expr(New ($2, $4)) }
+  | ID LPAREN args RPAREN { mk_expr(Call ($1, $3)) }
+  | expr GE expr { mk_expr(Binop (">=", $1, $3)) }
+  | expr LE expr { mk_expr(Binop ("<=", $1, $3)) }
   | LPAREN expr RPAREN { $2 }
