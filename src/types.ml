@@ -17,7 +17,6 @@ and ty =
 and scheme = Forall of int list * ty
 
 exception Type_error of Location.t * string
-
 let type_error ?(loc=Location.dummy) msg = raise (Type_error (loc, msg))
 
 let counter = ref 0
@@ -163,12 +162,44 @@ let rec occurs (v : tvar ref) (t : ty) : bool =
   | TArray t1    -> occurs v t1
   | TFun(ps,r)   -> List.exists (occurs v) ps || occurs v r
   | _            -> false
+let rec unify ?(loc = Location.dummy) (t1 : ty) (t2 : ty) : unit =
+  match repr t1, repr t2 with
+  | t1, t2 when t1 == t2 -> ()
+  | TVar v, t
+  | t, TVar v ->
+      if occurs v t then
+        raise (Type_error (loc, "occurs check failed"))
+      else
+        v := { !v with link = Some t }
+  | TInt,    TInt
+  | TFloat,  TFloat
+  | TBool,   TBool
+  | TString, TString
+  | TUnit,   TUnit
+  | TActor (_,_), TActor (_,_) ->
+      ()
 
-let rec unify (t1 : ty) (t2 : ty) : unit =
+  | TArray a, TArray b ->
+      unify ~loc a b  (* ★ loc を引き継ぐ *)
+
+  | TFun (ps1, r1), TFun (ps2, r2) ->
+      if List.length ps1 <> List.length ps2 then
+        raise (Type_error (loc, "arity mismatch"));
+      List.iter2 (unify ~loc) ps1 ps2;  (* ★ ここも loc 付き *)
+      unify ~loc r1 r2                  (* ★ ここも loc 付き *)
+
+  | _ ->
+    if loc == Location.dummy then
+      Printf.eprintf "DEBUG: type mmmmmmismatch raised with Location.dummy\n%!";
+    raise (Type_error (loc, "type mmmmmmismatch"))
+(*      raise (Type_error (loc, "type mmmmmmismatch")) *)
+
+(*
+let rec unify ?(loc = Location.dummy) (t1 : ty) (t2 : ty) : unit =
   match repr t1, repr t2 with
   | t1, t2 when t1 == t2 -> ()
   | TVar v, t | t, TVar v ->
-      if occurs v t then raise (Type_error (Location.dummy,"occurs check failed"))
+      if occurs v t then raise (Type_error (loc,"occurs check failed"))
       else v := { !v with link = Some t }
   | TInt,   TInt
   | TFloat, TFloat
@@ -176,11 +207,12 @@ let rec unify (t1 : ty) (t2 : ty) : unit =
   | TString,TString
   | TUnit,  TUnit
   | TActor(_,_), TActor (_,_) -> ()
-  | TArray a, TArray b -> unify a b
+  | TArray a, TArray b -> unify ~loc a b
   | TFun(ps1, r1), TFun(ps2, r2) ->
-      if List.length ps1 <> List.length ps2 then raise (Type_error (Location.dummy,"arity mismatch"));
-      List.iter2 unify ps1 ps2; unify r1 r2
-  | _ -> raise (Type_error (Location.dummy,"type mismatch"))
+      if List.length ps1 <> List.length ps2 then raise (Type_error (loc,"arity mismatch"));
+      List.iter2 (unify ~loc) ps1 ps2; unify ~loc r1 r2
+  | _ -> raise (Type_error (loc,"type mmmmmmismatch"))
+*)
 
 (* 受信側の型からメソッド型を見つける *)
 let rec lookup_method_type (tobj : ty) (mname : string) : ty option =

@@ -6,7 +6,7 @@ class H {
 
 class Hello {
   var count = 0.;
-  mmethod init(n) {
+  method init(n) {
     var i = 1;
     count = n;
     print(typeof(count));
