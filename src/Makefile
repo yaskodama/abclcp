@@ -24,6 +24,7 @@ thread_repl: location.ml parser.ml parser.mli lexer.ml ast.ml eval_thread.ml sdl
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c sdl_helper.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c eval_thread.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c parser.mli
+	rm parser.mli
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c parser.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c lexer.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c compiler.ml

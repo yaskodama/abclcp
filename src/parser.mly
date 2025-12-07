@@ -1,8 +1,13 @@
 %{
 open Ast
-let mk_expr d : Ast.expr = { loc = Location.dummy; desc = d }
+open Location
+let mk_expr (d : Ast.expr_desc) : Ast.expr = { loc  = Location.dummy; desc  = d }
+let mk_stmt (d : Ast.stmt_desc) : Ast.stmt = { sloc = Location.dummy; sdesc = d }
+exception Syntax_error of Location.t * string
+let loc_of_rhs i =
+  let p = Parsing.rhs_start_pos i in
+  { line = p.Lexing.pos_lnum; col  = p.Lexing.pos_cnum - p.Lexing.pos_bol + 1 }
 %}
-
 %token <string> ID
 %token <float> FLOATLIT
 %token <int> INTLIT
@@ -23,7 +28,8 @@ let mk_expr d : Ast.expr = { loc = Location.dummy; desc = d }
 
 program:
   | decls EOF { $1 }
-
+  | error EOF { raise (Syntax_error (loc_of_rhs 1, "syntax error in program")) }
+  
 decls:
   | decl { [$1] }
   | decl SEMICOLON { [$1] }
@@ -42,18 +48,18 @@ decl:
   | ID ID SEMICOLON                        { Instantiate ($1, $2) }
   | ID ID ASSIGN LBRACE inits RBRACE SEMICOLON   { InstantiateInit ($1, $2, $5) }
   | ID ID LPAREN args RPAREN SEMICOLON           { InstantiateArgs ($1, $2, $4) }
-  | VAR ID ASSIGN expr SEMICOLON { Global (VarDecl ($2, $4)) }
-  | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON   { Global (VarDecl ($2, mk_expr(New ($5, $7)))) }
-  | SEND ID DOT ID LPAREN args RPAREN SEMICOLON      { Global (Send ($2, $4, $6)) }
-  | ID LPAREN args RPAREN SEMICOLON { Global (CallStmt ($1, $3)) }
+  | VAR ID ASSIGN expr SEMICOLON { Global (mk_stmt(VarDecl ($2, $4))) }
+  | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON   { Global (mk_stmt(VarDecl ($2, mk_expr(New ($5, $7))))) }
+  | SEND ID DOT ID LPAREN args RPAREN SEMICOLON      { Global (mk_stmt(Send ($2, $4, $6))) }
+  | ID LPAREN args RPAREN SEMICOLON { Global (mk_stmt(CallStmt ($1, $3))) }
 
 fields:
   | field { [$1] }
   | field fields { $1 :: $2 }
 
 field:
-  | FLOAT ID ASSIGN expr SEMICOLON { VarDecl ($2, $4) }
-  | VAR ID ASSIGN expr SEMICOLON { VarDecl ($2, $4) }
+  | FLOAT ID ASSIGN expr SEMICOLON { mk_stmt(VarDecl ($2, $4)) }
+  | VAR ID ASSIGN expr SEMICOLON { mk_stmt(VarDecl ($2, $4)) }
   
 methods:
   | method_decl { [$1] }
@@ -61,7 +67,7 @@ methods:
 
 method_decl:
   | METHOD ID LPAREN param_list RPAREN LBRACE stmts RBRACE {
-    { mname = $2; params = $4; body = Seq $7 } }
+    { mname = $2; params = $4; body = mk_stmt(Seq $7) } }
 
 param_list:
   |      { [] }
@@ -77,27 +83,27 @@ stmt_list:
   |                { [] }
   
 stmt:
-  | ID ASSIGN expr SEMICOLON { Assign ($1, $3) }
-  | CALL ID LPAREN args RPAREN SEMICOLON { CallStmt ($2, $4) }
-  | CALL ID LPAREN RPAREN SEMICOLON { CallStmt ($2, []) }
-  | SEND SELF DOT ID LPAREN args RPAREN SEMICOLON { Send ("self", $4, $6) }
-  | SEND SENDER DOT ID LPAREN args RPAREN SEMICOLON { Send ("sender", $4, $6) }
-  | SEND ID DOT ID LPAREN args RPAREN SEMICOLON { Send ($2, $4, $6) }
-  | IF expr THEN stmt ELSE stmt { If ($2, $4, $6) }
-  | WHILE expr DO stmt { While ($2, $4) }
-  | FLOAT ID ASSIGN expr SEMICOLON { VarDecl ($2, $4) }
-  | LBRACE stmt_list RBRACE { Seq $2 }
-  | VAR ID ASSIGN expr SEMICOLON { VarDecl ($2, $4) }
-  | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON { VarDecl($2, mk_expr(New($5,$7))) }
-  | ID LPAREN args RPAREN SEMICOLON { CallStmt ($1, $3) }
+  | ID ASSIGN expr SEMICOLON { mk_stmt(Assign ($1, $3)) }
+  | CALL ID LPAREN args RPAREN SEMICOLON { mk_stmt(CallStmt ($2, $4)) }
+  | CALL ID LPAREN RPAREN SEMICOLON { mk_stmt(CallStmt ($2, [])) }
+  | SEND SELF DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt(Send("self", $4, $6)) }
+  | SEND SENDER DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt(Send ("sender", $4, $6)) }
+  | SEND ID DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt(Send ($2, $4, $6)) }
+  | IF expr THEN stmt ELSE stmt { mk_stmt(If($2, $4, $6)) }
+  | WHILE expr DO stmt { mk_stmt(While ($2, $4)) }
+  | FLOAT ID ASSIGN expr SEMICOLON { mk_stmt(VarDecl($2, $4)) }
+  | LBRACE stmt_list RBRACE { mk_stmt(Seq $2) }
+  | VAR ID ASSIGN expr SEMICOLON { mk_stmt(VarDecl($2, $4)) }
+  | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON { mk_stmt(VarDecl($2, mk_expr(New($5,$7)))) }
+  | ID LPAREN args RPAREN SEMICOLON { mk_stmt(CallStmt ($1, $3)) }
   
 args:
   /* empty */    { [] }
   | arg_list     { $1 }
 
 inits:
-  | ID ASSIGN expr { [VarDecl($1, $3)] }
-  | ID ASSIGN expr COMMA inits { VarDecl($1, $3) :: $5 }
+  | ID ASSIGN expr { [(mk_stmt(VarDecl($1, $3)))] }
+  | ID ASSIGN expr COMMA inits { (mk_stmt(VarDecl($1, $3))) :: $5 }
 
 expr:
   | FLOATLIT { mk_expr(Float $1) }

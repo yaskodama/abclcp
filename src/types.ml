@@ -18,8 +18,7 @@ and scheme = Forall of int list * ty
 
 exception Type_error of Location.t * string
 
-let type_error msg =
-  raise (Type_error (Location.dummy, msg))
+let type_error ?(loc=Location.dummy) msg = raise (Type_error (loc, msg))
 
 let counter = ref 0
 let next_scheme_var = ref 0
@@ -309,8 +308,8 @@ let debug_print_class_method_schemes () : unit =
          (fun (m, sch) ->
             let ty = repr (instantiate sch) in
             Printf.printf "  %s : %s\n" m (string_of_ty_pretty ty))
-         sigs;
-       print_newline ())
+         sigs;)
+(*       print_newline ()) *)
    class_method_schemes
 
 (* 自由型変数: 量化された変数ID(qs)を t の自由変数集合から取り除く *)

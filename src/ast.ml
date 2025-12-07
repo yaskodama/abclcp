@@ -12,7 +12,8 @@ type expr = {
   | Var of string
   | New of string * expr list    (* new Line(10,20) *)
   | Array of expr list * Types.ty option
-type stmt =
+
+type stmt_desc =
   | Assign of string * expr
   | CallStmt of string * expr list
   | Send of string * string * expr list
@@ -20,6 +21,10 @@ type stmt =
   | If of expr * stmt * stmt
   | While of expr * stmt
   | VarDecl of string * expr
+and stmt = {
+  sloc : Location.t;
+  sdesc : stmt_desc;
+}
 
 type method_decl = {
    mname : string;
@@ -47,7 +52,7 @@ let mk_var (x : string) : expr = { loc = Location.dummy; desc = Var x }
 let mk_int (n : int) : expr = { loc = Location.dummy; desc = Int n }
 let mk_float (f : float) : expr  = { loc = Location.dummy; desc = Float f }
 let mk_expr (d : expr_desc) : expr = { loc = Location.dummy; desc = d }
-
+let mk_stmt ?(loc = Location.dummy) (d : stmt_desc) : stmt = { sloc = loc; sdesc = d }
 (*
   ========= AST pretty printer =========
   - string_of_expr / string_of_stmt / string_of_decl:
@@ -61,37 +66,26 @@ let rec string_of_expr (e:expr) : string =
   | Int i          -> Printf.sprintf "Int %d" i
   | Float f        -> Printf.sprintf "Float %g" f
   | String s       -> Printf.sprintf "String %S" s
-  | Binop (op,a,b) -> Printf.sprintf "Binop(%s, %s, %s)"
-                        op (string_of_expr a) (string_of_expr b)
-  | Call (f,args)  ->
-    let xs = args |> List.map string_of_expr |> String.concat ", " in
-    Printf.sprintf "Call(%s, [%s])" f xs
+  | Binop (op,a,b) -> Printf.sprintf "Binop(%s, %s, %s)" op (string_of_expr a) (string_of_expr b)
+  | Call (f,args)  -> let xs = args |> List.map string_of_expr |> String.concat ", " in
+      Printf.sprintf "Call(%s, [%s])" f xs
   | Expr e         -> string_of_expr e
   | Var x          -> Printf.sprintf "Var %s" x
-  | New (cls, args) ->
-    let xs = args |> List.map string_of_expr |> String.concat ", " in
+  | New (cls, args) -> let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "New(%s, [%s])" cls xs
 
-let rec string_of_stmt = function
+let rec string_of_stmt (s:stmt) : string =
+  match s.sdesc with
   | Assign (x,e)          -> Printf.sprintf "Assign(%s, %s)" x (string_of_expr e)
-  | CallStmt (f,args)     ->
-      let xs = args |> List.map string_of_expr |> String.concat ", " in
+  | CallStmt (f,args)     -> let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "CallStmt(%s, [%s])" f xs
-  | Send (tgt,meth,args)  ->
-      let xs = args |> List.map string_of_expr |> String.concat ", " in
+  | Send (tgt,meth,args)  -> let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "Send(%s.%s, [%s])" tgt meth xs
-(*  | SSend (tgt,meth,args)  ->
-      let xs = args |> List.map string_of_expr |> String.concat ", " in
-      Printf.sprintf "Send(%s.%s, [%s])" (string_of_expr tgt) meth xs    *)
-  | Seq ss                ->
-      let xs = ss |> List.map string_of_stmt |> String.concat "; " in
+  | Seq ss                -> let xs = ss |> List.map string_of_stmt |> String.concat "; " in
       Printf.sprintf "Seq([%s])" xs
-  | If (e,s1,s2)          ->
-      Printf.sprintf "If(%s, %s, %s)" (string_of_expr e) (string_of_stmt s1) (string_of_stmt s2)
-  | While (e,body)        ->
-      Printf.sprintf "While(%s, %s)" (string_of_expr e) (string_of_stmt body)
-  | VarDecl (e1,e2) ->
-      Printf.sprintf "VarDecl(%s, %s)" e1 (string_of_expr e2)
+  | If (e,s1,s2)          -> Printf.sprintf "If(%s, %s, %s)" (string_of_expr e) (string_of_stmt s1) (string_of_stmt s2)
+  | While (e,body)        -> Printf.sprintf "While(%s, %s)" (string_of_expr e) (string_of_stmt body)
+  | VarDecl (e1,e2)       -> Printf.sprintf "VarDecl(%s, %s)" e1 (string_of_expr e2)
 
 (* 必要に応じて他の構文子を追加 *)
 
@@ -154,7 +148,8 @@ let rec dump_expr ?(prefix="") ?(is_last=true) (e : expr) =
     dump_expr ~prefix:child_pref ~is_last:(i = List.length kids - 1) k
   ) kids
 
-let label_of_stmt = function
+let label_of_stmt (s:stmt) : string =
+  match s.sdesc with
   | Assign (x,_)         -> "Assign " ^ x
   | CallStmt (f,_)       -> "CallStmt " ^ f
   | Send (tgt,m,_)       -> "Send " ^ tgt ^ "." ^ m
@@ -162,13 +157,12 @@ let label_of_stmt = function
   | If _                 -> "If"
   | While _              -> "While"
   | VarDecl (x,_)        -> "VarDecl " ^ x
-(*   | SSend (tgt,m,_)       -> "Send " ^ (string_of_expr tgt) ^ "." ^ m    *)
 
 let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
   let branch = if is_last then "└─ " else "├─ " in
   Printf.printf "%s%s%s\n" prefix branch (label_of_stmt s);
   let child_pref = prefix ^ (if is_last then "   " else "│  ") in
-    begin match s with
+    begin match s.sdesc with
     | Assign (_, e) ->
       dump_expr ~prefix:child_pref ~is_last:true e
     | CallStmt (_f, args) ->
@@ -186,18 +180,6 @@ let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
       dump_stmt ~prefix:child_pref ~is_last:true  body
     | VarDecl (_x,e) ->
       dump_expr ~prefix:child_pref ~is_last:true e
-(*    | SSend (t, m, args) ->
-      Printf.printf "%s└─ ssend\n" prefix;
-      let child = prefix ^ "   " in
-      Printf.printf "%s├─ target\n" child;
-      dump_expr ~prefix:(child ^ "│  ") ~is_last:true t;
-      Printf.printf "%s├─ method %s\n" child m;
-      Printf.printf "%s└─ args\n"   child;
-      List.iteri (fun i e ->
-        let last = (i = List.length args - 1) in
-        let p = child ^ (if last then "   " else "│  ") in
-        dump_expr ~prefix:p ~is_last:last e
-      ) args *)
 end
 
 let dump_decl ?(prefix="") ?(is_last=true) = function
@@ -213,13 +195,13 @@ let dump_decl ?(prefix="") ?(is_last=true) = function
         List.iteri (fun i st ->
           let lastf = (i = n_fields -1) in
           let branch2 = if lastf then "└─ " else "├─ " in
-          match st with
+          match st.sdesc with
           | VarDecl (name, e) ->
             Printf.printf "%s%s%s =\n" f_pref branch2 name;
             let p2 = f_pref ^ (if lastf then "   " else "│  ") in
             dump_expr ~prefix:p2 ~is_last:true e
           | other ->
-            Printf.printf "%s%s<field: %s>\n" f_pref branch2 (string_of_stmt other)
+            Printf.printf "%s%s<field: %s>\n" f_pref branch2 (string_of_stmt (mk_stmt other))
         ) c.fields
       );
       (* methods *)
@@ -246,13 +228,13 @@ let dump_decl ?(prefix="") ?(is_last=true) = function
       List.iteri (fun i st ->
         let laste = (i = List.length inits - 1) in
         let branch2 = if laste then "└─ " else " " in
-        match st with
+        match st.sdesc with
         | VarDecl (field, e) ->
           Printf.printf "%s%s%s =\n" child_pref branch2 field;          
           let p2 = child_pref ^ (if laste then "   " else "│  ") in
           dump_expr ~prefix:p2 ~is_last:true e
         | other ->
-          Printf.printf "%s%s<init: %s>\n" child_pref branch2 (string_of_stmt other)
+          Printf.printf "%s%s<init: %s>\n" child_pref branch2 (string_of_stmt (mk_stmt other))
      ) inits
   | InstantiateArgs (cls, var, args) ->  (* ★ 追加：引数あり *)
       let branch = if is_last then "└─ " else "├─ " in
@@ -296,29 +278,30 @@ let rec pprint_expr ?(lvl=0) (e:expr) : string =
       Printf.sprintf "new %s(%s)" cls
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
 
-let rec pprint_stmt ?(lvl=0) = function
+let rec pprint_stmt ?(lvl=0) (s:stmt) : string =
+  let indent = String.make (lvl*2) ' ' in
+  match s.sdesc with
   | Assign (x,e) ->
-      Printf.sprintf "%s%s = %s;" (indent lvl) x (pprint_expr ~lvl e)
+      Printf.sprintf "%s%s = %s;" indent x (pprint_expr ~lvl e)
   | VarDecl (x,e) ->
-      Printf.sprintf "%svar %s = %s;" (indent lvl) x (pprint_expr ~lvl e)
+      Printf.sprintf "%svar %s = %s;" indent x (pprint_expr ~lvl e)
   | CallStmt (f,args) ->
-      Printf.sprintf "%scall %s(%s);" (indent lvl) f
+      Printf.sprintf "%scall %s(%s);" indent f
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
   | Send (tgt,meth,args) ->
-      Printf.sprintf "%ssend %s.%s(%s);" (indent lvl) tgt meth
+      Printf.sprintf "%ssend %s.%s(%s);" indent tgt meth
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
-(*  | SSend (_,_,_) -> "<ssend>" *)
   | Seq ss ->
       String.concat "\n" (List.map (pprint_stmt ~lvl) ss)
   | If (e,s1,s2) ->
       Printf.sprintf "%sif (%s) {\n%s\n%s} else {\n%s\n%s}"
-        (indent lvl) (pprint_expr e)
-        (pprint_stmt ~lvl:(lvl+1) s1) (indent lvl)
-        (pprint_stmt ~lvl:(lvl+1) s2) (indent lvl)
+        indent (pprint_expr e)
+        (pprint_stmt ~lvl:(lvl+1) s1) indent
+        (pprint_stmt ~lvl:(lvl+1) s2) indent
   | While (e,body) ->
       Printf.sprintf "%swhile (%s) {\n%s\n%s}"
-        (indent lvl) (pprint_expr e)
-        (pprint_stmt ~lvl:(lvl+1) body) (indent lvl)
+        indent (pprint_expr e)
+        (pprint_stmt ~lvl:(lvl+1) body) indent
 
 let pprint_method ?(lvl=0) (m:method_decl) =
   let args = String.concat ", " m.params in
@@ -328,12 +311,15 @@ let pprint_method ?(lvl=0) (m:method_decl) =
     (indent lvl)
 
 let pprint_class (c:class_decl) =
+  let indent1 = String.make (1*2) ' ' in
   let fields =
-    List.map (function
-      | VarDecl (x,e) ->
-          Printf.sprintf "%svar %s = %s;" (indent 1) x (pprint_expr ~lvl:1 e)
+    List.map
+      (fun (st:stmt) ->
+        match st.sdesc with
+        | VarDecl (x,e) ->
+          Printf.sprintf "%svar %s = %s;" indent1 x (pprint_expr ~lvl:1 e)
       | _ -> ""
-    ) c.fields
+      ) c.fields
   in
   let methods = List.map (pprint_method ~lvl:1) c.methods in
   Printf.sprintf "class %s {\n%s\n%s\n}" c.cname

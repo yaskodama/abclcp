@@ -164,7 +164,7 @@ let class_name_of_var (env : Types.tenv) (vname : string) : string =
   | other -> raise (Type_error (Location.dummy,("send target is not an actor: " ^ string_of_ty(other))))
 
 let rec check_stmt (env:env) (s:stmt) : unit =
-  match s with
+  match s.sdesc with
   | Assign (x, e) ->
     let t_rhs = infer_expr env e in
     (match Hashtbl.find_opt env x with
@@ -178,7 +178,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
          let sch' = Types.generalize (ftv_env env) t_rhs in   (* 代入後の型を更新（単相にしたいなら Forall([], t_rhs)）*)
          set_var_scheme env x sch'
      | Some _ ->
-         raise (Type_error (Location.dummy,("cannot assign to overloaded name: " ^ x))));
+         raise (Type_error (s.sloc,("cannot assign to overloaded name: " ^ x))));
     ()
   | VarDecl (name, rhs) ->
       let t   = infer_expr env rhs in
@@ -222,7 +222,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
           | TActor (cls, _) ->
               (match Types.lookup_class_method_scheme cls mname with
                | None ->
-                   raise (Type_error (Location.dummy,
+                   raise (Type_error (s.sloc,
                      ("no method " ^ mname ^ " in actor(" ^ cls ^ ")")))
                | Some sc ->
                    let tf = repr (Types.instantiate sc) in
@@ -246,7 +246,9 @@ let rec check_stmt (env:env) (s:stmt) : unit =
 
 let check_decl (env:env) = function
   | Class c ->
-      List.iter (function
+    List.iter
+      (fun (st:Ast.stmt) ->
+	match st.sdesc with
         | VarDecl (name, init) ->
             let t   = infer_expr env init in
             let sch = Types.generalize (ftv_env env) t in
@@ -278,8 +280,8 @@ let check_decl (env:env) = function
 	) c.methods
   | Instantiate (_obj, _class) -> ()
   | InstantiateInit (_obj, _class, inits) ->
-    List.iter (fun st ->
-      match st with
+    List.iter (fun (st : Ast.stmt) ->
+      match st.sdesc with
       | VarDecl (_f, e) -> ignore (infer_expr env e)
       | _ -> ()
     ) inits
@@ -319,7 +321,8 @@ let infer_class_method_schemes (g0 : env) (c : Ast.class_decl) : (string * Types
 
   (* 1) フィールドの単相バインドを env_cls に入れる *)
   List.iter
-    (function
+    (fun (st:Ast.stmt) ->
+      match st.Ast.sdesc with
       | Ast.VarDecl (name, rhs) ->
           let t   = infer_expr env_cls rhs in
           let sc  = Types.generalize (Types.ftv_env env_cls) t in
@@ -377,27 +380,32 @@ let prebind_global_actors (p : Ast.program) (env : env) : unit =
   in
   List.iter
     (function
-      | Ast.Global (Ast.VarDecl (name, rhs)) ->
+      | Ast.Global s -> begin
+        match s.Ast.sdesc with
+        | Ast.VarDecl (name, rhs) ->
           (match new_class_of_expr rhs with
            | Some cls ->
                let t   = Types.TActor (cls, []) in
                let sch = Types.Forall ([], t) in
-               (* 既存の set_var_scheme を使って環境に登録 *)
                set_var_scheme env name sch
            | None -> ())
+        | _ -> ()
+        end
       | _ -> ())
     p
 
 let preinfer_all_classes (p : Ast.program) (g0 : Types.tenv) : unit =
   let infer_one_class (c : Ast.class_decl) : (string * Types.scheme) list =
     let env_cls = clone g0 in
-    List.iter (function
-      | Ast.VarDecl (name, rhs) ->
-          let t = infer_expr env_cls rhs in
-          let sch = generalize (ftv_env env_cls) t in
-          set_var_scheme env_cls name sch
-      | _ -> ()
-    ) c.Ast.fields;
+      List.iter
+        (fun (st:Ast.stmt) ->
+          match st.Ast.sdesc with
+          | Ast.VarDecl (name, rhs) ->
+            let t = infer_expr env_cls rhs in
+            let sch = generalize (ftv_env env_cls) t in
+            set_var_scheme env_cls name sch
+          | _ -> ()
+        ) c.Ast.fields;
     let infer_method (m : Ast.method_decl) =
       let env_m = clone env_cls in
       set_var_scheme env_m "self" (Types.Forall ([], Types.TActor(c.Ast.cname,[])));

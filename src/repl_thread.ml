@@ -7,11 +7,22 @@ open Thread
 exception Quit
 
 let parse_program_safe (src : string) : (Ast.program, string) result =
+  let lb = Lexing.from_string src in
   try
-    let lb = Lexing.from_string src in
     lb.Lexing.lex_curr_pos <- 0;
     Ok (Parser.program Lexer.token lb)
   with
+  | Parser.Syntax_error (loc, msg) ->
+      (* parser.mly から投げた Syntax_error を位置付きで表示 *)
+      Printf.printf "[Parse error] %s: %s\n%!"
+        (Location.to_string loc) msg;
+      raise (Failure "parse error")
+  | Parsing.Parse_error ->
+      let pos  = Lexing.lexeme_start_p lb in
+      let line = pos.Lexing.pos_lnum in
+      let col  = pos.Lexing.pos_cnum - pos.Lexing.pos_bol + 1 in
+      Printf.printf "[Parse error] line %d, col %d\n%!" line col;
+      raise (Failure "parse error")
   | exn -> Error (Printexc.to_string exn)
 
 let pp_token = function
@@ -262,7 +273,8 @@ let rec string_of_expr (e : Ast.expr) =
   | New (cls, args) -> cls ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
   | Array (_,_) -> "array"
   
-let rec string_of_stmt = function
+  let rec string_of_stmt (st: Ast.stmt) =
+  match st.sdesc with
   | Assign (v, e) -> v ^ " = " ^ string_of_expr e
   | CallStmt (fname, args) -> "call " ^ fname ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
   | Send (tgt, msg, args) -> "send " ^ tgt ^ " " ^ msg ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
@@ -273,9 +285,9 @@ let rec string_of_stmt = function
 
 let string_of_decl = function
   | Class obj ->
-    let fields =
-    obj.fields
-    |> List.filter_map (function
+    let fields = obj.fields
+    |> List.filter_map (fun (st: Ast.stmt) ->
+       match st.sdesc with
        | VarDecl(n,e) -> Some (" float " ^ n ^ " = " ^ string_of_expr e)
        | _ -> None) in
     let methods = List.map (fun m -> "  method " ^ m.mname ^ "() { " ^ string_of_stmt m.body ^ " }") obj.methods in
@@ -284,7 +296,8 @@ let string_of_decl = function
   | InstantiateInit (cls, var, inits) ->
       let init_strs =
       inits
-      |> List.filter_map (function
+      |> List.filter_map (fun (st:Ast.stmt) ->
+        match st.sdesc with
         | VarDecl(k,v) -> Some (k ^ " = " ^ string_of_expr v)
 	| _ -> None) in
         cls ^ " " ^ var ^ " = { " ^ String.concat ", " init_strs ^ " };"
@@ -366,29 +379,30 @@ let rec process_command line =
 	      (* 2) 生成直後に一度だけ init(...) を送る *)
               Eval_thread.send_message ~from:"<ctor>" var (CallStmt ("init", args))
           | _ -> Printf.printf "[Error] Class %s not found\n" cls)
-      | Global (VarDecl (name, rhs)) -> (
+    | Global s -> (
+      match s.sdesc with
+      | VarDecl (name, rhs) -> (
         match rhs.desc with
         | New (cls, args) -> (
-      let cobj = Eval_thread.find_class_exn cls in
-        Eval_thread.register_instance_source name cobj;
-        let obj  = { cobj with cname = cls } in
-        let actor_inst = Eval_thread.create_actor name cls in
-          List.iter (function
-          | VarDecl (k, init) ->
-            let v = Eval_thread.eval_expr actor_inst init in
-              Hashtbl.replace actor_inst.env k v
-          | _ -> ()
-          ) obj.fields;
-          List.iter (fun (m:method_decl) ->
-            Hashtbl.replace actor_inst.methods m.mname m
-          ) obj.methods;
-          Hashtbl.add Eval_thread.actor_table name actor_inst;
-          ignore (Thread.create (fun () -> Eval_thread.actor_loop actor_inst) ());
-          let init_opt = List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods in
+          let cobj = Eval_thread.find_class_exn cls in
+            Eval_thread.register_instance_source name cobj;
+            let obj  = { cobj with cname = cls } in
+            let actor_inst = Eval_thread.create_actor name cls in
+            List.iter (fun (st:Ast.stmt) ->
+              match st.sdesc with
+              | VarDecl (k, init) ->
+                let v = Eval_thread.eval_expr actor_inst init in
+                Hashtbl.replace actor_inst.env k v
+              | _ -> ()
+            ) obj.fields;
+            List.iter (fun (m:method_decl) -> Hashtbl.replace actor_inst.methods m.mname m
+            ) obj.methods;
+            Hashtbl.add Eval_thread.actor_table name actor_inst;
+            ignore (Thread.create (fun () -> Eval_thread.actor_loop actor_inst) ());
+            let init_opt = List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods in
             (match init_opt with
             | None ->
-              Printf.printf "[Actor] %s: no init; skipped\n%!" name;
-              ()
+              Printf.printf "[Actor] %s: no init; skipped\n%!" name; ()
             | Some m ->
               let need = List.length m.params and got  = List.length args in
                 if need <> got then
@@ -396,12 +410,12 @@ let rec process_command line =
                     name need got
                 else
                   Eval_thread.send_message ~from:"<new>" name (CallStmt ("init", args))
-		  ))
+		  ));
         | _ -> ())
-    | Global (Send (tgt, mname, args)) ->
-      pending_global_sends := (fun () -> Eval_thread.send_message ~from:"<top>" tgt (CallStmt (mname, args))
-      ) :: !pending_global_sends
-    | Global _ -> ()
+      | Send (tgt, mname, args) -> (
+        pending_global_sends := (fun () -> Eval_thread.send_message ~from:"<top>" tgt (CallStmt (mname, args))
+          ) :: !pending_global_sends)
+      | _ -> ())
     | Class _ -> ()
     | _ -> ()
     ) !program_buffer;
@@ -458,7 +472,11 @@ let rec process_command line =
                 print_endline ("[script] " ^ cmd);
                 try process_command cmd with
                 | Quit -> close_in_noerr ic; raise Quit
-		| exn -> Printf.printf "[Error in script line] %s\n%!" (Printexc.to_string exn)
+                | Parser.Syntax_error (loc, msg) ->
+                  Printf.printf "[Error in script line] %s: %s\n%!" (Location.to_string loc) msg
+                | Types.Type_error (loc, msg) ->
+                  Printf.printf "[Type error] %s: %s\n%!" (Location.to_string loc) msg
+                | exn -> Printf.printf "[Error in script line] %s\n%!" (Printexc.to_string exn)
             done
           with End_of_file ->
             close_in ic;

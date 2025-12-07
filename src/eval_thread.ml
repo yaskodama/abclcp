@@ -3,7 +3,7 @@ open Thread
 open Mutex
 open Sdl_helper
 
-type message = stmt
+type message = stmt_desc
 
 type value =
   | VInt of int
@@ -615,7 +615,8 @@ let rec eval_expr (actor:actor) (e : expr) =
       let vs = List.map (eval_expr actor) arg1 in
       call_prim fname vs
   | Expr e -> eval_expr actor e
-and eval_stmt (actor:actor) = function
+and eval_stmt (actor:actor) (s : Ast.stmt) =
+  match s.sdesc with
   | Assign (x, e) -> set_var_a actor x (eval_expr actor e)
   | VarDecl (name, rhs) -> (
     match rhs.desc with
@@ -624,7 +625,9 @@ and eval_stmt (actor:actor) = function
       register_instance_source name cobj;
       let obj  = { cobj with cname = cls } in
       let actor_inst = create_actor obj.cname cls in
-        List.iter (function
+        List.iter
+        (fun (st:Ast.stmt) ->
+          match st.sdesc with
         | VarDecl (k, init) ->
           let v = eval_expr actor_inst init in
             Hashtbl.replace actor_inst.env k v
@@ -646,9 +649,9 @@ and eval_stmt (actor:actor) = function
                 Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
                   name need got
               else
-                send_message ~from:"<new>" name (CallStmt ("init", args))
+                send_message ~from:"<new>" name (CallStmt("init", args)))
           );
-          set_var_a actor name (VActor (cls, Hashtbl.create 0)))
+          set_var_a actor name (VActor (cls, Hashtbl.create 0))
     | _ -> set_var_a actor name (eval_expr actor rhs))
   | If (cond, tbr, fbr) ->
       if to_bool (eval_expr actor cond)
@@ -709,25 +712,29 @@ and eval_stmt (actor:actor) = function
       else tgt
     in
     let arg_vals = List.map (eval_expr actor) args in
-(*    let arg_exprs = List.map expr_of_value arg_vals in *)
     let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
     send_message ~from:actor.name actual_target (CallStmt (meth, arg_exprs))
 and spawn_actor obj cls =
   let actor = create_actor obj.cname cls in
-  List.iter (function
+  List.iter
+    (fun (st:Ast.stmt) ->
+    match st.sdesc with
     | VarDecl (k,init) ->
       let v = eval_expr actor init in
       Hashtbl.replace actor.env k v
     | _ -> ()
-  ) obj.fields;
+    ) obj.fields;
 
   (* 2. InstantiateInit 用の初期化フィールドがあれば上書き *)
   (match obj with
   | { fields = initvals; _ } ->
-    List.iter (fun (VarDecl(k, v)) ->
-      match v.desc with
-      | Float f -> Hashtbl.replace actor.env k (VFloat f)
-      | String s -> Hashtbl.replace actor.env k (VString s)
+    List.iter (fun (st:Ast.stmt) ->
+      match st.sdesc with
+      | VarDecl(k, v) ->
+        (match v.desc with
+        | Float f -> Hashtbl.replace actor.env k (VFloat f)
+        | String s -> Hashtbl.replace actor.env k (VString s)
+        | _ -> ())
       | _ -> ()
     ) initvals
   );
@@ -756,7 +763,7 @@ and actor_loop actor =
     let msg = Queue.pop actor.queue in
     log_queue ();
     Mutex.unlock actor.mutex;
-    eval_stmt actor msg
+    eval_stmt actor (mk_stmt msg)
   done
 and resolve_actor_from_term env recv_term =
   match recv_term with
