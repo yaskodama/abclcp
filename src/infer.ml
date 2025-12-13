@@ -289,15 +289,6 @@ let check_decl (env:env) = function
 
         check_stmt env_m m.body
 	) c.methods
-  | Instantiate (_obj, _class) -> ()
-  | InstantiateInit (_obj, _class, inits) ->
-    List.iter (fun (st : Ast.stmt) ->
-      match st.sdesc with
-      | VarDecl (_f, e) -> ignore (infer_expr env e)
-      | _ -> ()
-    ) inits
-(*  | InstantiateArgs (_cls, _var, args) ->  
-      List.iter (fun a -> unify ~loc:e.loc (infer_expr env a) TFloat) args *)
   | Global s ->                         
       check_stmt env s
 

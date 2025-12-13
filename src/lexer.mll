@@ -28,7 +28,6 @@ rule token = parse
   (* --- キーワード/記号 --- *)
 | "class"      { CLASS }
 | "become"     { BECOME }
-| "object"     { OBJECT }
 | "method"     { METHOD }
 | "float"      { FLOAT }
 | "call"       { CALL }

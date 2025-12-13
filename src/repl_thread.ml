@@ -27,7 +27,6 @@ let parse_program_safe (src : string) : (Ast.program, string) result =
 
 let pp_token = function
   | CLASS     -> "CLASS"
-  | OBJECT    -> "OBJECT"
   | METHOD    -> "METHOD"
   | FLOAT     -> "FLOAT"
   | VAR       -> "VAR"
@@ -207,7 +206,6 @@ let load_file (fname : string) : Ast.program option =
       | t ->
           (match t with
            | CLASS -> print_endline "Token: CLASS"
-           | OBJECT -> print_endline "Token: OBJECT"
            | METHOD -> print_endline "Token: METHOD"
            | FLOAT -> print_endline "Token: FLOAT"
            | VAR -> print_endline "Token: VAR"
@@ -292,18 +290,6 @@ let string_of_decl = function
        | _ -> None) in
     let methods = List.map (fun m -> "  method " ^ m.mname ^ "() { " ^ string_of_stmt m.body ^ " }") obj.methods in
     "object " ^ obj.cname ^ " {\n" ^ String.concat "\n" (fields @ methods) ^ "\n}"
-  | Instantiate (cls, var) -> cls ^ " " ^ var ^ ";"
-  | InstantiateInit (cls, var, inits) ->
-      let init_strs =
-      inits
-      |> List.filter_map (fun (st:Ast.stmt) ->
-        match st.sdesc with
-        | VarDecl(k,v) -> Some (k ^ " = " ^ string_of_expr v)
-	| _ -> None) in
-        cls ^ " " ^ var ^ " = { " ^ String.concat ", " init_strs ^ " };"
-  | InstantiateArgs (cls, var, args) ->
-    let as_ = String.concat ", " (List.map string_of_expr args) in
-      cls ^ " " ^ var ^ "(" ^ as_ ^ ");"
 
 let pending_global_sends : (unit -> unit) list ref = ref []
 
@@ -342,43 +328,6 @@ let rec process_command line =
     | _ -> ()
     ) !program_buffer;
     List.iter (function
-    | Instantiate (cls, var) ->
-      if Hashtbl.mem Eval_thread.actor_table var then
-        Printf.printf "[Error] Instance '%s' already exists]\n" var
-      else
-        (let cobj = Eval_thread.find_class_exn cls in
-	  Eval_thread.register_instance_source var cobj;
-          match List.find_opt (function Class c -> c.cname = cls | _ -> false) !program_buffer with
-          | Some (Class cobj) -> (
-	    let obj = { cobj with cname = var } in
-              spawn_actor obj cls)
-	  | _ -> Printf.printf "[Error] Class %s not found\n" cls)
-    | InstantiateInit (cls, var, initvals) ->
-      if Hashtbl.mem Eval_thread.actor_table var then
-        Printf.printf "[Error] Instance '%s' already exists]\n" var
-      else
-        (let cobj = Eval_thread.find_class_exn cls in
-          Eval_thread.register_instance_source var cobj;  (* ★ 追加 *)
-          match List.find_opt (function Class c -> c.cname = cls | _ -> false) !program_buffer with
-          | Some (Class cobj) ->
-	    let obj = { cobj with cname = var } in
-	      Printf.printf "------[Defined class %s]\n" cobj.cname;
-	      Eval_thread.spawn_actor obj cls;
-	  | _ -> Printf.printf "[Error] Class %s not found\n" cls)
-    | InstantiateArgs (cls, var, args) ->
-      if Hashtbl.mem Eval_thread.actor_table var then
-        Printf.printf "[Error] Instance '%s' already exists]\n" var
-      else
-        (let cobj = Eval_thread.find_class_exn cls in
-	  Eval_thread.register_instance_source var cobj;  (* ★ 追加 *)
-	  match List.find_opt (function Class c -> c.cname = cls | _ -> false) !program_buffer with
-          | Some (Class cobj) ->
-            let obj = { cobj with cname = var } in
-              (* 1) まず生成 *)
-              Eval_thread.spawn_actor obj cls;
-	      (* 2) 生成直後に一度だけ init(...) を送る *)
-              Eval_thread.send_message ~from:"<ctor>" var (CallStmt ("init", args))
-          | _ -> Printf.printf "[Error] Class %s not found\n" cls)
     | Global s -> (
       match s.sdesc with
       | VarDecl (name, rhs) -> (

@@ -14,7 +14,7 @@ let mk_stmt1 i d : Ast.stmt = { sloc = loc_of_rhs i; sdesc = d }
 %token <float> FLOATLIT
 %token <int> INTLIT
 %token <string> STRINGLIT
-%token OBJECT METHOD FLOAT CALL SEND
+%token METHOD FLOAT CALL SEND
 %token IF THEN ELSE WHILE DO
 %token ASSIGN PLUS MINUS TIMES DIV LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA
 %token GE LE SELF SENDER CLASS
@@ -45,11 +45,6 @@ arg_list:
 decl:
   | CLASS ID LBRACE fields methods RBRACE  { Class { cname = $2; fields = $4; methods = $5 } }
   | CLASS ID LBRACE methods RBRACE         { Class { cname = $2; fields = []; methods = $4 } }
-  | OBJECT ID LBRACE fields methods RBRACE { Class { cname = $2; fields = $4; methods = $5 } }
-  | OBJECT ID LBRACE methods RBRACE        { Class { cname = $2; fields = []; methods = $4 } }
-  | ID ID SEMICOLON                        { Instantiate ($1, $2) }
-  | ID ID ASSIGN LBRACE inits RBRACE SEMICOLON   { InstantiateInit ($1, $2, $5) }
-  | ID ID LPAREN args RPAREN SEMICOLON           { InstantiateArgs ($1, $2, $4) }
   | VAR ID ASSIGN expr SEMICOLON           { Global (mk_stmt1 2 (VarDecl ($2, $4))) }
   | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON   { Global (mk_stmt1 2 (VarDecl ($2, mk_expr1 4 (New ($5, $7))))) }
   | SEND ID DOT ID LPAREN args RPAREN SEMICOLON         { Global (mk_stmt1 1 (Send ($2, $4, $6))) }

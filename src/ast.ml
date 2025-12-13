@@ -41,9 +41,6 @@ type class_decl = {
 
 type decl =
   | Class of class_decl
-  | Instantiate of string * string
-  | InstantiateInit of string * string * stmt list
-  | InstantiateArgs of string * string * expr list
   | Global of stmt
 
 type program = decl list
@@ -108,15 +105,8 @@ let string_of_class_decl (c : class_decl) =
     Printf.sprintf "Class(%s, fields=[%s], methods=[%s])" c.cname fs ms
 
 let string_of_decl = function
-  | Class c                        -> string_of_class_decl c
-  | Instantiate (name, cls)        -> Printf.sprintf "Instantiate(%s as %s)" cls name
-  | InstantiateInit (name, cls, inits) ->
-      let xs = inits |> List.map string_of_stmt |> String.concat "; " in
-      Printf.sprintf "InstantiateInit(%s as %s, [%s])" cls name xs
-  | InstantiateArgs (cls, var, args) ->  (* ★ 追加 *)
-      let as_ = String.concat ", " (List.map string_of_expr args) in
-      Printf.sprintf "%s %s(%s);" cls var as_
-  | Global s -> "Global(" ^ string_of_stmt s ^ ")"
+  | Class c    -> string_of_class_decl c
+  | Global s   -> "Global(" ^ string_of_stmt s ^ ")"
 
 let string_of_program (p : program) =
   p |> List.map string_of_decl |> String.concat "\n"
@@ -228,38 +218,6 @@ let dump_decl ?(prefix="") ?(is_last=true) = function
           dump_stmt ~prefix:p2 ~is_last:true md.body
         ) c.methods
       )
-  | Instantiate (name, cls) ->
-    let branch = if is_last then "└─ " else "├─ " in
-    Printf.printf "%s%sInstantiate %s as %s\n" prefix branch cls name
-  | InstantiateInit (name, cls, inits) ->
-      let branch = if is_last then "└─ " else "├─ " in
-      Printf.printf "%s%sInstantiateInit %s as %s\n" prefix branch cls name;
-      let child_pref = prefix ^ (if is_last then "   " else "│  ") in
-      List.iteri (fun i st ->
-        let laste = (i = List.length inits - 1) in
-        let branch2 = if laste then "└─ " else " " in
-        match st.sdesc with
-        | VarDecl (field, e) ->
-          Printf.printf "%s%s%s =\n" child_pref branch2 field;          
-          let p2 = child_pref ^ (if laste then "   " else "│  ") in
-          dump_expr ~prefix:p2 ~is_last:true e
-        | other ->
-          Printf.printf "%s%s<init: %s>\n" child_pref branch2 (string_of_stmt (mk_stmt other))
-     ) inits
-  | InstantiateArgs (cls, var, args) ->  (* ★ 追加：引数あり *)
-      let branch = if is_last then "└─ " else "├─ " in
-      Printf.printf "%s%sInstantiate %s as %s (ctor)\n" prefix branch var cls;
-      let child_pref = prefix ^ (if is_last then "   " else "│  ") in
-      if args = [] then
-        Printf.printf "%s└─ <no-args>\n" child_pref
-      else
-        List.iteri (fun i a ->
-          let last = (i = List.length args - 1) in
-          let b2 = if last then "└─ " else "├─ " in
-          Printf.printf "%s%sArg %d =\n" child_pref b2 (i+1);
-          let p2 = child_pref ^ (if last then "   " else "│  ") in
-          dump_expr ~prefix:p2 ~is_last:true a
-        ) args
   | Global s ->                           (* ★ 追加 *)
       let branch = if is_last then "└─ " else "├─ " in
       Printf.printf "%s%sGlobal\n" prefix branch;
