@@ -19,7 +19,7 @@ let mk_stmt1 i d : Ast.stmt = { sloc = loc_of_rhs i; sdesc = d }
 %token ASSIGN PLUS MINUS TIMES DIV LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA
 %token GE LE SELF SENDER CLASS
 %token EOF NEW
-%token VAR EQ DOT
+%token VAR EQ DOT BECOME
 
 %left PLUS MINUS
 %left TIMES DIV
@@ -98,6 +98,8 @@ stmt:
   | VAR ID ASSIGN expr SEMICOLON { mk_stmt1 2 (VarDecl($2, $4)) }
   | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (VarDecl($2, mk_expr1 4 (New($5,$7)))) }
   | ID LPAREN args RPAREN SEMICOLON { mk_stmt1 1 (CallStmt ($1, $3)) }
+  | BECOME ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (Become ($2, $4)) } 
+  | BECOME ID LPAREN RPAREN SEMICOLON { mk_stmt1 2 (Become ($2, [])) }
   
 args:
   /* empty */    { [] }

@@ -1,0 +1,18 @@
+class A {
+  method ping() {
+    print("A.ping");
+    become B();
+    send self.ping();
+  }
+}
+
+class B {
+  method ping() {
+    print("B.ping");
+    become A();
+    send self.ping();
+  }
+}
+
+var x = new A();
+send x.ping();

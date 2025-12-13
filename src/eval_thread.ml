@@ -16,7 +16,7 @@ type value =
 
 type actor = {
   name : string;
-  cls  : string;
+  mutable cls  : string;
   queue : message Queue.t;
   mutex : Mutex.t;
   cond  : Condition.t;
@@ -661,6 +661,36 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
       while to_bool (eval_expr actor cond) do
         eval_stmt actor body
       done
+  | Become (new_cls, args) ->
+      (* Change this actor's behavior (method table) to class new_cls.
+         State (env) is preserved; missing fields are initialized from the new class. *)
+      let cobj = find_class_exn new_cls in
+
+      (* 1) class名を更新 *)
+      actor.cls <- new_cls;
+      Hashtbl.replace actor.env "__class" (VString new_cls);
+      Hashtbl.replace actor.env "self" (VActor (new_cls, Hashtbl.create 0));
+
+      (* 2) methods を差し替え *)
+      Hashtbl.reset actor.methods;
+      List.iter (fun (m:method_decl) ->
+        Hashtbl.replace actor.methods m.mname m
+      ) cobj.methods;
+
+     (* 3) 新クラスの fields を「未定義のものだけ」初期化 *)
+      List.iter (fun (st:Ast.stmt) ->
+        match st.sdesc with
+        | VarDecl (k, init) when not (Hashtbl.mem actor.env k) ->
+            let v = eval_expr actor init in
+            Hashtbl.replace actor.env k v
+        | _ -> ()
+      ) cobj.fields;
+
+      (* 4) init(args) があれば同期で実行 *)
+      if Hashtbl.mem actor.methods "init" then
+        eval_stmt actor (mk_stmt (CallStmt ("init", args)))
+      else
+        ();
   | Seq ss ->
       List.iter (eval_stmt actor) ss
   | CallStmt ("sdl_init", [w; h]) ->

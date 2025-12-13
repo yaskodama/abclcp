@@ -192,6 +192,23 @@ let rec check_stmt (env:env) (s:stmt) : unit =
       let arg_tys = List.map (infer_expr env) args in
       ignore (pick_overload s.sloc fname env arg_tys);
       ()
+  | Become (cls, args) ->
+      let _ = Types.lookup_class_methods_inst cls in
+      let targs = List.map (infer_expr env) args in
+      (match Types.lookup_class_method_scheme cls "init" with
+       | Some sch ->
+           (match Types.instantiate sch with
+            | Types.TFun (params, _ret) ->
+                (try List.iter2 (Types.unify ~loc:s.sloc) params targs
+                 with Invalid_argument _ ->
+                   raise (Type_error (s.sloc,
+                     Printf.sprintf "become %s: arity mismatch" cls)))
+            | ty ->
+                raise (Type_error (s.sloc,
+                  Printf.sprintf "become %s: init is not a function: %s"
+                    cls (Types.string_of_ty_pretty ty))))
+       | None -> ());
+      ()
   | Send (vname, mname, args) ->
       if !in_preinfer then begin
         (* ★ 1パス目（preinfer）：

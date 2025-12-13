@@ -17,6 +17,7 @@ type stmt_desc =
   | Assign of string * expr
   | CallStmt of string * expr list
   | Send of string * string * expr list
+  | Become of string * expr list
   | Seq of stmt list
   | If of expr * stmt * stmt
   | While of expr * stmt
@@ -81,6 +82,9 @@ let rec string_of_stmt (s:stmt) : string =
       Printf.sprintf "CallStmt(%s, [%s])" f xs
   | Send (tgt,meth,args)  -> let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "Send(%s.%s, [%s])" tgt meth xs
+  | Become (cls,args) ->  (* ★ 追加 *)
+      let xs = args |> List.map string_of_expr |> String.concat ", " in
+      Printf.sprintf "Become(%s, [%s])" cls xs
   | Seq ss                -> let xs = ss |> List.map string_of_stmt |> String.concat "; " in
       Printf.sprintf "Seq([%s])" xs
   | If (e,s1,s2)          -> Printf.sprintf "If(%s, %s, %s)" (string_of_expr e) (string_of_stmt s1) (string_of_stmt s2)
@@ -153,10 +157,12 @@ let label_of_stmt (s:stmt) : string =
   | Assign (x,_)         -> "Assign " ^ x
   | CallStmt (f,_)       -> "CallStmt " ^ f
   | Send (tgt,m,_)       -> "Send " ^ tgt ^ "." ^ m
+  | Become (cls,_)       -> "Become " ^ cls
   | Seq _                -> "Seq"
   | If _                 -> "If"
   | While _              -> "While"
   | VarDecl (x,_)        -> "VarDecl " ^ x
+(*   | Become (_,_)         -> "Become " *)
 
 let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
   let branch = if is_last then "└─ " else "├─ " in
@@ -171,6 +177,10 @@ let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
       List.iteri (fun i e -> dump_expr ~prefix:child_pref ~is_last:(i = List.length args - 1) e) args
     | Seq ss ->
       List.iteri (fun i st -> dump_stmt ~prefix:child_pref ~is_last:(i = List.length ss - 1) st) ss
+    | Become (_cls, args) ->   (* ★ 追加 *)
+      List.iteri (fun i e ->
+        dump_expr ~prefix:child_pref ~is_last:(i = List.length args - 1) e
+      ) args
     | If (e, s1, s2) ->
       dump_expr ~prefix:child_pref ~is_last:false e;
       dump_stmt ~prefix:child_pref ~is_last:false s1;

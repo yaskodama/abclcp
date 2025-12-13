@@ -1,6 +1,0 @@
-type t = {
-    line : int;
-    col : int;
-}
-
-let dummy = { line = 0; col = 0 }
