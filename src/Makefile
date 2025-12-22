@@ -3,7 +3,7 @@ LEX=ocamllex
 YACC=ocamlyacc
 
 THREAD_FLAGS=-thread
-PKGS=-package tsdl
+PKGS=-package tsdl,unix
 
 all: thread_repl
 
@@ -13,7 +13,7 @@ parser.ml parser.mli: parser.mly
 lexer.ml: lexer.mll
 	$(LEX) lexer.mll
 
-thread_repl: location.ml parser.ml parser.mli lexer.ml ast.ml eval_thread.ml sdl_helper.ml compiler.ml repl_thread.ml
+thread_repl: location.ml parser.ml parser.mli lexer.ml ast.ml eval_thread.ml web_gateway.ml sdl_helper.ml compiler.ml repl_thread.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c location.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c types.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c ast.ml
@@ -23,13 +23,14 @@ thread_repl: location.ml parser.ml parser.mli lexer.ml ast.ml eval_thread.ml sdl
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c typecheck.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c sdl_helper.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c eval_thread.ml
+	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c web_gateway.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c parser.mli
 	rm parser.mli
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c parser.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c lexer.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c compiler.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c repl_thread.ml
-	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -o abclrepl_thread location.cmo sdl_helper.cmo ast.cmo types.cmo typing_env.cmo infer.cmo typecheck.cmo eval_thread.cmo parser.cmo lexer.cmo compiler.cmo repl_thread.cmo
+	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -o abclrepl_thread location.cmo sdl_helper.cmo ast.cmo types.cmo typing_env.cmo infer.cmo typecheck.cmo eval_thread.cmo web_gateway.cmo parser.cmo lexer.cmo compiler.cmo repl_thread.cmo
 
 clean:
 	rm -f *.cmo *.cmi *.cma *.cmx *.o *.out parser.ml parser.mli lexer.ml abclrepl_thread

@@ -622,6 +622,27 @@ let () =
     | [] -> make_array [||]
     | _  -> failwith "array_empty(): arity 0 expected");
 
+  (* --- Web gateway (demo) ---
+     web_listen(port)
+     web_expose("/calc", "calc")
+     Then open: http://localhost:port/ and send messages from your browser.
+  *)
+  add_prim "web_listen" (function
+    | [VInt p] -> Web_gateway.start ~port:p; VUnit
+    | [VFloat f] -> Web_gateway.start ~port:(int_of_float f); VUnit
+    | _ -> failwith "web_listen(port): arity 1 expected (int/float)");
+
+  add_prim "web_expose" (function
+    | [VString path; VString actor_name] ->
+        let key =
+          let p = String.trim path in
+          if p <> "" && p.[0] = '/' then String.sub p 1 (String.length p - 1) else p
+        in
+        if key = "" then failwith "web_expose: empty path";
+        Web_gateway.expose ~key ~actor_name;
+        VUnit
+    | _ -> failwith "web_expose(path, actor): arity 2 expected (string,string)");
+
   let repl_thr = Thread.create (fun () -> repl_thread_fun ()) () in
 
   Sdl_helper.main_loop ();

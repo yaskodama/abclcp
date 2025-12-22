@@ -18,10 +18,11 @@
   typecheck
   sdl_helper
   eval_thread
-  compiler)
+ compiler
+ web_gateway)
  (flags (:standard -w -a))
 ;; (preprocess (menhir))
- (libraries tsdl threads))
+ (libraries tsdl threads unix))
 
 ; 実行ファイル（REPL）
 (executable
@@ -31,4 +32,4 @@
 ; (flags (:standard -w -9-26-27-32-33-8-11))
  (flags (:standard -w -a))
 ;; (preprocess (menhir))
- (libraries abcllib tsdl threads))
+ (libraries abcllib tsdl threads unix))

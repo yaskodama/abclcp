@@ -182,10 +182,10 @@ let rec check_stmt (env:env) (s:stmt) : unit =
         ()
   | If (cond, tbr, fbr) ->
       let tc = infer_expr env cond in
-      unify_at s.sloc tc TFloat;
+      unify_at s.sloc tc TBool;
       check_stmt env tbr; check_stmt env fbr
   | While (cond, body) ->
-      let tc = infer_expr env cond in unify_at s.sloc tc TFloat;
+      let tc = infer_expr env cond in unify_at s.sloc tc TBool;
       check_stmt env body
   | Seq ss -> List.iter (check_stmt env) ss
   | CallStmt (fname, args) ->

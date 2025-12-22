@@ -42,7 +42,9 @@ rule token = parse
 | "=="         { EQ }          (* 等値 *)
 | ">="         { GE }
 | "<="         { LE }
-| "="          { ASSIGN }      (* 代入、parser.mly に %token ASSIGN を追加して使う *)
+| ">"          { GT }
+| "<"          { LT }
+| "="          { ASSIGN }
 | "+"          { PLUS }
 | "-"          { MINUS }
 | "*"          { TIMES }

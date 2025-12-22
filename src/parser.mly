@@ -17,7 +17,7 @@ let mk_stmt1 i d : Ast.stmt = { sloc = loc_of_rhs i; sdesc = d }
 %token METHOD FLOAT CALL SEND
 %token IF THEN ELSE WHILE DO
 %token ASSIGN PLUS MINUS TIMES DIV LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA
-%token GE LE SELF SENDER CLASS
+%token GE LE GT LT SELF SENDER CLASS
 %token EOF NEW
 %token VAR EQ DOT BECOME
 
@@ -67,7 +67,7 @@ method_decl:
     { mname = $2; params = $4; body = mk_stmt1 2 (Seq $7) } }
 
 param_list:
-  |      { [] }
+  |    { [] }
   | ID { [$1] }
   | ID COMMA param_list { $1::$3 }
 
@@ -86,9 +86,9 @@ stmt:
   | SEND SELF DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 4 (Send("self", $4, $6)) }
   | SEND SENDER DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 4 (Send ("sender", $4, $6)) }
   | SEND ID DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (Send ($2, $4, $6)) }
-  | IF expr THEN stmt ELSE stmt { mk_stmt1 2 (If($2, $4, $6)) }
+  | IF LPAREN expr RPAREN stmt { mk_stmt1 2 (If($3, $5, mk_stmt1 5 (Seq([])))) }
+  | IF LPAREN expr RPAREN stmt ELSE stmt { mk_stmt1 3 (If($3, $5, $7)) }
   | WHILE expr DO stmt { mk_stmt1 2 (While ($2, $4)) }
-  | FLOAT ID ASSIGN expr SEMICOLON { mk_stmt1 2 (VarDecl($2, $4)) }
   | LBRACE stmt_list RBRACE { mk_stmt1 2 (Seq $2) }
   | VAR ID ASSIGN expr SEMICOLON { mk_stmt1 2 (VarDecl($2, $4)) }
   | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (VarDecl($2, mk_expr1 4 (New($5,$7)))) }
@@ -117,4 +117,6 @@ expr:
   | ID LPAREN args RPAREN { mk_expr1 1 (Call ($1, $3)) }
   | expr GE expr { mk_expr1 2 (Binop (">=", $1, $3)) }
   | expr LE expr { mk_expr1 2 (Binop ("<=", $1, $3)) }
+  | expr GT expr { mk_expr1 2 (Binop (">", $1, $3)) }
+  | expr LT expr { mk_expr1 2 (Binop ("<", $1, $3)) }
   | LPAREN expr RPAREN { $2 }

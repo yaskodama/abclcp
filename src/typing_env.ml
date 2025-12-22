@@ -44,9 +44,17 @@ let prelude () : env =
   let a1 = fresh_tvar () in
   add_poly e "print" (Forall ([(!a1).id], TFun ([TVar a1], TUnit)));
 
-  (* 2.5) 二項算術: float × float -> float *)
+  (* 2.5.1) 二項算術 *)
   let add_f2 f = add_mono e f (TFun ([TFloat; TFloat], TFloat)) in
   List.iter add_f2 [ "+"; "-"; "*"; "/" ];
+  let add_f3 f = add_mono e f (TFun ([TInt; TInt], TInt)) in
+  List.iter add_f3 [ "+"; "-"; "*"; "/" ];
+
+  (* 2.5.2) 二項関係 *)
+  let add_f4 f = add_mono e f (TFun ([TFloat; TFloat], TBool)) in
+  List.iter add_f4 [ ">"; "<"; "<="; ">=" ];
+  let add_f5 f = add_mono e f (TFun ([TInt; TInt], TBool)) in
+  List.iter add_f5 [ ">"; "<"; "<="; ">=" ];
 
   (* 2.6) 文字列連結: 片側が string なら string *)
   let a = fresh_tvar () in
@@ -54,17 +62,12 @@ let prelude () : env =
   let a = fresh_tvar () in
   add_poly e "+" (Forall ([(!a).id], TFun ([TVar a; TString], TString)));
 
-(*  Types.register_class "H" [
-    ("greet", Types.TFun ([], Types.TUnit));
-  ]; *)
+(* ---- web gateway ---- *)
+  add_mono e "web_listen" (TFun ([TInt],   TUnit));
+  add_mono e "web_listen" (TFun ([TFloat], TUnit));   (* float も許すなら *)
+  add_mono e "web_expose" (TFun ([TString; TString], TUnit));
 
-(* クラス Hello の例：init(n:float) : unit / greet() : unit *)
-(*  Types.register_class "Hello" [
-    ("init",  Types.TFun ([Types.TFloat], Types.TUnit));
-    ("greet", Types.TFun ([],             Types.TUnit));
-  ]; *)
-
-  (* ---- wait: sleep milliseconds ---- *)
+(* ---- wait: sleep milliseconds ---- *)
   add_mono e "wait" (TFun ([TInt],   TUnit));
   add_mono e "wait" (TFun ([TFloat], TUnit));
 
@@ -95,8 +98,6 @@ let prelude () : env =
   add_mono e "typeof" (TFun ([TActor("Hello",[])],  TString));
 
   (* 要素型つき配列にも対応（多相にしたいなら下の多相版を使う） *)
-(*  let a_to = fresh_tvar () in
-    add_poly e "typeof" (Forall ([(!a_to).id], TFun ([TArray (TVar a_to)], TString))); *)
   let a_to = fresh_tvar () in
     add_poly e "typeof" (Forall ([(!a_to).id], TFun ([TVar a_to], TString)));
   (* 4) 配列 API（要素型付き・多相） *)

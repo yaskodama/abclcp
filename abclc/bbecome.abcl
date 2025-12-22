@@ -1,8 +1,10 @@
 class A {
+  var n = 0;
   method ping() {
+    n = n + 1;
     print("A.ping");
-    become B();
-    send self.ping();
+    print(n);
+    if(n<100) { become B(); send self.ping(); }
   }
 }
 
