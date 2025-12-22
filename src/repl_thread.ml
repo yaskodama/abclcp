@@ -364,6 +364,15 @@ let rec process_command line =
       | Send (tgt, mname, args) -> (
         pending_global_sends := (fun () -> Eval_thread.send_message ~from:"<top>" tgt (CallStmt (mname, args))
           ) :: !pending_global_sends)
+      | CallStmt (fname, args) -> (
+          (* Top-level call (for prims like web_listen / web_expose / print) *)
+          let dummy = Eval_thread.create_actor "<top>" "<top>" in
+          try
+            let vs = List.map (Eval_thread.eval_expr dummy) args in
+            ignore (Eval_thread.call_prim fname vs)
+          with exn ->
+            Printf.printf "[Top-level CallStmt error] %s\n%!" (Printexc.to_string exn)
+        )
       | _ -> ())
     | Class _ -> ()
     | _ -> ()

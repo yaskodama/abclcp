@@ -16,7 +16,6 @@ var calc = new Calculator();
 // Open: http://localhost:8080/
 web_listen(8080);
 
-// Optional: expose a friendly endpoint key (POST /api/x/calc).
-web_expose("/calc", "calc");
+// Optional: expose a friendly endpoint key (POST /api/x/calc).web_expose("/calc", "calc");
 
 print("Open http://localhost:8080/ and send to actor 'calc'");
