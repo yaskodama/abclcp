@@ -88,6 +88,12 @@ let actor_class_name (aname:string) (a:actor) : string =
   | Some (VString cn) -> cn
   | _ -> (try a.cls with _ -> aname)
 
+(* Public helper: look up an actor's class name by actor name. *)
+let lookup_actor_class (aname:string) : string option =
+  match Hashtbl.find_opt actor_table aname with
+  | None -> None
+  | Some a -> Some (actor_class_name aname a)
+
 (* どこかのトップに置く。a は active actor レコード。 *)
 (* let actor_class_name (an : string) (a : actor) : string =
   match Hashtbl.find_opt a.env "__class" with

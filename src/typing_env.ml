@@ -62,12 +62,12 @@ let prelude () : env =
   let a = fresh_tvar () in
   add_poly e "+" (Forall ([(!a).id], TFun ([TVar a; TString], TString)));
 
-(* ---- web gateway ---- *)
+  (* ---- web gateway ---- *)
   add_mono e "web_listen" (TFun ([TInt],   TUnit));
   add_mono e "web_listen" (TFun ([TFloat], TUnit));   (* float も許すなら *)
   add_mono e "web_expose" (TFun ([TString; TString], TUnit));
 
-(* ---- wait: sleep milliseconds ---- *)
+  (* ---- wait: sleep milliseconds ---- *)
   add_mono e "wait" (TFun ([TInt],   TUnit));
   add_mono e "wait" (TFun ([TFloat], TUnit));
 
@@ -98,6 +98,8 @@ let prelude () : env =
   add_mono e "typeof" (TFun ([TActor("Hello",[])],  TString));
 
   (* 要素型つき配列にも対応（多相にしたいなら下の多相版を使う） *)
+(*  let a_to = fresh_tvar () in
+    add_poly e "typeof" (Forall ([(!a_to).id], TFun ([TArray (TVar a_to)], TString))); *)
   let a_to = fresh_tvar () in
     add_poly e "typeof" (Forall ([(!a_to).id], TFun ([TVar a_to], TString)));
   (* 4) 配列 API（要素型付き・多相） *)
