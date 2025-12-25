@@ -1,8 +1,0 @@
-(*              let ms_arity : (string * int) list =
-                obj.methods
-                |> List.filter (fun (md:Ast.method_decl) -> md.mname <> "init")
-                |> List.map (fun md -> (md.mname, List.length md.params))
-              in
-                Types.register_class_auto obj.cname ms_arity;
-                Printf.printf "[Registered types for class %s: %s]\n%!" obj.cname
-                (String.concat ", " (List.map (fun (m,a)->Printf.sprintf "%s/%d" m a) ms_arity))  *)

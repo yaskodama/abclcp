@@ -1,2 +1,0 @@
-load become.abcl
-compile

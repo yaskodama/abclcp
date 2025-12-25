@@ -1,3 +1,0 @@
-[x] ping
-[x] ping
-[x] ping

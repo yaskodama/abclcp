@@ -27,7 +27,102 @@ type actor = {
 
 let actor_table : (string, actor) Hashtbl.t = Hashtbl.create 32
 
+(* ---------------- Web/Debug log buffer (per actor) ---------------- *)
+type log_entry = int * string
+
+type log_buf = {
+  mutable next_id : int;
+  q : log_entry Queue.t;
+}
+
+let log_capacity = 300
+
+let actor_logs : (string, log_buf) Hashtbl.t = Hashtbl.create 64
+
+let get_log_buf (actor_name:string) : log_buf =
+  match Hashtbl.find_opt actor_logs actor_name with
+  | Some b -> b
+  | None ->
+      let b = { next_id = 1; q = Queue.create () } in
+      Hashtbl.add actor_logs actor_name b;
+      b
+
+let push_log (actor_name:string) (line:string) : unit =
+  let b = get_log_buf actor_name in
+  let id = b.next_id in
+  b.next_id <- b.next_id + 1;
+  Queue.add (id, line) b.q;
+  while Queue.length b.q > log_capacity do
+    ignore (Queue.take b.q)
+  done
+
+let get_logs_since (actor_name:string) (after_id:int) : int * string list =
+  let b = get_log_buf actor_name in
+  let acc = ref [] in
+  Queue.iter (fun (id, s) -> if id > after_id then acc := s :: !acc) b.q;
+  (b.next_id, List.rev !acc)
+
 let env : (string, value) Hashtbl.t = Hashtbl.create 64
+
+(* ===== web demo: print log ===== *)
+let web_log_mutex = Mutex.create ()
+let web_log_next_id = ref 0
+let web_logs : (int * string) list ref = ref []
+
+let web_log_limit = 500
+
+let rec take n xs =
+  if n <= 0 then []
+  else match xs with
+  | [] -> []
+  | x::tl -> x :: take (n-1) tl
+
+let push_web_log (s:string) =
+  Mutex.lock web_log_mutex;
+  let id = !web_log_next_id in
+  incr web_log_next_id;
+  web_logs := (id, s) :: !web_logs;
+  if List.length !web_logs > web_log_limit then
+    web_logs := List.rev (take web_log_limit (List.rev !web_logs));
+  Mutex.unlock web_log_mutex
+
+let get_web_logs_since (after:int) : (int * string list) =
+  Mutex.lock web_log_mutex;
+  let newer =
+    !web_logs
+    |> List.filter (fun (id,_) -> id > after)
+    |> List.rev
+  in
+  let next =
+    match !web_logs with
+    | [] -> after
+    | (id,_)::_ -> id
+  in
+  let lines = List.map snd newer in
+  Mutex.unlock web_log_mutex;
+  (next, lines)
+
+(* ===== web demo: event log ===== *)
+let web_evt_mutex = Mutex.create ()
+let web_evt_next_id = ref 0
+let web_evts : (int * string) list ref = ref []
+let web_evt_limit = 500
+
+let push_web_evt (s:string) =
+  Mutex.lock web_evt_mutex;
+  let id = !web_evt_next_id in
+  incr web_evt_next_id;
+  web_evts := (id, s) :: !web_evts;
+  web_evts := take web_evt_limit !web_evts;
+  Mutex.unlock web_evt_mutex
+
+let get_web_evts_since (after:int) : (int * string list) =
+  Mutex.lock web_evt_mutex;
+  let newer = !web_evts |> List.filter (fun (id,_) -> id > after) |> List.rev in
+  let next = match !web_evts with [] -> after | (id,_)::_ -> id in
+  let lines = List.map snd newer in
+  Mutex.unlock web_evt_mutex;
+  (next, lines)
 
 (* 既存の actor テーブルと型を前提にしています：
    val actor_table : (string, actor) Hashtbl.t
@@ -570,7 +665,9 @@ let prim_table : (string, value list -> value) Hashtbl.t =
     ("print",
       (function
         | [v] ->
-          print_endline (string_of_value v);
+        let s = string_of_value v in
+	  print_endline s;
+	  push_web_log s;
           VUnit
         | _ -> failwith "print(s): arity 1 expected"));
     ("actor_dump",
@@ -619,7 +716,17 @@ let rec eval_expr (actor:actor) (e : expr) =
       apply_binop op v1 v2
   | Call (fname, arg1) ->
       let vs = List.map (eval_expr actor) arg1 in
-      call_prim fname vs
+      (* Make print observable from Web UI by recording it per actor. *)
+      if fname = "print" then (
+        match vs with
+        | [v] ->
+            let line = string_of_value v in
+            push_log actor.name line;
+            print_endline line;
+            VUnit
+        | _ -> failwith "print(s): arity 1 expected"
+      ) else
+        call_prim fname vs
   | Expr e -> eval_expr actor e
 and eval_stmt (actor:actor) (s : Ast.stmt) =
   match s.sdesc with

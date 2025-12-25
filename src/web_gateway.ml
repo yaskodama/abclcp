@@ -37,6 +37,162 @@ let list_exposed () : (string * string) list =
 (* A single running server per process (good enough for now). *)
 let server_thread : Thread.t option ref = ref None
 
+(* ---------- WebSocket helpers (RFC6455) ---------- *)
+
+let ws_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+(* Minimal SHA1 implementation (pure OCaml) *)
+let sha1 (s:string) : bytes =
+  let open Int32 in
+  let ( ++ ) = add in
+  let ( ** ) = logxor in
+  let ( &&& ) = logand in
+  let ( ||| ) = logor in
+
+  let rol x n = (shift_left x n) ||| (shift_right_logical x (32 - n)) in
+
+  let ml = String.length s in
+  let bit_len = Int64.mul (Int64.of_int ml) 8L in
+
+
+  (* padding *)
+  let pad_len =
+    let r = (ml + 1) mod 64 in
+    if r <= 56 then (56 - r) else (56 + (64 - r))
+  in
+  let total = ml + 1 + pad_len + 8 in
+  let msg = Bytes.make total '\000' in
+  Bytes.blit_string s 0 msg 0 ml;
+  Bytes.set msg ml (Char.chr 0x80);
+  (* write 64-bit length big-endian *)
+  for i = 0 to 7 do
+    let shift = 8 * (7 - i) in
+    let b =
+      Int64.(to_int (logand (shift_right bit_len shift) 0xFFL))
+    in
+    Bytes.set msg (total - 8 + i) (Char.chr b)
+  done;
+
+  let h0 = ref 0x67452301l
+  and h1 = ref 0xEFCDAB89l
+  and h2 = ref 0x98BADCFEl
+  and h3 = ref 0x10325476l
+  and h4 = ref 0xC3D2E1F0l in
+
+
+  let w = Array.make 80 0l in
+
+  let read_u32_be b off =
+    let c i = Int32.of_int (Char.code (Bytes.get b (off+i))) in
+    (shift_left (c 0) 24) |||
+    (shift_left (c 1) 16) |||
+    (shift_left (c 2) 8)  |||
+    (c 3)
+  in
+
+  let blocks = total / 64 in
+  for bi = 0 to blocks - 1 do
+    let base = bi * 64 in
+    for i = 0 to 15 do
+      w.(i) <- read_u32_be msg (base + (i*4))
+    done;
+    for i = 16 to 79 do
+      w.(i) <- rol (w.(i-3) ** w.(i-8) ** w.(i-14) ** w.(i-16)) 1
+    done;
+
+    let a = ref !h0
+    and b = ref !h1
+    and c = ref !h2
+    and d = ref !h3
+    and e = ref !h4 in
+
+
+    for i = 0 to 79 do
+      let f,k =
+        if i <= 19 then (((!b &&& !c) ||| ((lognot !b) &&& !d)), 0x5A827999l)
+        else if i <= 39 then ((!b ** !c ** !d), 0x6ED9EBA1l)
+        else if i <= 59 then (((!b &&& !c) ||| (!b &&& !d) ||| (!c &&& !d)), 0x8F1BBCDCl)
+        else ((!b ** !c ** !d), 0xCA62C1D6l)
+      in
+      let temp = (rol !a 5) ++ f ++ !e ++ k ++ w.(i) in
+      e := !d;
+      d := !c;
+      c := rol !b 30;
+      b := !a;
+      a := temp;
+    done;
+
+    h0 := !h0 ++ !a;
+    h1 := !h1 ++ !b;
+    h2 := !h2 ++ !c;
+    h3 := !h3 ++ !d;
+    h4 := !h4 ++ !e;
+  done;
+
+let out = Bytes.create 20 in
+  let write_u32_be v off =
+    let byte i = Char.chr (Int32.to_int (Int32.logand (Int32.shift_right_logical v (8*(3-i))) 0xFFl)) in
+    Bytes.set out (off+0) (byte 0);
+    Bytes.set out (off+1) (byte 1);
+    Bytes.set out (off+2) (byte 2);
+    Bytes.set out (off+3) (byte 3)
+  in
+  write_u32_be !h0 0;
+  write_u32_be !h1 4;
+  write_u32_be !h2 8;
+  write_u32_be !h3 12;
+  write_u32_be !h4 16;
+  out
+
+let base64_encode_bytes (b:bytes) : string =
+  let tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/" in
+  let n = Bytes.length b in
+  let out = Buffer.create ((n+2)/3*4) in
+  let get i = Char.code (Bytes.get b i) in
+  let rec loop i =
+    if i >= n then ()
+    else
+      let b0 = get i in
+      let b1 = if i+1 < n then get (i+1) else 0 in
+      let b2 = if i+2 < n then get (i+2) else 0 in
+      let triple = (b0 lsl 16) lor (b1 lsl 8) lor b2 in
+      let c0 = (triple lsr 18) land 0x3F
+      and c1 = (triple lsr 12) land 0x3F
+      and c2 = (triple lsr 6)  land 0x3F
+      and c3 = triple land 0x3F in
+      Buffer.add_char out tbl.[c0];
+      Buffer.add_char out tbl.[c1];
+      if i+1 < n then Buffer.add_char out tbl.[c2] else Buffer.add_char out '=';
+      if i+2 < n then Buffer.add_char out tbl.[c3] else Buffer.add_char out '=';
+      loop (i+3)
+  in
+  loop 0;
+  Buffer.contents out
+
+let ws_accept (sec_key:string) : string =
+  sec_key ^ ws_guid |> sha1 |> base64_encode_bytes
+
+(* Write a server->client TEXT frame. *)
+let ws_send_text (oc:out_channel) (payload:string) : unit =
+  let len = String.length payload in
+  let b0 = 0x81 (* FIN=1, opcode=TEXT *) in
+  output_char oc (Char.chr b0);
+  if len < 126 then begin
+    output_char oc (Char.chr len)
+  end else if len < 65536 then begin
+    output_char oc (Char.chr 126);
+    output_char oc (Char.chr ((len lsr 8) land 0xFF));
+    output_char oc (Char.chr (len land 0xFF));
+  end else begin
+    (* very large not needed for demo; send as 64-bit length *)
+    output_char oc (Char.chr 127);
+    for i = 7 downto 0 do
+      output_char oc (Char.chr ((len lsr (8*i)) land 0xFF))
+    done
+  end;
+  output_string oc payload;
+  flush oc
+
 (* ---------- Tiny helpers ---------- *)
 
 let is_space = function ' ' | '\t' | '\r' | '\n' -> true | _ -> false
@@ -131,6 +287,20 @@ let http_response ?(code=200) ?(content_type="text/plain; charset=utf-8") (body:
     "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s"
     code reason content_type (String.length body) body
 
+let json_escape (s:string) : string =
+  let b = Buffer.create (String.length s + 16) in
+  String.iter
+    (fun c ->
+      match c with
+      | '"' -> Buffer.add_string b "\\\""
+      | '\\' -> Buffer.add_string b "\\\\"
+      | '\n' -> Buffer.add_string b "\\n"
+      | '\r' -> Buffer.add_string b "\\r"
+      | '\t' -> Buffer.add_string b "\\t"
+      | _ -> Buffer.add_char b c)
+    s;
+  Buffer.contents b
+
 let html_index () : string =
   (* A tiny UI that posts JSON data to /api/json/send. *)
   "<!doctype html>\n" ^
@@ -145,21 +315,144 @@ let html_index () : string =
   "<label>method: <input id='method' value='add'></label><br>\n" ^
   "<label>args (comma sep): <input id='args' value='1,2'></label><br>\n" ^
   "<button onclick='send()'>Send</button>\n" ^
-  "<pre id='out' style='background:#f4f4f4; padding:8px; min-height:4em'></pre>\n" ^
+  "<pre id='out' style='background:#f4f4f4; padding:8px; min-height:2em'></pre>\n" ^
+  "<h4>Actor log (latest prints)</h4>\n" ^
+  "<pre id='log' style='background:#111; color:#0f0; padding:8px; min-height:8em; max-height:20em; overflow:auto'></pre>\n" ^
+  "<h4>Events</h4>\n" ^
+  "<pre id='events' style='background:#222; color:#ff0; padding:8px; min-height:6em; max-height:14em; overflow:auto; font-family: monospace'></pre>\n" ^
   "</div>\n" ^
   "</div>\n" ^
   "<script>\n" ^
+  "document.getElementById('out').textContent = 'JS loaded';\n" ^
+  "let afterId = -1;\n" ^
+  "let afterEvt = -1;\n" ^
+  "function parseAtom(s){\n" ^
+  "  s = s.trim();\n" ^
+  "  if(!s) return null;\n" ^
+  "  if((s.startsWith(\"\\\"\") && s.endsWith(\"\\\"\")) || (s.startsWith(\"'\") && s.endsWith(\"'\"))){\n" ^
+  "    return s.substring(1, s.length-1);\n" ^
+  "  }\n" ^
+  "  if(s === 'true') return true;\n" ^
+  "  if(s === 'false') return false;\n" ^
+  "  if(s === 'null') return null;\n" ^
+  "  const n = Number(s);\n" ^
+  "  if(Number.isFinite(n) && String(n) === s) return n;\n" ^
+  "  // allow 1.0, -2.5, 1e3 etc\n" ^
+  "  if(Number.isFinite(n)) return n;\n" ^
+  "  return s;\n" ^
+  "}\n" ^
+  "async function poll(){\n" ^
+  "  const to = document.getElementById('to').value;\n" ^
+  "  if(!to){ setTimeout(poll, 800); return; }\n" ^
+  "  try{\n" ^
+  "    const r = await fetch('/api/log?actor=' + encodeURIComponent(to) + '&after=' + afterId);\n" ^
+  "    if(r.ok){\n" ^
+  "      const j = await r.json();\n" ^
+  "      if(typeof j.next === 'number') afterId = j.next;\n" ^
+  "      if(j.lines && j.lines.length){\n" ^
+  "        const log = document.getElementById('log');\n" ^
+  "        const NL = String.fromCharCode(10);\n" ^
+  "        log.textContent += j.lines.join(NL) + NL;\n" ^
+  "        log.scrollTop = log.scrollHeight;\n" ^
+  "      }\n" ^
+  "    }\n" ^
+  "  }catch(e){\n" ^
+  "    document.getElementById('out').textContent = 'poll error: ' + e;\n" ^
+  "  }\n" ^
+  "  setTimeout(poll, 500);\n" ^
+  "}\n" ^
+  "async function pollEvents(){\n" ^
+  "  const to = document.getElementById('to').value;\n" ^
+  "  if(!to){ setTimeout(pollEvents, 800); return; }\n" ^
+  "  try{\n" ^
+  "    const r = await fetch('/api/events?actor=' + encodeURIComponent(to) + '&after=' + afterEvt);\n" ^
+  "    if(r.ok){\n" ^
+  "      const j = await r.json();\n" ^
+  "      if(typeof j.next === 'number') afterEvt = j.next;\n" ^
+  "      if(j.lines && j.lines.length){\n" ^
+  "        const box = document.getElementById('events');\n" ^
+  "        const NL = String.fromCharCode(10);\n" ^
+  "        box.textContent += j.lines.join(NL) + NL;\n" ^
+  "        box.scrollTop = box.scrollHeight;\n" ^
+  "      }\n" ^
+  "    }\n" ^
+  "  }catch(e){\n" ^
+  "    document.getElementById('out').textContent = 'events error: ' + e;\n" ^
+  "  }\n" ^
+  "  setTimeout(pollEvents, 500);\n" ^
+  "}\n" ^
   "async function send(){\n" ^
   "  const payload = {\n" ^
   "    to: document.getElementById('to').value,\n" ^
   "    method: document.getElementById('method').value,\n" ^
-  "    args: document.getElementById('args').value.split(',').map(s=>s.trim()).filter(s=>s.length>0),\n" ^
+  "    args: document.getElementById('args').value.split(',')\n" ^
+  "          .map(s=>s.trim()).filter(s=>s.length>0).map(parseAtom),\n" ^
   "    from: 'browser'\n" ^
   "  };\n" ^
-  "  const r = await fetch('/api/json/send',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});\n" ^
-  "  const t = await r.text();\n" ^
-  "  document.getElementById('out').textContent = t;\n" ^
+  "  try{\n" ^
+  "    const r = await fetch('/api/json/send', {\n" ^
+  "      method: 'POST',\n" ^
+  "      headers: { 'Content-Type': 'application/json' },\n" ^
+  "      body: JSON.stringify(payload)\n" ^
+  "    });\n" ^
+  "    const t = await r.text();\n" ^
+  "    document.getElementById('out').textContent = t;\n" ^
+  "  }catch(e){\n" ^
+  "    document.getElementById('out').textContent = 'send error: ' + e;\n" ^
+  "  }\n" ^
+  "  afterId = -1;\n" ^
+  "  document.getElementById('log').textContent = '';\n" ^
+  "  afterEvt = -1;\n" ^
+  "  const box = document.getElementById('events');\n" ^
+  "  if(box) box.textContent = '';\n" ^
   "}\n" ^
+  "function startWS(){\n" ^
+  "  try{\n" ^
+  "    const ws = new WebSocket('ws://' + location.host + '/ws');\n" ^
+  "    ws.onopen = () => {\n" ^
+  "      const out = document.getElementById('out');\n" ^
+  "      if(out) out.textContent = 'WS connected';\n" ^
+  "    };\n" ^
+  "    ws.onerror = () => {\n" ^
+  "      const out = document.getElementById('out');\n" ^
+  "      if(out) out.textContent = 'WS error';\n" ^
+  "    };\n" ^
+  "    ws.onclose = () => {\n" ^
+  "      const out = document.getElementById('out');\n" ^
+  "      if(out) out.textContent = 'WS closed';\n" ^
+  "    };\n" ^
+  "    ws.onmessage = (ev) => {\n" ^
+  "      let msg = null;\n" ^
+  "      try { msg = JSON.parse(ev.data); } catch(e) { return; }\n" ^
+  "      if(!msg || !msg.type) return;\n" ^
+  "\n" ^
+  "      if(msg.type === 'log'){\n" ^
+  "        const log = document.getElementById('log');\n" ^
+  "        if(!log) return;\n" ^
+  "        const NL = String.fromCharCode(10);\n" ^
+  "        log.textContent += msg.line + NL;\n" ^
+  "        log.scrollTop = log.scrollHeight;\n" ^
+  "        return;\n" ^
+  "      }\n" ^
+  "\n" ^
+  "      if(msg.type === 'event'){\n" ^
+  "        const box = document.getElementById('events');\n" ^
+  "        if(!box) return;\n" ^
+  "        const NL = String.fromCharCode(10);\n" ^
+  "        box.textContent += msg.line + NL;\n" ^
+  "        box.scrollTop = box.scrollHeight;\n" ^
+  "        return;\n" ^
+  "      }\n" ^
+  "    };\n" ^
+  "  }catch(e){\n" ^
+  "    const out = document.getElementById('out');\n" ^
+  "    if(out) out.textContent = 'startWS exception: ' + e;\n" ^
+  "  }\n" ^
+  "}\n" ^
+  "poll();\n" ^
+  "document.getElementById('out').textContent = 'polling...';\n" ^
+  "pollEvents();\n" ^
+  "startWS();\n" ^
   "</script>\n" ^
   "</body></html>\n"
 
@@ -315,12 +608,12 @@ let type_matches (param:Types.ty) (arg:Ast.expr) : bool * Ast.expr =
   | TFloat, Float _ -> (true, arg)
   | TFloat, Int i -> (true, Ast.mk_float (float_of_int i)) (* allow int->float *)
   | TString, String _ -> (true, arg)
-(*  | TBool, Bool _ -> (true, arg)   *)
   | TBool, String "true"  -> (true, arg)
   | TBool, String "false" -> (true, arg)
-(* もし 0/1 も許したければ *)
+(* 0/1 も bool として許すなら *)
   | TBool, Int 0 -> (true, arg)
   | TBool, Int 1 -> (true, arg)
+(*  | TBool, Bool _ -> (true, arg) *)
   | TVar _, _ -> (true, arg) (* polymorphic: accept *)
   | _, _ -> (false, arg)
 
@@ -422,21 +715,35 @@ let handle_send_direct_json (body:string) : (int * string * string) =
         else
           let exprs = List.map ast_of_json_value args_json in
           let (ok, msg, exprs2) = check_web_call ~actor_name:to_ ~method_name:meth exprs in
-          if not ok then
+          if not ok then (
+            Eval_thread.push_web_evt
+              (Printf.sprintf "[FAILED] to=%s.%s reason=typecheck:%s" to_ meth msg);
             (400, "text/plain; charset=utf-8", "typecheck failed: " ^ msg)
-          else
-            (try
-               Eval_thread.send_message ~from:from_ to_ (CallStmt (meth, exprs2));
-               (200, "text/plain; charset=utf-8", "OK")
-             with exn ->
-               (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn))
-    | _ -> (400, "text/plain; charset=utf-8", "JSON must be an object")
+          ) else (
+           let msg_id =
+              Printf.sprintf "m-%d" (int_of_float (Unix.time () *. 1000.0))
+            in
+            Eval_thread.push_web_evt
+              (Printf.sprintf "[ACCEPTED] id=%s to=%s.%s" msg_id to_ meth);
+            try
+              Eval_thread.send_message ~from:from_ to_ (CallStmt (meth, exprs2));
+              (200, "text/plain; charset=utf-8", "OK")
+            with exn ->
+              Eval_thread.push_web_evt
+                (Printf.sprintf "[FAILED] id=%s to=%s.%s reason=%s"
+                   msg_id to_ meth (Printexc.to_string exn));
+              (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn)
+          )
+    | _ ->
+        (400, "text/plain; charset=utf-8", "JSON must be an object")
   with
-  | Json_error m -> (400, "text/plain; charset=utf-8", "bad JSON: " ^ m)
+  | Json_error m ->
+      (400, "text/plain; charset=utf-8", "bad JSON: " ^ m)
 
 let handle_send_exposed_json ~(key:string) (body:string) : (int * string * string) =
   match Hashtbl.find_opt exposed key with
-  | None -> (404, "text/plain; charset=utf-8", "unknown endpoint: " ^ key)
+  | None ->
+      (404, "text/plain; charset=utf-8", "unknown endpoint: " ^ key)
   | Some actor_name ->
       try
         match parse_json body with
@@ -447,19 +754,149 @@ let handle_send_exposed_json ~(key:string) (body:string) : (int * string * strin
             if meth = "" then
               (400, "text/plain; charset=utf-8", "missing method")
             else
-              let exprs = List.map ast_of_json_value args_json in
+             let exprs = List.map ast_of_json_value args_json in
               let (ok, msg, exprs2) = check_web_call ~actor_name ~method_name:meth exprs in
-              if not ok then
+              if not ok then (
+                Eval_thread.push_web_evt
+                  (Printf.sprintf "[FAILED] to=%s.%s reason=typecheck:%s" actor_name meth msg);
                 (400, "text/plain; charset=utf-8", "typecheck failed: " ^ msg)
-              else
-                (try
-                   Eval_thread.send_message ~from:from_ actor_name (CallStmt (meth, exprs2));
-                   (200, "text/plain; charset=utf-8", "OK")
-                 with exn ->
-                   (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn))
-        | _ -> (400, "text/plain; charset=utf-8", "JSON must be an object")
+              ) else (
+                let msg_id =
+                  Printf.sprintf "m-%d" (int_of_float (Unix.time () *. 1000.0))
+                in
+                Eval_thread.push_web_evt
+                  (Printf.sprintf "[ACCEPTED] id=%s to=%s.%s" msg_id actor_name meth);
+                try
+                  Eval_thread.send_message ~from:from_ actor_name (CallStmt (meth, exprs2));
+                  (200, "text/plain; charset=utf-8", "OK")
+                with exn ->
+                 Eval_thread.push_web_evt
+                    (Printf.sprintf "[FAILED] id=%s to=%s.%s reason=%s"
+                       msg_id actor_name meth (Printexc.to_string exn));
+                  (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn)
+              )
+        | _ ->
+            (400, "text/plain; charset=utf-8", "JSON must be an object")
       with
-      | Json_error m -> (400, "text/plain; charset=utf-8", "bad JSON: " ^ m)
+      | Json_error m ->
+          (400, "text/plain; charset=utf-8", "bad JSON: " ^ m)
+
+let handle_api_log query =
+  let after =
+    match Hashtbl.find_opt query "after" with
+    | Some s -> (try int_of_string s with _ -> 0)
+    | None -> 0
+  in
+  let (next_id, lines) = Eval_thread.get_web_logs_since after in
+  let esc s =
+    let b = Buffer.create (String.length s + 8) in
+    String.iter (function
+      | '"' -> Buffer.add_string b "\\\""
+      | '\\' -> Buffer.add_string b "\\\\"
+      | '\n' -> Buffer.add_string b "\\n"
+      | '\r' -> Buffer.add_string b "\\r"
+      | c -> Buffer.add_char b c
+    ) s;
+    Buffer.contents b
+  in
+  let body =
+    Printf.sprintf
+      {|{"next":%d,"lines":[%s]}|}
+      next_id
+      (String.concat "," (List.map (fun s -> "\"" ^ esc s ^ "\"") lines))
+  in
+  (200, "application/json; charset=utf-8", body)
+
+let handle_api_events (query:(string,string) Hashtbl.t) =
+  let after =
+    match Hashtbl.find_opt query "after" with
+    | Some s -> (try int_of_string s with _ -> 0)
+    | None -> 0
+  in
+  let (next_id, lines) = Eval_thread.get_web_evts_since after in
+  let esc s =
+    let b = Buffer.create (String.length s + 8) in
+    String.iter (function
+      | '"' -> Buffer.add_string b "\\\""
+      | '\\' -> Buffer.add_string b "\\\\"
+      | '\n' -> Buffer.add_string b "\\n"
+      | '\r' -> Buffer.add_string b "\\r"
+      | '\t' -> Buffer.add_string b "\\t"
+      | c -> Buffer.add_char b c
+    ) s;
+    Buffer.contents b
+  in
+  let body =
+    Printf.sprintf {|{"next":%d,"lines":[%s]}|}
+      next_id
+      (String.concat "," (List.map (fun s -> "\"" ^ esc s ^ "\"") lines))
+  in
+  (200, "application/json; charset=utf-8", body)
+
+let handle_ws (client:file_descr) (headers:(string,string) Hashtbl.t) : unit =
+  let ic = in_channel_of_descr client in
+  let oc = out_channel_of_descr client in
+
+  (* handshake *)
+  match Hashtbl.find_opt headers "sec-websocket-key" with
+  | None ->
+      output_string oc "HTTP/1.1 400 Bad Request\r\nContent-Length:0\r\n\r\n";
+      flush oc
+  | Some key ->
+      let accept = ws_accept (trim key) in
+      output_string oc "HTTP/1.1 101 Switching Protocols\r\n";
+      output_string oc "Upgrade: websocket\r\n";
+      output_string oc "Connection: Upgrade\r\n";
+      output_string oc ("Sec-WebSocket-Accept: " ^ accept ^ "\r\n");
+      output_string oc "\r\n";
+      flush oc;
+
+      (* push loop: poll deltas and push *)
+      let log_after = ref 0 in
+      let evt_after = ref 0 in
+      let running = ref true in
+
+      (* optional: read loop to detect close. We just try to read some bytes non-blocking-ish. *)
+      let reader =
+        Thread.create (fun () ->
+          try
+            while !running do
+              (* just block a little; if client closes, read will raise *)
+              ignore (input_char ic)
+            done
+          with _ -> running := false
+        ) ()
+      in
+       (try
+         while !running do
+           let (nlog, logs) = Eval_thread.get_web_logs_since !log_after in
+           if logs <> [] then begin
+             log_after := nlog;
+             (* send one line at a time for simplicity *)
+             List.iter (fun line ->
+               (* JSON push *)
+               let msg = Printf.sprintf {|{"type":"log","line":%S}|} line in
+               ws_send_text oc msg
+             ) logs
+           end;
+
+           let (nevt, evts) = Eval_thread.get_web_evts_since !evt_after in
+           if evts <> [] then begin
+             evt_after := nevt;
+             List.iter (fun line ->
+               let msg = Printf.sprintf {|{"type":"event","line":%S}|} line in
+               ws_send_text oc msg
+             ) evts
+           end;
+
+           Thread.delay 0.2
+         done
+       with _ -> running := false);
+
+      (try Thread.join reader with _ -> ());
+      (try close_in ic with _ -> ());
+      (try close_out oc with _ -> ());
+      (try Unix.close client with _ -> ())
 
 let handle_client (client: file_descr) : unit =
   let ic = in_channel_of_descr client in
@@ -473,10 +910,16 @@ let handle_client (client: file_descr) : unit =
      | None -> ()
      | Some req_line ->
          let parts = split_on ' ' (trim req_line) in
-         let meth, path =
+         let meth, raw_path =
            match parts with
            | m :: p :: _ -> (String.uppercase_ascii m, p)
            | _ -> ("", "/")
+         in
+         let path, query =
+           match split_on '?' raw_path with
+           | p :: q :: _ -> (p, q)
+           | p :: [] -> (p, "")
+           | _ -> (raw_path, "")
          in
          let headers = read_headers ic in
          let content_len =
@@ -485,10 +928,31 @@ let handle_client (client: file_descr) : unit =
            | Some v -> (try int_of_string (trim v) with _ -> 0)
          in
          let body = if content_len > 0 then read_exactly ic content_len else "" in
-         let code, ctype, resp_body =
+         let parse_query_to_tbl (qs:string) : (string,string) Hashtbl.t =
+           let tbl = Hashtbl.create 16 in
+           let qs = if qs <> "" && qs.[0] = '?' then String.sub qs 1 (String.length qs - 1)
+           else qs
+           in
+             let pairs = if qs = "" then [] else String.split_on_char '&' qs in
+               List.iter (fun kv ->
+                 match String.split_on_char '=' kv with
+                 | [k; v] -> Hashtbl.replace tbl (url_decode k) (url_decode v)
+                 | [k] -> Hashtbl.replace tbl (url_decode k) ""
+                 | _ -> ()
+               ) pairs;
+            tbl in
+	 let q : (string,string) Hashtbl.t = parse_query_to_tbl query in
+         (* --- WebSocket endpoint: DO NOT write normal HTTP response --- *)
+         if meth = "GET" && path = "/ws" then (
+           handle_ws client headers;
+           raise Exit
+         );
+	 let code, ctype, resp_body =
            match meth, path with
            | "GET", "/" -> (200, "text/html; charset=utf-8", html_index ())
-           | "POST", "/api/send" ->
+           | "GET", "/api/log" -> handle_api_log q
+	   | "GET", "/api/events" -> handle_api_events q  
+	   | "POST", "/api/send" ->
                let params = parse_form_urlencoded body in
                handle_send_direct params
            | "POST", "/api/json/send" ->
@@ -505,11 +969,13 @@ let handle_client (client: file_descr) : unit =
            | _ -> (404, "text/plain; charset=utf-8", "not found")
          in
          safe_write (http_response ~code ~content_type:ctype resp_body)
-   with _ -> ());
+   with
+   | Exit -> ()
+   | _ -> ());
   (try close_in ic with _ -> ());
   (try close_out oc with _ -> ());
   (try Unix.close client with _ -> ())
-
+  
 let start ~(port:int) : unit =
   match !server_thread with
   | Some _ -> ()
