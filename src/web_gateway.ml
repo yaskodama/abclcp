@@ -2,7 +2,7 @@
    Minimal HTTP gateway embedded in the ABCL/c+ runtime.
 
    - No external OCaml web libraries.
-   - Runs as a background thread.
+  - Runs as a background thread.
    - Lets a web browser send messages to actors.
 
    Endpoints:
@@ -36,6 +36,52 @@ let list_exposed () : (string * string) list =
 
 (* A single running server per process (good enough for now). *)
 let server_thread : Thread.t option ref = ref None
+
+(* msg_id -> sid *)
+let msgid_to_sid : (string, string) Hashtbl.t = Hashtbl.create 2048
+let msgid_mu = Mutex.create ()
+
+let bind_msgid_sid (msg_id:string) (sid:string) =
+  Mutex.lock msgid_mu;
+  Hashtbl.replace msgid_to_sid msg_id sid;
+  Mutex.unlock msgid_mu
+
+let lookup_sid (msg_id:string) : string option =
+  Mutex.lock msgid_mu;
+  let r = Hashtbl.find_opt msgid_to_sid msg_id in
+  Mutex.unlock msgid_mu;
+  r
+
+(* ---- websocket clients per sid ---- *)
+let ws_clients : (string, out_channel list ref) Hashtbl.t = Hashtbl.create 64
+let ws_clients_mu = Mutex.create ()
+
+let ws_add (sid:string) (oc:out_channel) : unit =
+  Mutex.lock ws_clients_mu;
+  let r =
+    match Hashtbl.find_opt ws_clients sid with
+    | Some r -> r
+    | None -> let r = ref [] in Hashtbl.add ws_clients sid r; r
+  in
+  r := oc :: !r;
+  Mutex.unlock ws_clients_mu
+
+let ws_remove (sid:string) (oc:out_channel) : unit =
+  Mutex.lock ws_clients_mu;
+  (match Hashtbl.find_opt ws_clients sid with
+   | Some r -> r := List.filter (fun x -> x != oc) !r
+   | None -> ());
+  Mutex.unlock ws_clients_mu
+
+let ws_send_to_sid (sid:string) (f:out_channel -> unit) : unit =
+  Mutex.lock ws_clients_mu;
+  let targets =
+    match Hashtbl.find_opt ws_clients sid with
+    | Some r -> !r
+    | None -> []
+  in
+  Mutex.unlock ws_clients_mu;
+  List.iter (fun oc -> try f oc with _ -> ()) targets
 
 (* ---------- WebSocket helpers (RFC6455) ---------- *)
 
@@ -319,10 +365,18 @@ let html_index () : string =
   "<h4>Actor log (latest prints)</h4>\n" ^
   "<pre id='log' style='background:#111; color:#0f0; padding:8px; min-height:8em; max-height:20em; overflow:auto'></pre>\n" ^
   "<h4>Events</h4>\n" ^
-  "<pre id='events' style='background:#222; color:#ff0; padding:8px; min-height:6em; max-height:14em; overflow:auto; font-family: monospace'></pre>\n" ^
+  "<div id='events' style='background:#222; padding:8px; min-height:6em; max-height:14em; overflow:auto; font-family: monospace'></div>\n" ^
+  "<pre id='replies'></pre>\n" ^
   "</div>\n" ^
   "</div>\n" ^
   "<script>\n" ^
+  "const SID_KEY = 'abcl_sid';\n" ^
+  "let sid = localStorage.getItem(SID_KEY);\n" ^
+  "if(!sid){\n" ^
+  "sid = 's-' + Math.random().toString(16).slice(2) + '-' + Date.now();\n" ^
+  "localStorage.setItem(SID_KEY, sid);\n" ^
+  "}\n" ^
+  "document.getElementById('out').textContent = 'sid=' + sid;\n" ^
   "document.getElementById('out').textContent = 'JS loaded';\n" ^
   "let afterId = -1;\n" ^
   "let afterEvt = -1;\n" ^
@@ -363,6 +417,7 @@ let html_index () : string =
   "}\n" ^
   "async function pollEvents(){\n" ^
   "  const to = document.getElementById('to').value;\n" ^
+  "  document.getElementById('out').textContent = 'pollEvents after=' + afterEvt;\n" ^
   "  if(!to){ setTimeout(pollEvents, 800); return; }\n" ^
   "  try{\n" ^
   "    const r = await fetch('/api/events?actor=' + encodeURIComponent(to) + '&after=' + afterEvt);\n" ^
@@ -371,8 +426,22 @@ let html_index () : string =
   "      if(typeof j.next === 'number') afterEvt = j.next;\n" ^
   "      if(j.lines && j.lines.length){\n" ^
   "        const box = document.getElementById('events');\n" ^
-  "        const NL = String.fromCharCode(10);\n" ^
-  "        box.textContent += j.lines.join(NL) + NL;\n" ^
+  "        for(const line of j.lines){\n" ^
+  "          const row = document.createElement('div');\n" ^
+  "          row.textContent = line;\n" ^
+  "          row.style.whiteSpace = 'pre-wrap';\n" ^
+  "          if(line.startsWith('[FAILED]')){\n" ^
+  "            row.style.color = '#ff5555';\n" ^
+  "            row.style.fontWeight = '700';\n" ^
+  "          } else if(line.startsWith('[ACCEPTED]')){\n" ^
+  "            row.style.color = '#55ff55';\n" ^
+  "          } else if(line.startsWith('[REPLY]')){\n" ^
+  "            row.style.color = '#66ccff';\n" ^
+  "          } else {\n" ^
+  "            row.style.color = '#ffff66';\n" ^
+  "          }\n" ^
+  "          box.appendChild(row);\n" ^
+  "        }\n" ^
   "        box.scrollTop = box.scrollHeight;\n" ^
   "      }\n" ^
   "    }\n" ^
@@ -383,6 +452,7 @@ let html_index () : string =
   "}\n" ^
   "async function send(){\n" ^
   "  const payload = {\n" ^
+  "    sid: sid,\n" ^
   "    to: document.getElementById('to').value,\n" ^
   "    method: document.getElementById('method').value,\n" ^
   "    args: document.getElementById('args').value.split(',')\n" ^
@@ -400,29 +470,23 @@ let html_index () : string =
   "  }catch(e){\n" ^
   "    document.getElementById('out').textContent = 'send error: ' + e;\n" ^
   "  }\n" ^
-  "  afterId = -1;\n" ^
-  "  document.getElementById('log').textContent = '';\n" ^
-  "  afterEvt = -1;\n" ^
-  "  const box = document.getElementById('events');\n" ^
-  "  if(box) box.textContent = '';\n" ^
   "}\n" ^
+  "let ws = null;\n" ^
+  "let wsRetryMs = 500;\n" ^
+  "\n" ^
   "function startWS(){\n" ^
   "  try{\n" ^
-  "    const ws = new WebSocket('ws://' + location.host + '/ws');\n" ^
-  "    ws.onopen = () => {\n" ^
-  "      const out = document.getElementById('out');\n" ^
-  "      if(out) out.textContent = 'WS connected';\n" ^
-  "    };\n" ^
-  "    ws.onerror = () => {\n" ^
-  "      const out = document.getElementById('out');\n" ^
-  "      if(out) out.textContent = 'WS error';\n" ^
-  "    };\n" ^
-  "    ws.onclose = () => {\n" ^
-  "      const out = document.getElementById('out');\n" ^
-  "      if(out) out.textContent = 'WS closed';\n" ^
-  "    };\n" ^
+  "    const out = document.getElementById('out');\n" ^
+  "    const host = (location.hostname === 'localhost') ? '127.0.0.1:' + location.port : location.host;\n" ^
+  "    const url = 'ws://' + host + '/ws?sid=' + encodeURIComponent(sid);\n" ^
+  "    const ws = new WebSocket(url);\n" ^
+  "\n" ^
+  "    ws.onopen = () => { if(out) out.textContent = 'WS connected: ' + url; };\n" ^
+  "    ws.onerror = () => { if(out) out.textContent = 'WS error: ' + url; };\n" ^
+  "    ws.onclose = () => { if(out) out.textContent = 'WS closed: ' + url; };\n" ^
+  "\n" ^
   "    ws.onmessage = (ev) => {\n" ^
-  "      let msg = null;\n" ^
+  "      let msg;\n" ^
   "      try { msg = JSON.parse(ev.data); } catch(e) { return; }\n" ^
   "      if(!msg || !msg.type) return;\n" ^
   "\n" ^
@@ -430,7 +494,7 @@ let html_index () : string =
   "        const log = document.getElementById('log');\n" ^
   "        if(!log) return;\n" ^
   "        const NL = String.fromCharCode(10);\n" ^
-  "        log.textContent += msg.line + NL;\n" ^
+  "        log.textContent += (msg.line || '') + NL;\n" ^
   "        log.scrollTop = log.scrollHeight;\n" ^
   "        return;\n" ^
   "      }\n" ^
@@ -438,9 +502,25 @@ let html_index () : string =
   "      if(msg.type === 'event'){\n" ^
   "        const box = document.getElementById('events');\n" ^
   "        if(!box) return;\n" ^
-  "        const NL = String.fromCharCode(10);\n" ^
-  "        box.textContent += msg.line + NL;\n" ^
+  "        const line = msg.line || '';\n" ^
+  "        const row = document.createElement('div');\n" ^
+  "        row.textContent = line;\n" ^
+  "        row.style.whiteSpace = 'pre-wrap';\n" ^
+  "        if(line.startsWith('[FAILED]')){ row.style.color='#ff5555'; row.style.fontWeight='700'; }\n" ^
+  "        else if(line.startsWith('[ACCEPTED]')){ row.style.color='#55ff55'; }\n" ^
+  "        else if(line.startsWith('[REPLY]')){ row.style.color='#66ccff'; }\n" ^
+  "        else { row.style.color='#ffff66'; }\n" ^
+  "        box.appendChild(row);\n" ^
   "        box.scrollTop = box.scrollHeight;\n" ^
+  "        return;\n" ^
+  "      }\n" ^
+  "\n" ^
+  "      if(msg.type === 'reply'){\n" ^
+  "        const rep = document.getElementById('replies');\n" ^
+  "        if(!rep) return;\n" ^
+  "        const NL = String.fromCharCode(10);\n" ^
+  "        rep.textContent += (msg.line || '') + NL;\n" ^
+  "        rep.scrollTop = rep.scrollHeight;\n" ^
   "        return;\n" ^
   "      }\n" ^
   "    };\n" ^
@@ -449,10 +529,8 @@ let html_index () : string =
   "    if(out) out.textContent = 'startWS exception: ' + e;\n" ^
   "  }\n" ^
   "}\n" ^
-  "poll();\n" ^
-  "document.getElementById('out').textContent = 'polling...';\n" ^
-  "pollEvents();\n" ^
   "startWS();\n" ^
+  "document.getElementById('out').textContent = 'WS connecting...'\n" ^
   "</script>\n" ^
   "</body></html>\n"
 
@@ -679,7 +757,7 @@ let handle_send_direct (params:(string, string) Hashtbl.t) : (int * string * str
   else
     let exprs = parse_args_to_exprs args in
     (try
-       Eval_thread.send_message ~from:from_ to_ (CallStmt (meth, exprs));
+       Eval_thread.send_message ~from:from_ to_ (mk_stmt (CallStmt (meth, exprs)));
        (200, "text/plain; charset=utf-8", "OK")
      with exn ->
        (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn))
@@ -697,7 +775,7 @@ let handle_send_exposed ~(key:string) (params:(string, string) Hashtbl.t) : (int
       else
         let exprs = parse_args_to_exprs args in
         (try
-           Eval_thread.send_message ~from:from_ actor_name (CallStmt (meth, exprs));
+           Eval_thread.send_message ~from:from_ actor_name (mk_stmt (CallStmt (meth, exprs)));
            (200, "text/plain; charset=utf-8", "OK")
          with exn ->
            (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn))
@@ -709,6 +787,7 @@ let handle_send_direct_json (body:string) : (int * string * string) =
         let to_ = match json_get_string "to" o with Some s -> s | None -> "" in
         let meth = match json_get_string "method" o with Some s -> s | None -> "" in
         let from_ = match json_get_string "from" o with Some s -> s | None -> "<web>" in
+        let sid = match json_get_string "sid" o with Some s -> s | None -> "" in
         let args_json = match json_get_array "args" o with Some xs -> xs | None -> [] in
         if to_ = "" || meth = "" then
           (400, "text/plain; charset=utf-8", "missing to/method")
@@ -721,12 +800,13 @@ let handle_send_direct_json (body:string) : (int * string * string) =
             (400, "text/plain; charset=utf-8", "typecheck failed: " ^ msg)
           ) else (
            let msg_id =
-              Printf.sprintf "m-%d" (int_of_float (Unix.time () *. 1000.0))
+               Printf.sprintf "m-%d" (int_of_float (Unix.time () *. 1000.0))
             in
+            if sid <> "" then bind_msgid_sid msg_id sid;               
             Eval_thread.push_web_evt
               (Printf.sprintf "[ACCEPTED] id=%s to=%s.%s" msg_id to_ meth);
             try
-              Eval_thread.send_message ~from:from_ to_ (CallStmt (meth, exprs2));
+              Eval_thread.send_message ~msg_id ~from:from_ to_ (mk_stmt (CallStmt (meth, exprs2)));
               (200, "text/plain; charset=utf-8", "OK")
             with exn ->
               Eval_thread.push_web_evt
@@ -751,6 +831,7 @@ let handle_send_exposed_json ~(key:string) (body:string) : (int * string * strin
             let meth = match json_get_string "method" o with Some s -> s | None -> "" in
             let from_ = match json_get_string "from" o with Some s -> s | None -> "<web>" in
             let args_json = match json_get_array "args" o with Some xs -> xs | None -> [] in
+            let sid = match json_get_string "sid" o with Some s -> s | None -> "" in
             if meth = "" then
               (400, "text/plain; charset=utf-8", "missing method")
             else
@@ -764,10 +845,11 @@ let handle_send_exposed_json ~(key:string) (body:string) : (int * string * strin
                 let msg_id =
                   Printf.sprintf "m-%d" (int_of_float (Unix.time () *. 1000.0))
                 in
+                if sid <> "" then bind_msgid_sid msg_id sid;
                 Eval_thread.push_web_evt
                   (Printf.sprintf "[ACCEPTED] id=%s to=%s.%s" msg_id actor_name meth);
                 try
-                  Eval_thread.send_message ~from:from_ actor_name (CallStmt (meth, exprs2));
+		  Eval_thread.send_message ~msg_id ~from:from_ actor_name (mk_stmt (CallStmt (meth, exprs2)));
                   (200, "text/plain; charset=utf-8", "OK")
                 with exn ->
                  Eval_thread.push_web_evt
@@ -833,15 +915,23 @@ let handle_api_events (query:(string,string) Hashtbl.t) =
   in
   (200, "application/json; charset=utf-8", body)
 
-let handle_ws (client:file_descr) (headers:(string,string) Hashtbl.t) : unit =
+let handle_ws (client:file_descr) (headers:(string,string) Hashtbl.t) (q:(string,string) Hashtbl.t) : unit =
   let ic = in_channel_of_descr client in
   let oc = out_channel_of_descr client in
 
-  (* handshake *)
+  let close_all () =
+    (try flush oc with _ -> ());
+    (try close_in_noerr ic with _ -> ());
+    (try close_out_noerr oc with _ -> ());
+    (try Unix.close client with _ -> ())
+  in
+
+  (* --- Handshake --- *)
   match Hashtbl.find_opt headers "sec-websocket-key" with
   | None ->
       output_string oc "HTTP/1.1 400 Bad Request\r\nContent-Length:0\r\n\r\n";
-      flush oc
+      flush oc;
+      close_all ()
   | Some key ->
       let accept = ws_accept (trim key) in
       output_string oc "HTTP/1.1 101 Switching Protocols\r\n";
@@ -851,52 +941,103 @@ let handle_ws (client:file_descr) (headers:(string,string) Hashtbl.t) : unit =
       output_string oc "\r\n";
       flush oc;
 
-      (* push loop: poll deltas and push *)
-      let log_after = ref 0 in
-      let evt_after = ref 0 in
+      (* ---- sid from /ws?sid=... ---- *)
+      let sid = match Hashtbl.find_opt q "sid" with Some s -> s | None -> "" in
+      if sid <> "" then ws_add sid oc;
+
+      (* IMPORTANT: start from -1 so we never miss id=0 items *)
+      let log_after = ref (-1) in
+      let evt_after = ref (-1) in
+
+      (* We do not parse client->server frames in this minimal version.
+         We only detect disconnect by trying to write periodically and by
+         reading a byte in a background thread. *)
       let running = ref true in
 
-      (* optional: read loop to detect close. We just try to read some bytes non-blocking-ish. *)
-      let reader =
-        Thread.create (fun () ->
-          try
-            while !running do
-              (* just block a little; if client closes, read will raise *)
-              ignore (input_char ic)
-            done
-          with _ -> running := false
-        ) ()
+      let _reader =
+        Thread.create
+          (fun () ->
+             try
+               while !running do
+                 (* If client closes, input_char will raise. *)
+                 ignore (input_char ic)
+               done
+             with _ ->
+               running := false)
+          ()
       in
-       (try
+
+      let send_log_line (line:string) =
+        (* send as type=log *)
+        ws_send_text oc (Printf.sprintf {|{"type":"log","line":%S}|} line)
+      in
+	
+      let send_event_line (line:string) =
+        (* classify reply vs normal event *)
+        if String.length line >= 7 && String.sub line 0 7 = "[REPLY]" then
+          ws_send_text oc (Printf.sprintf {|{"type":"reply","line":%S}|} line)
+        else
+          ws_send_text oc (Printf.sprintf {|{"type":"event","line":%S}|} line)
+      in
+
+      let extract_id (line:string) : string option =
+        let key = "id=" in
+        let rec find_from i =
+          if i + String.length key > String.length line then None
+          else if String.sub line i (String.length key) = key then Some (i + String.length key)
+          else find_from (i+1)
+        in
+        match find_from 0 with
+        | None -> None
+        | Some j ->
+            let k =
+              match String.index_from_opt line j ' ' with
+              | Some sp -> sp
+              | None -> String.length line
+            in
+            Some (String.sub line j (k - j))
+      in
+
+      (try
          while !running do
+           (* push logs *)
            let (nlog, logs) = Eval_thread.get_web_logs_since !log_after in
            if logs <> [] then begin
              log_after := nlog;
-             (* send one line at a time for simplicity *)
-             List.iter (fun line ->
-               (* JSON push *)
-               let msg = Printf.sprintf {|{"type":"log","line":%S}|} line in
-               ws_send_text oc msg
-             ) logs
-           end;
+             List.iter send_log_line logs
+         end;
 
+         (* push events (sid-filtered) *)
            let (nevt, evts) = Eval_thread.get_web_evts_since !evt_after in
            if evts <> [] then begin
              evt_after := nevt;
+
              List.iter (fun line ->
-               let msg = Printf.sprintf {|{"type":"event","line":%S}|} line in
-               ws_send_text oc msg
+               match extract_id line with
+               | None ->
+                   ()  (* idが無いイベントは送らない（安全） *)
+               | Some mid ->
+                   match lookup_sid mid with
+                   | None -> ()
+                   | Some sid_dst ->
+                       ws_send_to_sid sid_dst (fun oc2 ->
+                         if String.length line >= 7 && String.sub line 0 7 = "[REPLY]" then
+                           ws_send_text oc2 (Printf.sprintf {|{"type":"reply","line":%S}|} line)
+                         else
+                           ws_send_text oc2 (Printf.sprintf {|{"type":"event","line":%S}|} line)
+                       )
              ) evts
            end;
 
            Thread.delay 0.2
          done
-       with _ -> running := false);
+       with _ ->
+         running := false);
 
-      (try Thread.join reader with _ -> ());
-      (try close_in ic with _ -> ());
-      (try close_out oc with _ -> ());
-      (try Unix.close client with _ -> ())
+      (* ---- remove from sid table ---- *)
+      if sid <> "" then ws_remove sid oc;
+
+      close_all ()
 
 let handle_client (client: file_descr) : unit =
   let ic = in_channel_of_descr client in
@@ -944,7 +1085,7 @@ let handle_client (client: file_descr) : unit =
 	 let q : (string,string) Hashtbl.t = parse_query_to_tbl query in
          (* --- WebSocket endpoint: DO NOT write normal HTTP response --- *)
          if meth = "GET" && path = "/ws" then (
-           handle_ws client headers;
+           handle_ws client headers q;
            raise Exit
          );
 	 let code, ctype, resp_body =
@@ -955,8 +1096,7 @@ let handle_client (client: file_descr) : unit =
 	   | "POST", "/api/send" ->
                let params = parse_form_urlencoded body in
                handle_send_direct params
-           | "POST", "/api/json/send" ->
-               handle_send_direct_json body
+           | "POST", "/api/json/send" -> handle_send_direct_json body
            | "POST", _ when String.length path >= String.length "/api/x/" &&
                             String.sub path 0 (String.length "/api/x/") = "/api/x/" ->
                let key = String.sub path (String.length "/api/x/") (String.length path - String.length "/api/x/") in

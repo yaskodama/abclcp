@@ -14,10 +14,16 @@ type value =
   | VActor of string * (string, value) Hashtbl.t
   | VArray of value array * Types.ty option
 
+type mmessage = {
+  from : string;
+  stmt : Ast.stmt;
+  msg_id : string option;
+}
+
 type actor = {
   name : string;
   mutable cls  : string;
-  queue : message Queue.t;
+  queue : mmessage Queue.t;
   mutex : Mutex.t;
   cond  : Condition.t;
   env   : (string, value) Hashtbl.t;
@@ -26,6 +32,11 @@ type actor = {
 }
 
 let actor_table : (string, actor) Hashtbl.t = Hashtbl.create 32
+
+(* current message id while executing a message (for reply correlation) *)
+let current_msg_id : string option ref = ref None
+let set_current_msg_id (id:string option) = current_msg_id := id
+let get_current_msg_id () = !current_msg_id
 
 (* ---------------- Web/Debug log buffer (per actor) ---------------- *)
 type log_entry = int * string
@@ -462,23 +473,25 @@ let create_actor name cls =
     last_sender = "";
   }
 
-let send_message ~from target_name msg =
-  let log_message () =
+let send_message ?msg_id ~from (target_name:string) (stmt:Ast.stmt) : unit = (
+(*  let log_message () = (
     let oc = open_out_gen [Open_creat; Open_append; Open_text] 0o644 "message_log.txt" in
     Printf.fprintf oc "[SEND] to %s: %s\n" target_name
       (match msg with CallStmt(m,_) -> m | _ -> "stmt");
     close_out oc
-  in
+  in *)
 (*  log_message (); *)
   match Hashtbl.find_opt actor_table target_name with
   | Some actor ->
+      let m = { msg_id; from; stmt } in
       Mutex.lock actor.mutex;
       actor.last_sender <- from;
-      Queue.push msg actor.queue;
+      Queue.push m actor.queue;
       Condition.signal actor.cond;
       Mutex.unlock actor.mutex
   | None ->
       Printf.printf "Actor %s not found\n" target_name
+)
 
 let prim_typeof =
   ("typeof", function
@@ -762,7 +775,7 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
                 Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
                   name need got
               else
-                send_message ~from:"<new>" name (CallStmt("init", args)))
+                send_message ~from:"<new>" name (mk_stmt (CallStmt("init", args))))
           );
           set_var_a actor name (VActor (cls, Hashtbl.create 0))
     | _ -> set_var_a actor name (eval_expr actor rhs))
@@ -856,7 +869,7 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
     in
     let arg_vals = List.map (eval_expr actor) args in
     let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
-    send_message ~from:actor.name actual_target (CallStmt (meth, arg_exprs))
+    send_message ~from:actor.name actual_target (mk_stmt (CallStmt (meth, arg_exprs)))
 and spawn_actor obj cls =
   let actor = create_actor obj.cname cls in
   List.iter
@@ -888,8 +901,8 @@ and spawn_actor obj cls =
   List.iter (fun (m:method_decl)  -> Hashtbl.replace actor.methods m.mname m) obj.methods;
   Hashtbl.add actor_table obj.cname actor;
   ignore (Thread.create (fun () -> actor_loop actor) ())
-and actor_loop actor =
-  let log_queue () =
+and actor_loop actor = (
+(*  let log_queue () =
     let oc = open_out_gen [Open_creat; Open_append; Open_text] 0o644 ("queue_" ^ actor.name ^ ".txt") in
     Queue.iter (fun msg ->
       match msg with
@@ -897,17 +910,21 @@ and actor_loop actor =
       | _ -> Printf.fprintf oc "[%s] stmt\n" actor.name
     ) actor.queue;
     close_out oc
-  in
+  in *)
   while true do
     Mutex.lock actor.mutex;
     while Queue.is_empty actor.queue do
       Condition.wait actor.cond actor.mutex
     done;
     let msg = Queue.pop actor.queue in
-    log_queue ();
+(*    log_queue (); *)
     Mutex.unlock actor.mutex;
-    eval_stmt actor (mk_stmt msg)
-  done
+    set_current_msg_id msg.msg_id;
+    (try
+     eval_stmt actor msg.stmt
+     with exn -> ());
+    set_current_msg_id None;
+  done)
 and resolve_actor_from_term env recv_term =
   match recv_term with
   | Var id ->

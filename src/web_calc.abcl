@@ -5,9 +5,11 @@ class Calculator {
 
   method add(a, b) {
 //    print("add called: " + a + " + " + b);
-    print(a);
-    print(b);
-    print(a + b);
+//    print(a);
+//    print(b);
+//    print(a + b);
+//    reply(a + b);
+    reply(5. * a + b);
   }
 }
 

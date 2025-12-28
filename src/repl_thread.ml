@@ -358,11 +358,11 @@ let rec process_command line =
                   Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
                     name need got
                 else
-                  Eval_thread.send_message ~from:"<new>" name (CallStmt ("init", args))
+                  Eval_thread.send_message ~from:"<new>" name (mk_stmt (CallStmt ("init", args)))
 		  ));
         | _ -> ())
       | Send (tgt, mname, args) -> (
-        pending_global_sends := (fun () -> Eval_thread.send_message ~from:"<top>" tgt (CallStmt (mname, args))
+        pending_global_sends := (fun () -> Eval_thread.send_message ~from:"<top>" tgt (mk_stmt (CallStmt (mname, args)))
           ) :: !pending_global_sends)
       | CallStmt (fname, args) -> (
           (* Top-level call (for prims like web_listen / web_expose / print) *)
@@ -384,7 +384,7 @@ let rec process_command line =
   else if String.length line > 6 && String.sub line 0 6 = "ssend " then (
             let parts = String.split_on_char '.' (String.sub line 6 (String.length line - 6)) in
               match parts with
-              | [obj; meth] -> send_message ~from:"main" obj (CallStmt (meth, []))
+              | [obj; meth] -> send_message ~from:"main" obj (mk_stmt (CallStmt (meth, [])))
               | _ -> print_endline "[Error] Invalid ssend syntax"
           )
           else if String.length line > 5 && String.sub line 0 5 = "send " then (
@@ -406,7 +406,7 @@ let rec process_command line =
                         match parts with
                         | [obj; meth] ->
                           let args = parse_args_list args_inside in
-                          send_message ~from:"main" obj (CallStmt (meth, args))
+                          send_message ~from:"main" obj (mk_stmt (CallStmt (meth, args)))
                         | _ ->
                         print_endline "[Error] Invalid send target (use obj.method(...))"
                   ) else
@@ -620,6 +620,15 @@ let repl_thread_fun () =
   | exn ->
       Printf.printf "[REPL thread error] %s\n%!" (Printexc.to_string exn)
 
+let prim_reply (args : value list) : value =
+  match args with
+  | [v] ->
+      let s = string_of_value v in
+      push_web_evt ("[REPLY] " ^ s);
+      VUnit
+  | _ ->
+      failwith "reply(x): arity 1 expected"
+
 let () =
   Arg.parse speclist (fun _ -> ()) "Usage: abclrepl_thread [-f script_file]";
 
@@ -652,6 +661,24 @@ let () =
         VUnit
     | _ -> failwith "web_expose(path, actor): arity 2 expected (string,string)");
 
+  add_prim "reply" (function
+  | [v] ->
+      let s = string_of_value v in
+      (match get_current_msg_id () with
+       | Some id -> push_web_evt (Printf.sprintf "[REPLY] id=%s value=%s" id s)
+       | None    -> push_web_evt (Printf.sprintf "[REPLY] value=%s" s));
+      VUnit
+  | _ -> failwith "reply(x): arity 1 expected");
+
+(*  add_prim "reply" (function
+    | [v] ->
+        (* v を文字列にして Events に積む。WebSocket /api/events に出る *)
+        let s = Eval_thread.string_of_value v in
+        Eval_thread.push_web_evt ("[REPLY] " ^ s);
+        VUnit
+    | _ -> failwith "reply(x): arity 1 expected");
+*)
+						    
   let repl_thr = Thread.create (fun () -> repl_thread_fun ()) () in
 
   Sdl_helper.main_loop ();
