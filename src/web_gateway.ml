@@ -401,7 +401,7 @@ let html_index () : string =
   "  const to = document.getElementById('to').value;\n" ^
   "  if(!to){ setTimeout(poll, 800); return; }\n" ^
   "  try{\n" ^
-  "    const r = await fetch('/api/log?actor=' + encodeURIComponent(to) + '&after=' + afterId);\n" ^
+  "    const r = await fetch('/api/log?sid=' + encodeURIComponent(sid) + '&after=' + afterId);\n" ^
   "    if(r.ok){\n" ^
   "      const j = await r.json();\n" ^
   "      if(typeof j.next === 'number') afterId = j.next;\n" ^
@@ -959,7 +959,44 @@ let handle_send_exposed_json ~(key:string) (body:string) : (int * string * strin
       | Json_error m ->
           (400, "text/plain; charset=utf-8", "bad JSON: " ^ m)
 
-let handle_api_log query =
+let handle_api_log (query:(string,string) Hashtbl.t) =
+  let sid =
+    match Hashtbl.find_opt query "sid" with
+    | Some s -> s
+    | None -> ""
+  in
+  let after =
+    match Hashtbl.find_opt query "after" with
+    | Some s -> (try int_of_string s with _ -> -1)
+    | None -> -1
+  in
+
+  (* sid が無い場合は空を返す（または従来ログを返す方針でも可） *)
+  let (next_id, lines) =
+    if sid = "" then (-1, [])
+    else Eval_thread.get_sid_logs_since sid after
+    in
+     let esc s =
+    let b = Buffer.create (String.length s + 8) in
+    String.iter (function
+      | '"' -> Buffer.add_string b "\\\""
+      | '\\' -> Buffer.add_string b "\\\\"
+      | '\n' -> Buffer.add_string b "\\n"
+      | '\r' -> Buffer.add_string b "\\r"
+      | '\t' -> Buffer.add_string b "\\t"
+      | c -> Buffer.add_char b c
+    ) s;
+    Buffer.contents b
+  in
+  let body =
+    Printf.sprintf {|{"next":%d,"lines":[%s]}|}
+      next_id
+      (String.concat "," (List.map (fun s -> "\"" ^ esc s ^ "\"") lines))
+  in
+  (200, "application/json; charset=utf-8", body)
+	  
+(*
+   let handle_api_log query =
   let after =
     match Hashtbl.find_opt query "after" with
     | Some s -> (try int_of_string s with _ -> 0)
@@ -984,6 +1021,7 @@ let handle_api_log query =
       (String.concat "," (List.map (fun s -> "\"" ^ esc s ^ "\"") lines))
   in
   (200, "application/json; charset=utf-8", body)
+*)
 
 let handle_api_events (query:(string,string) Hashtbl.t) =
   let after =

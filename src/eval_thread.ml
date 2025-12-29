@@ -33,10 +33,21 @@ type actor = {
 
 let actor_table : (string, actor) Hashtbl.t = Hashtbl.create 32
 
+(* sid -> (id counter, (id * line) list) *)
+let sid_log_mu = Mutex.create ()
+let sid_log_next : (string, int ref) Hashtbl.t = Hashtbl.create 64
+let sid_logs : (string, (int * string) list ref) Hashtbl.t = Hashtbl.create 64
+let sid_log_limit = 500
+
 (* current message id while executing a message (for reply correlation) *)
 let current_msg_id : string option ref = ref None
 let set_current_msg_id (id:string option) = current_msg_id := id
 let get_current_msg_id () = !current_msg_id
+
+(* current actor name while executing a message (for session log) *)
+let current_actor_name : string option ref = ref None
+let set_current_actor_name (nm:string option) = current_actor_name := nm
+let get_current_actor_name () = !current_actor_name
 
 (* ---------------- Web/Debug log buffer (per actor) ---------------- *)
 type log_entry = int * string
@@ -74,6 +85,49 @@ let get_logs_since (actor_name:string) (after_id:int) : int * string list =
   (b.next_id, List.rev !acc)
 
 let env : (string, value) Hashtbl.t = Hashtbl.create 64
+
+let push_sid_log (sid:string) (line:string) =
+  Mutex.lock sid_log_mu;
+  let next =
+    match Hashtbl.find_opt sid_log_next sid with
+    | Some r -> r
+    | None -> let r = ref 0 in Hashtbl.add sid_log_next sid r; r
+  in
+  let buf =
+    match Hashtbl.find_opt sid_logs sid with
+    | Some r -> r
+    | None -> let r = ref [] in Hashtbl.add sid_logs sid r; r
+  in
+  let id = !next in
+  incr next;
+  buf := (id, line) :: !buf;
+  (* keep newest *)
+  let rec take n xs =
+    if n <= 0 then [] else match xs with [] -> [] | x::tl -> x :: take (n-1) tl
+  in
+  buf := take sid_log_limit !buf;
+  Mutex.unlock sid_log_mu
+
+let get_sid_logs_since (sid:string) (after:int) : (int * string list) =
+  Mutex.lock sid_log_mu;
+  let buf =
+    match Hashtbl.find_opt sid_logs sid with
+    | Some r -> !r
+    | None -> []
+  in
+  let newer = buf |> List.filter (fun (id,_) -> id > after) |> List.rev in
+  let next =
+    match buf with [] -> after | (id,_)::_ -> id
+  in
+  let lines = List.map snd newer in
+  Mutex.unlock sid_log_mu;
+  (next, lines)
+
+let sid_of_actor_name (name:string) : string option =
+  match String.split_on_char '_' name with
+  | _base :: sid_parts when sid_parts <> [] ->
+      Some (String.concat "_" sid_parts)
+  | _ -> None
 
 (* ===== web demo: print log ===== *)
 let web_log_mutex = Mutex.create ()
@@ -531,12 +585,40 @@ let prim1_float_float name f = (name, function
 
 let prim1_print =
   ("print", function
+     | [v] ->
+         let s =
+           match v with
+           | VInt i -> string_of_int i
+           | VString s -> s
+           | VFloat f -> string_of_float f
+           | VBool b -> if b then "true" else "false"
+           | VUnit -> "()"
+           | _ -> failwith "print: expected (string|float|bool|unit)"
+         in
+         print_endline s;
+
+         (* ★ 既存のグローバル log にも積んでいるならここで push_web_log s を呼ぶ *)
+         (* push_web_log s; *)
+
+         (* ★ sid別ログに積む *)
+         (match get_current_actor_name () with
+          | None -> ()
+          | Some aname ->
+              (match sid_of_actor_name aname with
+               | None -> ()
+               | Some sid -> push_sid_log sid s));
+         VUnit
+     | _ -> failwith "print: arity 1 expected")
+
+(* let prim1_print =
+  ("print", function
      | [VInt i] -> print_endline (string_of_int i); VUnit
      | [VString s] -> print_endline s; VUnit
      | [VFloat  f] -> print_endline (string_of_float f); VUnit
      | [VBool   b] -> print_endline (if b then "true" else "false"); VUnit
      | [VUnit]     -> print_endline "()"; VUnit
      | _ -> failwith "print: expected (string|float|bool|unit)")
+*)
 
 let prim_wait =
   ("wait",
@@ -549,6 +631,54 @@ let prim_wait =
        Thread.delay (f /. 1000.0);
        VUnit
    | _ -> failwith "wait: expected one float (ms)")
+
+let sid_of_actor_name (name:string) : string option =
+  (* "calc_<sid>" 形式を想定。最初の '_' 以降を sid とみなす *)
+  match String.index_opt name '_' with
+  | None -> None
+  | Some i ->
+      if i + 1 >= String.length name then None
+      else Some (String.sub name (i+1) (String.length name - i - 1))
+
+let rec take n xs =
+  if n <= 0 then []
+  else match xs with [] -> [] | x::tl -> x :: take (n-1) tl
+
+let sid_log_mu = Mutex.create ()
+let sid_log_next : (string, int ref) Hashtbl.t = Hashtbl.create 64
+let sid_logs : (string, (int * string) list ref) Hashtbl.t = Hashtbl.create 64
+let sid_log_limit = 500
+
+let push_sid_log (sid:string) (line:string) : unit =
+  Mutex.lock sid_log_mu;
+  let next =
+    match Hashtbl.find_opt sid_log_next sid with
+    | Some r -> r
+    | None -> let r = ref 0 in Hashtbl.add sid_log_next sid r; r
+ in
+ let buf =
+    match Hashtbl.find_opt sid_logs sid with
+    | Some r -> r
+    | None -> let r = ref [] in Hashtbl.add sid_logs sid r; r
+  in
+  let id = !next in
+  incr next;
+  buf := (id, line) :: !buf;
+  buf := take sid_log_limit !buf;
+  Mutex.unlock sid_log_mu
+
+let get_sid_logs_since (sid:string) (after:int) : (int * string list) =
+  Mutex.lock sid_log_mu;
+  let buf =
+    match Hashtbl.find_opt sid_logs sid with
+    | Some r -> !r
+    | None -> []
+  in
+  let newer = buf |> List.filter (fun (id,_) -> id > after) |> List.rev in
+  let next = match buf with [] -> after | (id,_)::_ -> id in
+  let lines = List.map snd newer in
+  Mutex.unlock sid_log_mu;
+  (next, lines)
 
 (* 値から対応する型を推定する関数 *)
 let rec type_of_value = function
@@ -906,8 +1036,8 @@ and actor_loop actor = (
       Condition.wait actor.cond actor.mutex
     done;
     let msg = Queue.pop actor.queue in
-(*    log_queue (); *)
     Mutex.unlock actor.mutex;
+    set_current_actor_name (Some actor.name);
     set_current_msg_id msg.msg_id;
     (try
       eval_stmt actor msg.stmt
@@ -921,7 +1051,9 @@ and actor_loop actor = (
           push_web_evt (Printf.sprintf "[FAILED] id=%s to=%s reason=runtime:%s"
             id actor.name (Printexc.to_string exn))
     );
-  done)
+    set_current_msg_id None;
+    set_current_actor_name None;
+    done)
 and resolve_actor_from_term env recv_term =
   match recv_term with
   | Var id ->
@@ -944,6 +1076,40 @@ let actor_exists (name:string) : bool =
   Hashtbl.mem actor_table name
 
 let spawn_actor ~(class_name:string) ~(actor_name:string) : unit =
+  if actor_exists actor_name then ()
+  else begin
+    (* class_decl を class_env から取得 *)
+    let obj : class_decl = find_class_exn class_name in
+
+    (* actor生成 *)
+    let a = create_actor actor_name class_name in
+
+    (* ★必須：メソッド表をコピー *)
+    List.iter (fun (m:method_decl) ->
+      Hashtbl.replace a.methods m.mname m
+    ) obj.methods;
+
+    (* （任意）fields 初期化：必要なら後で追加。まずは methods だけで init/add を動かす *)
+    (*
+    List.iter (fun (st:Ast.stmt) ->
+      match st.sdesc with
+      | VarDecl (k, init) ->
+          let v = eval_expr a init in
+          Hashtbl.replace a.env k v
+      | _ -> ()
+    ) obj.fields;
+    *)
+
+    (* 登録・起動 *)
+    Hashtbl.add actor_table actor_name a;
+    ignore (Thread.create actor_loop a);
+
+    (* init を送る *)
+    send_message ~from:"<new>" actor_name (mk_stmt (CallStmt ("init", [])));
+  end
+
+(*
+let spawn_actor ~(class_name:string) ~(actor_name:string) : unit =
   (* すでに存在するなら何もしない *)
   if actor_exists actor_name then ()
   else begin
@@ -956,6 +1122,7 @@ let spawn_actor ~(class_name:string) ~(actor_name:string) : unit =
     (* 4) init を送る（args が無い版） *)
     send_message ~from:"<new>" actor_name (mk_stmt (CallStmt ("init", [])));
 end
+*)
 
 let wait_ms ms =
    let seconds = ms /. 1000.0 in

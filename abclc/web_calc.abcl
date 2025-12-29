@@ -1,0 +1,26 @@
+class Calculator {
+  method init() {
+    print("Calculator ready");
+  }
+
+  method add(a, b) {
+//    print("add called: " + a + " + " + b);
+//    print(a);
+//    print(b);
+//    print(a + b);
+    reply(a + b);
+//    reply(5. * a + b);
+  }
+}
+
+// actor name: calc
+var calc = new Calculator();
+
+// Start built-in HTTP gateway (OCaml runtime thread).
+// Open: http://localhost:8080/
+web_listen(8080);
+
+// Optional: expose a friendly endpoint key (POST /api/x/calc).
+web_expose("/calc", "calc");
+
+print("Open http://localhost:8080/ and send to actor 'calc'");
