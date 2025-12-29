@@ -8,8 +8,8 @@ class Calculator {
 //    print(a);
 //    print(b);
 //    print(a + b);
-//    reply(a + b);
-    reply(5. * a + b);
+    reply(a + b);
+//    reply(5. * a + b);
   }
 }
 

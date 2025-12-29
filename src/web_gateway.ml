@@ -366,6 +366,8 @@ let html_index () : string =
   "<pre id='log' style='background:#111; color:#0f0; padding:8px; min-height:8em; max-height:20em; overflow:auto'></pre>\n" ^
   "<h4>Events</h4>\n" ^
   "<div id='events' style='background:#222; padding:8px; min-height:6em; max-height:14em; overflow:auto; font-family: monospace'></div>\n" ^
+  "<h4>Message Tree (by msg_id)</h4>\n" ^
+  "<div id='tree' style='background:#111; color:#ddd; padding:8px; min-height:8em; max-height:24em; overflow:auto; font-family: monospace'></div>\n" ^
   "<pre id='replies'></pre>\n" ^
   "</div>\n" ^
   "</div>\n" ^
@@ -474,14 +476,61 @@ let html_index () : string =
   "let ws = null;\n" ^
   "let wsRetryMs = 500;\n" ^
   "\n" ^
+  "const msgNodes = new Map();\n" ^
+  "\n" ^
+  "function extractId(line){\n" ^
+  "  const m = line.match(/id=([^\\s]+)/);\n" ^
+  "  return m ? m[1] : null;\n" ^
+  "}\n" ^
+  "\n" ^
+  "function ensureNode(id, title){\n" ^
+  "  if(msgNodes.has(id)) return msgNodes.get(id);\n" ^
+  "  const tree = document.getElementById('tree');\n" ^
+  "  if(!tree) return null;\n" ^
+  "\n" ^
+  "  const root = document.createElement('div');\n" ^
+  "  root.style.border = '1px solid #333';\n" ^
+  "  root.style.borderRadius = '8px';\n" ^
+  "  root.style.padding = '6px';\n" ^
+  "  root.style.margin = '6px 0';\n" ^
+  "\n" ^
+  "  const head = document.createElement('div');\n" ^
+  "  head.textContent = title;\n" ^
+  "  head.style.color = '#55ff55';\n" ^
+  "  head.style.fontWeight = '700';\n" ^
+  "\n" ^
+  "  const body = document.createElement('div');\n" ^
+  "  body.style.marginTop = '4px';\n" ^
+  "  body.style.paddingLeft = '10px';\n" ^
+  "\n" ^
+  "  root.appendChild(head);\n" ^
+  "  root.appendChild(body);\n" ^
+  "  tree.appendChild(root);\n" ^
+  "\n" ^
+  "  const node = {root: root, body: body, head: head};\n" ^
+  "  msgNodes.set(id, node);\n" ^
+  "  return node;\n" ^
+  "}\n" ^
+  "\n" ^
+  "function addChild(id, text, kind){\n" ^
+  "  const node = ensureNode(id, 'id=' + id);\n" ^
+  "  if(!node) return;\n" ^
+  "  const row = document.createElement('div');\n" ^
+  "  row.textContent = text;\n" ^
+  "  row.style.whiteSpace = 'pre-wrap';\n" ^
+  "  if(kind === 'reply') row.style.color = '#66ccff';\n" ^
+  "  else if(kind === 'failed'){ row.style.color = '#ff5555'; row.style.fontWeight = '700'; }\n" ^
+  "  else row.style.color = '#ffff66';\n" ^
+  "  node.body.appendChild(row);\n" ^
+  "}\n" ^
   "function startWS(){\n" ^
   "  try{\n" ^
   "    const out = document.getElementById('out');\n" ^
-  "    const host = (location.hostname === 'localhost') ? '127.0.0.1:' + location.port : location.host;\n" ^
-  "    const url = 'ws://' + host + '/ws?sid=' + encodeURIComponent(sid);\n" ^
-  "    const ws = new WebSocket(url);\n" ^
+  "    const host = (location.hostname === 'localhost') ? ('127.0.0.1:' + location.port) : location.host;\n" ^
+  "    const url  = 'ws://' + host + '/ws?sid=' + encodeURIComponent(sid);\n" ^
+  "    const ws   = new WebSocket(url);\n" ^
   "\n" ^
-  "    ws.onopen = () => { if(out) out.textContent = 'WS connected: ' + url; };\n" ^
+  "    ws.onopen  = () => { if(out) out.textContent = 'WS connected: ' + url; };\n" ^
   "    ws.onerror = () => { if(out) out.textContent = 'WS error: ' + url; };\n" ^
   "    ws.onclose = () => { if(out) out.textContent = 'WS closed: ' + url; };\n" ^
   "\n" ^
@@ -501,26 +550,46 @@ let html_index () : string =
   "\n" ^
   "      if(msg.type === 'event'){\n" ^
   "        const box = document.getElementById('events');\n" ^
-  "        if(!box) return;\n" ^
+  "        if(box){\n" ^
+  "          const line = msg.line || '';\n" ^
+  "          const row = document.createElement('div');\n" ^
+  "          row.textContent = line;\n" ^
+  "          row.style.whiteSpace = 'pre-wrap';\n" ^
+  "          if(line.startsWith('[FAILED]')){ row.style.color='#ff5555'; row.style.fontWeight='700'; }\n" ^
+  "          else if(line.startsWith('[ACCEPTED]')){ row.style.color='#55ff55'; }\n" ^
+  "          else if(line.startsWith('[REPLY]')){ row.style.color='#66ccff'; }\n" ^
+  "          else { row.style.color='#ffff66'; }\n" ^
+  "          box.appendChild(row);\n" ^
+  "          box.scrollTop = box.scrollHeight;\n" ^
+  "        }\n" ^
+  "\n" ^
+  "        // ---- Tree update for ACCEPTED/FAILED (need msg_id) ----\n" ^
   "        const line = msg.line || '';\n" ^
-  "        const row = document.createElement('div');\n" ^
-  "        row.textContent = line;\n" ^
-  "        row.style.whiteSpace = 'pre-wrap';\n" ^
-  "        if(line.startsWith('[FAILED]')){ row.style.color='#ff5555'; row.style.fontWeight='700'; }\n" ^
-  "        else if(line.startsWith('[ACCEPTED]')){ row.style.color='#55ff55'; }\n" ^
-  "        else if(line.startsWith('[REPLY]')){ row.style.color='#66ccff'; }\n" ^
-  "        else { row.style.color='#ffff66'; }\n" ^
-  "        box.appendChild(row);\n" ^
-  "        box.scrollTop = box.scrollHeight;\n" ^
+  "        const id = extractId(line);\n" ^
+  "        if(id){\n" ^
+  "          if(line.startsWith('[ACCEPTED]')){\n" ^
+  "            const node = ensureNode(id, line);\n" ^
+  "            if(node){ node.head.textContent = line; node.head.style.color = '#55ff55'; }\n" ^
+  "          } else if(line.startsWith('[FAILED]')){\n" ^
+  "            addChild(id, line, 'failed');\n" ^
+  "          } else {\n" ^
+  "            addChild(id, line, 'event');\n" ^
+  "          }\n" ^
+  "        }\n" ^
   "        return;\n" ^
   "      }\n" ^
   "\n" ^
   "      if(msg.type === 'reply'){\n" ^
   "        const rep = document.getElementById('replies');\n" ^
-  "        if(!rep) return;\n" ^
-  "        const NL = String.fromCharCode(10);\n" ^
-  "        rep.textContent += (msg.line || '') + NL;\n" ^
-  "        rep.scrollTop = rep.scrollHeight;\n" ^
+  "        if(rep){\n" ^
+  "          const NL = String.fromCharCode(10);\n" ^
+  "          rep.textContent += (msg.line || '') + NL;\n" ^
+  "          rep.scrollTop = rep.scrollHeight;\n" ^
+  "        }\n" ^
+  "        // ---- Tree update for REPLY ----\n" ^
+  "        const line = msg.line || '';\n" ^
+  "        const id = extractId(line);\n" ^
+  "        if(id) addChild(id, line, 'reply');\n" ^
   "        return;\n" ^
   "      }\n" ^
   "    };\n" ^
@@ -780,6 +849,22 @@ let handle_send_exposed ~(key:string) (params:(string, string) Hashtbl.t) : (int
          with exn ->
            (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn))
 
+let sid_to_actor : (string, string) Hashtbl.t = Hashtbl.create 256
+let sid_actor_mu = Mutex.create ()
+
+let actor_for_sid ~(sid:string) ~(base:string) : string =
+  Mutex.lock sid_actor_mu;
+  let name =
+    match Hashtbl.find_opt sid_to_actor (sid ^ "|" ^ base) with
+    | Some a -> a
+    | None ->
+        let a = base ^ "_" ^ sid in
+        Hashtbl.add sid_to_actor (sid ^ "|" ^ base) a;
+        a
+  in
+  Mutex.unlock sid_actor_mu;
+  name
+	
 let handle_send_direct_json (body:string) : (int * string * string) =
   try
     match parse_json body with
@@ -789,31 +874,35 @@ let handle_send_direct_json (body:string) : (int * string * string) =
         let from_ = match json_get_string "from" o with Some s -> s | None -> "<web>" in
         let sid = match json_get_string "sid" o with Some s -> s | None -> "" in
         let args_json = match json_get_array "args" o with Some xs -> xs | None -> [] in
+	let real_to = if sid <> "" then actor_for_sid ~sid ~base:to_ else to_ in
+
         if to_ = "" || meth = "" then
           (400, "text/plain; charset=utf-8", "missing to/method")
         else
           let exprs = List.map ast_of_json_value args_json in
-          let (ok, msg, exprs2) = check_web_call ~actor_name:to_ ~method_name:meth exprs in
-          if not ok then (
-            Eval_thread.push_web_evt
-              (Printf.sprintf "[FAILED] to=%s.%s reason=typecheck:%s" to_ meth msg);
-            (400, "text/plain; charset=utf-8", "typecheck failed: " ^ msg)
-          ) else (
-           let msg_id =
-               Printf.sprintf "m-%d" (int_of_float (Unix.time () *. 1000.0))
-            in
-            if sid <> "" then bind_msgid_sid msg_id sid;               
-            Eval_thread.push_web_evt
-              (Printf.sprintf "[ACCEPTED] id=%s to=%s.%s" msg_id to_ meth);
-            try
-              Eval_thread.send_message ~msg_id ~from:from_ to_ (mk_stmt (CallStmt (meth, exprs2)));
-              (200, "text/plain; charset=utf-8", "OK")
-            with exn ->
+          if sid <> "" then (
+            if not (Eval_thread.actor_exists real_to) then
+            Eval_thread.spawn_actor ~class_name:"Calculator" ~actor_name:real_to
+          );
+          let (ok, msg, exprs2) = check_web_call ~actor_name:real_to ~method_name:meth exprs in
+            if not ok then (
               Eval_thread.push_web_evt
-                (Printf.sprintf "[FAILED] id=%s to=%s.%s reason=%s"
-                   msg_id to_ meth (Printexc.to_string exn));
-              (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn)
-          )
+                (Printf.sprintf "[FAILED] to=%s.%s reason=typecheck:%s" real_to meth msg);
+              (400, "text/plain; charset=utf-8", "typecheck failed: " ^ msg)
+          ) else (
+           let msg_id = Printf.sprintf "m-%d" (int_of_float (Unix.time () *. 1000.0)) in
+             if sid <> "" then bind_msgid_sid msg_id sid;
+             Eval_thread.push_web_evt
+               (Printf.sprintf "[ACCEPTED] id=%s to=%s.%s" msg_id real_to meth);
+           try
+             Eval_thread.send_message ~msg_id ~from:from_ real_to (mk_stmt (CallStmt (meth, exprs2)));
+             (200, "text/plain; charset=utf-8", "OK")
+           with exn ->
+             Eval_thread.push_web_evt
+               (Printf.sprintf "[FAILED] id=%s to=%s.%s reason=%s"
+               msg_id real_to meth (Printexc.to_string exn));
+             (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn)
+         )
     | _ ->
         (400, "text/plain; charset=utf-8", "JSON must be an object")
   with
@@ -828,14 +917,21 @@ let handle_send_exposed_json ~(key:string) (body:string) : (int * string * strin
       try
         match parse_json body with
         | JObject o ->
+	    let to_ = match json_get_string "to" o with Some s -> s | None -> "" in
             let meth = match json_get_string "method" o with Some s -> s | None -> "" in
             let from_ = match json_get_string "from" o with Some s -> s | None -> "<web>" in
             let args_json = match json_get_array "args" o with Some xs -> xs | None -> [] in
             let sid = match json_get_string "sid" o with Some s -> s | None -> "" in
-            if meth = "" then
+	    let real_to = if sid <> "" then actor_for_sid ~sid ~base:to_ else to_ in
+	    
+            if to_ = "" || meth = "" then
               (400, "text/plain; charset=utf-8", "missing method")
             else
-             let exprs = List.map ast_of_json_value args_json in
+              let exprs = List.map ast_of_json_value args_json in
+              if sid <> "" then (
+                if not (Eval_thread.actor_exists real_to) then
+                  Eval_thread.spawn_actor ~class_name:"Calculator" ~actor_name:real_to
+              );
               let (ok, msg, exprs2) = check_web_call ~actor_name ~method_name:meth exprs in
               if not ok then (
                 Eval_thread.push_web_evt

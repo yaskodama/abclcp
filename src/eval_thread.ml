@@ -707,8 +707,8 @@ let call_prim name args =
   match Hashtbl.find_opt prim_table name with
   | Some f -> f args
   | None ->
-      print_endline "[debug] prim_table keys:";
-      Hashtbl.iter (fun k _ -> print_endline ("  - " ^ k)) prim_table;
+(*      print_endline "[debug] prim_table keys:";
+      Hashtbl.iter (fun k _ -> print_endline ("  - " ^ k)) prim_table; *)
       failwith ("Unknown function: " ^ name)
 
 let add_prim name fn = Hashtbl.replace prim_table name fn
@@ -870,7 +870,7 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
     let arg_vals = List.map (eval_expr actor) args in
     let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
     send_message ~from:actor.name actual_target (mk_stmt (CallStmt (meth, arg_exprs)))
-and spawn_actor obj cls =
+(* and spawn_actor obj cls =
   let actor = create_actor obj.cname cls in
   List.iter
     (fun (st:Ast.stmt) ->
@@ -880,8 +880,6 @@ and spawn_actor obj cls =
       Hashtbl.replace actor.env k v
     | _ -> ()
     ) obj.fields;
-
-  (* 2. InstantiateInit 用の初期化フィールドがあれば上書き *)
   (match obj with
   | { fields = initvals; _ } ->
     List.iter (fun (st:Ast.stmt) ->
@@ -900,17 +898,8 @@ and spawn_actor obj cls =
   ) actor.env;
   List.iter (fun (m:method_decl)  -> Hashtbl.replace actor.methods m.mname m) obj.methods;
   Hashtbl.add actor_table obj.cname actor;
-  ignore (Thread.create (fun () -> actor_loop actor) ())
+  ignore (Thread.create (fun () -> actor_loop actor) ())     *)
 and actor_loop actor = (
-(*  let log_queue () =
-    let oc = open_out_gen [Open_creat; Open_append; Open_text] 0o644 ("queue_" ^ actor.name ^ ".txt") in
-    Queue.iter (fun msg ->
-      match msg with
-      | CallStmt (m, _) -> Printf.fprintf oc "[%s] %s\n" actor.name m
-      | _ -> Printf.fprintf oc "[%s] stmt\n" actor.name
-    ) actor.queue;
-    close_out oc
-  in *)
   while true do
     Mutex.lock actor.mutex;
     while Queue.is_empty actor.queue do
@@ -921,9 +910,17 @@ and actor_loop actor = (
     Mutex.unlock actor.mutex;
     set_current_msg_id msg.msg_id;
     (try
-     eval_stmt actor msg.stmt
-     with exn -> ());
-    set_current_msg_id None;
+      eval_stmt actor msg.stmt
+      with exn ->
+      (* show runtime errors instead of swallowing them *)
+        let id =
+          match msg.msg_id with
+          | Some s -> s
+          | None -> "<no-id>"
+        in
+          push_web_evt (Printf.sprintf "[FAILED] id=%s to=%s reason=runtime:%s"
+            id actor.name (Printexc.to_string exn))
+    );
   done)
 and resolve_actor_from_term env recv_term =
   match recv_term with
@@ -942,6 +939,23 @@ and resolve_actor_from_term env recv_term =
       match eval_expr self_actor (mk_expr recv_term) with
       | VActor (name,_) -> find_actor_exn name
       | _ -> failwith "send: receiver expr must evaluate to an actor (VActor name)"
+
+let actor_exists (name:string) : bool =
+  Hashtbl.mem actor_table name
+
+let spawn_actor ~(class_name:string) ~(actor_name:string) : unit =
+  (* すでに存在するなら何もしない *)
+  if actor_exists actor_name then ()
+  else begin
+    (* 1) actor レコードの生成：あなたの create_actor 相当を使う *)
+    let a = create_actor actor_name class_name in
+    (* 2) 登録 *)
+    Hashtbl.add actor_table actor_name a;
+    (* 3) スレッド開始 *)
+    ignore (Thread.create actor_loop a);
+    (* 4) init を送る（args が無い版） *)
+    send_message ~from:"<new>" actor_name (mk_stmt (CallStmt ("init", [])));
+end
 
 let wait_ms ms =
    let seconds = ms /. 1000.0 in

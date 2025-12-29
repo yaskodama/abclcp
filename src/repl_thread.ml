@@ -670,14 +670,11 @@ let () =
       VUnit
   | _ -> failwith "reply(x): arity 1 expected");
 
-(*  add_prim "reply" (function
-    | [v] ->
-        (* v を文字列にして Events に積む。WebSocket /api/events に出る *)
-        let s = Eval_thread.string_of_value v in
-        Eval_thread.push_web_evt ("[REPLY] " ^ s);
-        VUnit
-    | _ -> failwith "reply(x): arity 1 expected");
-*)
+  add_prim "spawn" (function
+  | [VString class_name; VString actor_name] ->
+      Eval_thread.spawn_actor ~class_name ~actor_name;  (* これを実装 *)
+      VUnit
+  | _ -> failwith "spawn(class, name): arity 2 expected (string,string)");
 						    
   let repl_thr = Thread.create (fun () -> repl_thread_fun ()) () in
 

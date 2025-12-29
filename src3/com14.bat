@@ -1,2 +1,0 @@
-load AA.abcl
-compile

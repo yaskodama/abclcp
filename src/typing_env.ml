@@ -82,6 +82,8 @@ let prelude () : env =
   add_mono e "sdl_init" (TFun ([TFloat; TFloat], TUnit));
   add_mono e "sdl_init" (TFun ([TInt;   TInt  ], TUnit));
 
+  add_mono e "spawn" (TFun ([TString; TString], TUnit));
+
   (* sdl_clear : unit -> unit *)
   add_mono e "sdl_clear" (TFun ([], TUnit));
 

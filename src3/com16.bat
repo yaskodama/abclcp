@@ -1,2 +1,0 @@
-load bbecome.abcl
-compile
