@@ -64,7 +64,7 @@ let prelude () : env =
 
   (* reply : 'a -> unit  （まずは多相でもOK。型が厳しいなら int/float/string の overload に） *)
   let a = fresh_tvar () in
-  add_mono e "reply" (TFun ([TVar a], TUnit));
+    add_poly e "reply" (Forall ([(!a).id], TFun([TVar a], TUnit)));
 (*  add_mono e "reply" (TFun ([TInt], TUnit));
   add_mono e "reply" (TFun ([TFloat], TUnit));
   add_mono e "reply" (TFun ([TString], TUnit));  *)

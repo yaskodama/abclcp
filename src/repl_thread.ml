@@ -6,6 +6,18 @@ open Thread
 
 exception Quit
 
+(* --- REPL: show replies pushed as events --- *)
+let repl_evt_after = ref (-1)
+
+let flush_replies_to_repl () =
+  let (next_id, lines) = Eval_thread.get_web_evts_since !repl_evt_after in
+  repl_evt_after := next_id;
+  List.iter (fun line ->
+    (* reply だけ REPL に表示 *)
+    if String.length line >= 7 && String.sub line 0 7 = "[REPLY]" then
+      Printf.printf "%s\n%!" line
+  ) lines
+
 let parse_program_safe (src : string) : (Ast.program, string) result =
   let lb = Lexing.from_string src in
   try
@@ -551,6 +563,7 @@ let start_repl () =
           | Quit -> raise Quit
           | Failure msg -> Printf.printf "[Error] %s\n%!" msg
           | exn -> Printf.printf "[Error] %s\n%!" (Printexc.to_string exn));
+          flush_replies_to_repl();
           loop ()
       ) else begin
         Buffer.add_string buf line; Buffer.add_char buf '\n';

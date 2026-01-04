@@ -1,0 +1,37 @@
+class Calc {
+  method init() {
+    print("Calc initialized");
+    send self.main();      // main を自動起動
+  }
+
+  method add(a, b) {
+    print("add received");
+//        reply(a + b);
+    reply(999);
+  }
+
+  method main() {
+    print("waiting...");
+    select {
+      case add(a, b) -> {
+        print("add received");
+        reply(a + b);
+      }
+      timeout 15000 -> {
+        print("timeout occurred");
+      }
+    }
+    print("select finished");
+  }
+}
+
+var calc = new Calc();
+
+// Start built-in HTTP gateway (OCaml runtime thread).
+// Open: http://localhost:8080/
+web_listen(8080);
+
+// Optional: expose a friendly endpoint key (POST /api/x/calc).
+web_expose("/calc", "calc");
+
+print("Open http://localhost:8080/ and send to actor 'calc'");

@@ -18,9 +18,10 @@ let mk_stmt1 i d : Ast.stmt = { sloc = loc_of_rhs i; sdesc = d }
 %token IF THEN ELSE WHILE DO
 %token ASSIGN PLUS MINUS TIMES DIV LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA
 %token GE LE GT LT SELF SENDER CLASS
+%token SELECT CASE TIMEOUT
+%token ARROW /* -> */
 %token EOF NEW
 %token VAR EQ DOT BECOME
-
 %left PLUS MINUS
 %left TIMES DIV
 %start program
@@ -95,7 +96,38 @@ stmt:
   | ID LPAREN args RPAREN SEMICOLON { mk_stmt1 1 (CallStmt ($1, $3)) }
   | BECOME ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (Become ($2, $4)) } 
   | BECOME ID LPAREN RPAREN SEMICOLON { mk_stmt1 2 (Become ($2, [])) }
-  
+  | SELECT LBRACE select_cases select_timeout_opt RBRACE { mk_stmt1 3 (Select($3, $4)) }
+
+select_cases:
+    select_cases select_case { $1 @ [$2] }
+  | /* empty */              { [] }
+
+select_cases:
+    select_cases select_case { $1 @ [$2] }
+  | /* empty */              { [] }
+
+select_case:
+  CASE select_pat ARROW LBRACE stmts RBRACE
+    { { pat = $2; body = mk_stmt1 5 (Seq($5)) } }
+
+select_pat:
+  ID LPAREN opt_id_list RPAREN
+    { { meth = $1; vars = $3 } }
+
+opt_id_list:
+    id_list { $1 }
+  | /* empty */ { [] }
+
+id_list:
+    ID                   { [$1] }
+  | id_list COMMA ID  { $1 @ [$3] }
+
+select_timeout_opt:
+    TIMEOUT INTLIT ARROW LBRACE stmts RBRACE
+      { (Some $2, Some (mk_stmt1 5 (Seq $5))) }
+  | /* empty */
+      { (None, None) }
+
 args:
   /* empty */    { [] }
   | arg_list     { $1 }

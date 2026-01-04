@@ -22,9 +22,18 @@ type stmt_desc =
   | If of expr * stmt * stmt
   | While of expr * stmt
   | VarDecl of string * expr
+  | Select of select_case list * (int option * stmt option)
 and stmt = {
   sloc : Location.t;
   sdesc : stmt_desc;
+}
+and select_pat = {
+  meth : string;
+  vars : string list;
+}
+and select_case = {
+  pat  : select_pat;
+  body : stmt;
 }
 
 type method_decl = {
@@ -87,6 +96,7 @@ let rec string_of_stmt (s:stmt) : string =
   | If (e,s1,s2)          -> Printf.sprintf "If(%s, %s, %s)" (string_of_expr e) (string_of_stmt s1) (string_of_stmt s2)
   | While (e,body)        -> Printf.sprintf "While(%s, %s)" (string_of_expr e) (string_of_stmt body)
   | VarDecl (e1,e2)       -> Printf.sprintf "VarDecl(%s, %s)" e1 (string_of_expr e2)
+  | Select (l1,l2)        -> Printf.sprintf "Select( )"
 
 (* 必要に応じて他の構文子を追加 *)
 
@@ -152,7 +162,8 @@ let label_of_stmt (s:stmt) : string =
   | If _                 -> "If"
   | While _              -> "While"
   | VarDecl (x,_)        -> "VarDecl " ^ x
-(*   | Become (_,_)         -> "Become " *)
+  | Become (x,_)         -> "Become " ^ x
+  | Select (_,_)         -> "Select "
 
 let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
   let branch = if is_last then "└─ " else "├─ " in
@@ -180,6 +191,35 @@ let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
       dump_stmt ~prefix:child_pref ~is_last:true  body
     | VarDecl (_x,e) ->
       dump_expr ~prefix:child_pref ~is_last:true e
+    | Select (cases, (to_ms_opt, to_body_opt)) ->
+      (* children: cases + optional timeout *)
+      let n_cases = List.length cases in
+      let has_timeout = match to_ms_opt, to_body_opt with Some _, Some _ -> true | _ -> false in
+      let n_children = n_cases + (if has_timeout then 1 else 0) in
+
+      let child_is_last i = (i = n_children - 1) in
+
+      (* dump each case *)
+      List.iteri (fun i c ->
+        let line =
+          "case " ^ c.pat.meth ^ "(" ^ String.concat ", " c.pat.vars ^ ")"
+        in
+        Printf.printf "%s%s%s\n" child_pref (if child_is_last i then "└─ " else "├─ ") line;
+
+        (* case body as a child of the case line *)
+	      let case_pref = child_pref ^ (if child_is_last i then "   " else "│  ") in
+        dump_stmt ~prefix:case_pref ~is_last:true c.body
+      ) cases;
+
+      (* dump timeout if present *)
+      (match to_ms_opt, to_body_opt with
+       | Some ms, Some tb ->
+           let i = n_cases in
+           Printf.printf "%s%s%s\n" child_pref (if child_is_last i then "└─ " else "├─ ")
+             ("timeout " ^ string_of_int ms);
+           let t_pref = child_pref ^ (if child_is_last i then "   " else "│  ") in
+           dump_stmt ~prefix:t_pref ~is_last:true tb
+       | _ -> ())
 end
 
 let dump_decl ?(prefix="") ?(is_last=true) = function

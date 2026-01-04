@@ -189,13 +189,6 @@ let get_web_evts_since (after:int) : (int * string list) =
   Mutex.unlock web_evt_mutex;
   (next, lines)
 
-(* 既存の actor テーブルと型を前提にしています：
-   val actor_table : (string, actor) Hashtbl.t
-   type actor = { name: string; cls: string; env: (string, value) Hashtbl.t;
-                  methods: (string, method_decl) Hashtbl.t;
-                  mbox: msg Queue.t; (* 無い場合は 0 を出す *)
-                }
-   など。フィールド名はあなたの定義に合わせて置換してください。 *)
 let debug_print_actor_table () =
   print_endline "[actor_table]";
   Hashtbl.iter
@@ -253,16 +246,6 @@ let lookup_actor_class (aname:string) : string option =
   match Hashtbl.find_opt actor_table aname with
   | None -> None
   | Some a -> Some (actor_class_name aname a)
-
-(* どこかのトップに置く。a は active actor レコード。 *)
-(* let actor_class_name (an : string) (a : actor) : string =
-  match Hashtbl.find_opt a.env "__class" with
-  | Some (VString cn) -> cn
-  | _ ->
-    (match Hashtbl.find_opt a.env "self" with
-     | Some (VActor (cn, _)) -> cn
-     | _ -> an)
-    *)
 
 let light_lookup_or_empty (cls : string) : (string * Types.ty) list =
   match Types.lookup_class_methods_inst cls with
@@ -1000,35 +983,42 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
     let arg_vals = List.map (eval_expr actor) args in
     let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
     send_message ~from:actor.name actual_target (mk_stmt (CallStmt (meth, arg_exprs)))
-(* and spawn_actor obj cls =
-  let actor = create_actor obj.cname cls in
-  List.iter
-    (fun (st:Ast.stmt) ->
-    match st.sdesc with
-    | VarDecl (k,init) ->
-      let v = eval_expr actor init in
-      Hashtbl.replace actor.env k v
-    | _ -> ()
-    ) obj.fields;
-  (match obj with
-  | { fields = initvals; _ } ->
-    List.iter (fun (st:Ast.stmt) ->
-      match st.sdesc with
-      | VarDecl(k, v) ->
-        (match v.desc with
-        | Float f -> Hashtbl.replace actor.env k (VFloat f)
-        | String s -> Hashtbl.replace actor.env k (VString s)
-        | _ -> ())
-      | _ -> ()
-    ) initvals
-  );
-  print_endline ("----[Actor created] " ^ obj.cname ^ " with variables:");
-  Hashtbl.iter (fun key value ->
-    Printf.printf "  %s = %s\n" key (string_of_value(value))
-  ) actor.env;
-  List.iter (fun (m:method_decl)  -> Hashtbl.replace actor.methods m.mname m) obj.methods;
-  Hashtbl.add actor_table obj.cname actor;
-  ignore (Thread.create (fun () -> actor_loop actor) ())     *)
+  | Select (cases, (to_ms_opt, to_body_opt)) ->
+    let start = Unix.gettimeofday () in
+    let rec loop () =
+      Mutex.lock actor.mutex;
+      let picked = pop_matching_message actor cases in
+      Mutex.unlock actor.mutex;
+      match picked with
+      | Some (m, binds, body_stmt) ->
+          (* preserve your existing reply/msg_id correlation *)
+          set_current_actor_name (Some actor.name);
+          set_current_msg_id m.msg_id;
+
+          (* bind variables into actor.env *)
+          List.iter (fun (x,v) -> Hashtbl.replace actor.env x v) binds;
+
+          (try eval_stmt actor body_stmt with _ -> ());
+          set_current_msg_id None;
+          set_current_actor_name None
+      | None ->
+          (* no match *)
+          (match to_ms_opt, to_body_opt with
+           | Some ms, Some to_stmt ->
+               let elapsed_ms = (Unix.gettimeofday () -. start) *. 1000.0 in
+               if elapsed_ms >= float_of_int ms then
+                 (try eval_stmt actor to_stmt with _ -> ())
+               else (Thread.delay 0.01; loop ())
+           | _ ->
+               (* wait until at least one message arrives *)
+               Mutex.lock actor.mutex;
+               while Queue.is_empty actor.queue do
+                 Condition.wait actor.cond actor.mutex
+               done;
+               Mutex.unlock actor.mutex;
+               loop ())
+    in
+    loop ()
 and actor_loop actor = (
   while true do
     Mutex.lock actor.mutex;
@@ -1071,7 +1061,45 @@ and resolve_actor_from_term env recv_term =
       match eval_expr self_actor (mk_expr recv_term) with
       | VActor (name,_) -> find_actor_exn name
       | _ -> failwith "send: receiver expr must evaluate to an actor (VActor name)"
-
+and match_callstmt actor (meth:string) (vars:string list) (m:mmessage)
+  : (string * value) list option =
+  match m.stmt.sdesc with
+  | CallStmt (mname, arg_exprs) when mname = meth ->
+      if List.length arg_exprs <> List.length vars then None
+      else
+        let vals = List.map (eval_expr actor) arg_exprs in
+        Some (List.combine vars vals)
+  | _ -> None
+and pop_matching_message actor (cases:select_case list)
+  : (mmessage * (string * value) list * stmt) option =
+  (* actor.mutex is expected to be locked by caller *)
+  let msgs = ref [] in
+  while not (Queue.is_empty actor.queue) do
+    msgs := Queue.pop actor.queue :: !msgs
+  done;
+  let msgs = List.rev !msgs in
+  let rec scan acc = function
+    | [] ->
+        List.iter (fun mm -> Queue.push mm actor.queue) (List.rev acc);
+        None
+    | m :: rest ->
+        let rec try_cases = function
+          | [] -> None
+          | c :: cs ->
+              match match_callstmt actor c.pat.meth c.pat.vars m with
+              | Some binds -> Some (binds, c.body)
+              | None -> try_cases cs
+        in
+        match try_cases cases with
+        | Some (binds, body_stmt) ->
+            List.iter (fun mm -> Queue.push mm actor.queue) (List.rev acc);
+            List.iter (fun mm -> Queue.push mm actor.queue) rest;
+            Some (m, binds, body_stmt)
+        | None ->
+            scan (m :: acc) rest
+  in
+  scan [] msgs
+  
 let actor_exists (name:string) : bool =
   Hashtbl.mem actor_table name
 

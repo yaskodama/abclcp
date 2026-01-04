@@ -254,7 +254,31 @@ let rec check_stmt (env:env) (s:stmt) : unit =
                 ("send target is not actor: " ^ string_of_ty t_non_actor)))
         end
     end
+  | Select (cases, (to_ms_opt, to_body_opt)) ->
+    (* timeout body *)
+    (match (to_ms_opt, to_body_opt) with
+     | (Some _, Some to_stmt) ->
+         check_stmt env to_stmt
+     | (None, None) ->
+         ()
+     | _ ->
+         Types.type_error ~loc:s.sloc
+           "select: timeout requires both milliseconds and a body");
 
+    (* each case introduces fresh types for bound variables *)
+    List.iter
+      (fun (c:Ast.select_case) ->
+        let env' : Typing_env.env = Hashtbl.copy env in
+        List.iter
+          (fun x ->
+            let tv = Types.fresh_tvar () in
+            Typing_env.add_mono env' x (TVar tv)
+          )
+          c.pat.vars;
+        check_stmt env' c.body
+      )
+      cases
+      
 let check_decl (env:env) = function
   | Class c ->
     List.iter

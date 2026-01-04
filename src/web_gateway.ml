@@ -882,7 +882,7 @@ let handle_send_direct_json (body:string) : (int * string * string) =
           let exprs = List.map ast_of_json_value args_json in
           if sid <> "" then (
             if not (Eval_thread.actor_exists real_to) then
-            Eval_thread.spawn_actor ~class_name:"Calculator" ~actor_name:real_to
+            Eval_thread.spawn_actor ~class_name:"Calc" ~actor_name:real_to
           );
           let (ok, msg, exprs2) = check_web_call ~actor_name:real_to ~method_name:meth exprs in
             if not ok then (
@@ -905,9 +905,12 @@ let handle_send_direct_json (body:string) : (int * string * string) =
          )
     | _ ->
         (400, "text/plain; charset=utf-8", "JSON must be an object")
-  with
+ with
   | Json_error m ->
       (400, "text/plain; charset=utf-8", "bad JSON: " ^ m)
+  | exn ->
+      (* ★ これが無いと ERR_EMPTY_RESPONSE になる *)
+      (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn)
 
 let handle_send_exposed_json ~(key:string) (body:string) : (int * string * string) =
   match Hashtbl.find_opt exposed key with
@@ -955,9 +958,12 @@ let handle_send_exposed_json ~(key:string) (body:string) : (int * string * strin
               )
         | _ ->
             (400, "text/plain; charset=utf-8", "JSON must be an object")
-      with
-      | Json_error m ->
-          (400, "text/plain; charset=utf-8", "bad JSON: " ^ m)
+ with
+  | Json_error m ->
+      (400, "text/plain; charset=utf-8", "bad JSON: " ^ m)
+  | exn ->
+      (* ★ これが無いと ERR_EMPTY_RESPONSE になる *)
+      (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn)
 
 let handle_api_log (query:(string,string) Hashtbl.t) =
   let sid =
@@ -1227,9 +1233,7 @@ let handle_client (client: file_descr) : unit =
            | "GET", "/" -> (200, "text/html; charset=utf-8", html_index ())
            | "GET", "/api/log" -> handle_api_log q
 	   | "GET", "/api/events" -> handle_api_events q  
-	   | "POST", "/api/send" ->
-               let params = parse_form_urlencoded body in
-               handle_send_direct params
+	   | "POST", "/api/send" -> let params = parse_form_urlencoded body in handle_send_direct params
            | "POST", "/api/json/send" -> handle_send_direct_json body
            | "POST", _ when String.length path >= String.length "/api/x/" &&
                             String.sub path 0 (String.length "/api/x/") = "/api/x/" ->

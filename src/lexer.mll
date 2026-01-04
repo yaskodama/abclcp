@@ -39,7 +39,11 @@ rule token = parse
 | "else"       { ELSE }
 | "while"      { WHILE }
 | "do"         { DO }
-| "=="         { EQ }          (* 等値 *)
+| "select"     { SELECT }
+| "case"       { CASE }
+| "timeout"    { TIMEOUT }
+| "->"         { ARROW }
+| "=="         { EQ }
 | ">="         { GE }
 | "<="         { LE }
 | ">"          { GT }
