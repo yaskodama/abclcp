@@ -1,7 +1,7 @@
 class Calc {
   method init() {
     print("Calc initialized");
-    send self.main();      // main を自動起動
+    send self.main();
   }
 
   method add(a, b) {

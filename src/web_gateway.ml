@@ -724,14 +724,18 @@ let parse_json (s:string) : jv =
   skip_ws (); if !i <> n then json_error "trailing characters";
   v
 
-let json_get (k:string) (o:(string * jv) list) : jv option =
-  List.assoc_opt k o
+let json_get (k:string) (o:(string * jv) list) : jv option = List.assoc_opt k o
 
 let json_get_string (k:string) (o:(string * jv) list) : string option =
   match json_get k o with Some (JString s) -> Some s | _ -> None
 
 let json_get_array (k:string) (o:(string * jv) list) : jv list option =
   match json_get k o with Some (JArray xs) -> Some xs | _ -> None
+
+let json_get_bool (k:string) (o:(string * jv) list) : bool option =
+  match List.assoc_opt k o with
+  | Some (JBool b) -> Some b
+  | _ -> None
 
 let ast_of_json_value (v:jv) : Ast.expr =
   match v with
@@ -757,15 +761,13 @@ let type_matches (param:Types.ty) (arg:Ast.expr) : bool * Ast.expr =
   | TString, String _ -> (true, arg)
   | TBool, String "true"  -> (true, arg)
   | TBool, String "false" -> (true, arg)
-(* 0/1 も bool として許すなら *)
   | TBool, Int 0 -> (true, arg)
   | TBool, Int 1 -> (true, arg)
 (*  | TBool, Bool _ -> (true, arg) *)
   | TVar _, _ -> (true, arg) (* polymorphic: accept *)
   | _, _ -> (false, arg)
 
-let check_web_call ~(actor_name:string) ~(method_name:string) (args:Ast.expr list)
-  : (bool * string * Ast.expr list) =
+let check_web_call ~(actor_name:string) ~(method_name:string) (args:Ast.expr list) : (bool * string * Ast.expr list) =
   match Eval_thread.lookup_actor_class actor_name with
   | None -> (false, "unknown actor: " ^ actor_name, args)
   | Some cls ->
@@ -875,7 +877,7 @@ let handle_send_direct_json (body:string) : (int * string * string) =
         let sid = match json_get_string "sid" o with Some s -> s | None -> "" in
         let args_json = match json_get_array "args" o with Some xs -> xs | None -> [] in
 	let real_to = if sid <> "" then actor_for_sid ~sid ~base:to_ else to_ in
-
+	let unsafe = match json_get_bool "unsafe" o with Some b -> b | None -> false in
         if to_ = "" || meth = "" then
           (400, "text/plain; charset=utf-8", "missing to/method")
         else
@@ -884,7 +886,9 @@ let handle_send_direct_json (body:string) : (int * string * string) =
             if not (Eval_thread.actor_exists real_to) then
             Eval_thread.spawn_actor ~class_name:"Calc" ~actor_name:real_to
           );
-          let (ok, msg, exprs2) = check_web_call ~actor_name:real_to ~method_name:meth exprs in
+          let (ok, msg, exprs2) =
+            if unsafe then (true, "", exprs)
+            else check_web_call ~actor_name:real_to ~method_name:meth exprs in
             if not ok then (
               Eval_thread.push_web_evt
                 (Printf.sprintf "[FAILED] to=%s.%s reason=typecheck:%s" real_to meth msg);
@@ -926,6 +930,7 @@ let handle_send_exposed_json ~(key:string) (body:string) : (int * string * strin
             let args_json = match json_get_array "args" o with Some xs -> xs | None -> [] in
             let sid = match json_get_string "sid" o with Some s -> s | None -> "" in
 	    let real_to = if sid <> "" then actor_for_sid ~sid ~base:to_ else to_ in
+	    let unsafe = match json_get_bool "unsafe" o with Some b -> b | None -> false in
 	    
             if to_ = "" || meth = "" then
               (400, "text/plain; charset=utf-8", "missing method")
@@ -935,7 +940,10 @@ let handle_send_exposed_json ~(key:string) (body:string) : (int * string * strin
                 if not (Eval_thread.actor_exists real_to) then
                   Eval_thread.spawn_actor ~class_name:"Calculator" ~actor_name:real_to
               );
-              let (ok, msg, exprs2) = check_web_call ~actor_name ~method_name:meth exprs in
+              let (ok, msg, exprs2) =
+                if unsafe then (true, "", exprs)
+                else check_web_call ~actor_name:real_to ~method_name:meth exprs
+              in
               if not ok then (
                 Eval_thread.push_web_evt
                   (Printf.sprintf "[FAILED] to=%s.%s reason=typecheck:%s" actor_name meth msg);
@@ -1111,15 +1119,13 @@ let handle_ws (client:file_descr) (headers:(string,string) Hashtbl.t) (q:(string
         (* send as type=log *)
         ws_send_text oc (Printf.sprintf {|{"type":"log","line":%S}|} line)
       in
-	
-      let send_event_line (line:string) =
+(*      let send_event_line (line:string) =
         (* classify reply vs normal event *)
         if String.length line >= 7 && String.sub line 0 7 = "[REPLY]" then
           ws_send_text oc (Printf.sprintf {|{"type":"reply","line":%S}|} line)
         else
           ws_send_text oc (Printf.sprintf {|{"type":"event","line":%S}|} line)
-      in
-
+      in    *)
       let extract_id (line:string) : string option =
         let key = "id=" in
         let rec find_from i =

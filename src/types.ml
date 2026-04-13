@@ -255,7 +255,8 @@ let string_of_ty_pretty (t : ty) : string =
     | TBool       -> "bool"
     | TString     -> "string"
     | TUnit       -> "unit"
-  in
+    | TAny 	  -> "any"
+in
   go t
 
 let rec ftv_ty t =
@@ -283,7 +284,7 @@ let instantiate (Forall (qs, t)) : ty =
   List.iter (fun q -> Hashtbl.replace tbl q (fresh_tvar ())) qs;
   let rec inst ty =
     match ty with
-    | TInt | TFloat | TBool | TString | TUnit -> ty
+    | TInt | TFloat | TBool | TString | TAny | TUnit -> ty
     | TArray t1 -> TArray (inst t1)
     | TRecord fs -> TRecord (List.map (fun (l,t1)->(l,inst t1)) fs)
     | TActor (n,ms) -> TActor (n, List.map (fun (m,t1)->(m,inst t1)) ms)

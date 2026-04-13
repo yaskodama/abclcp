@@ -17,6 +17,7 @@ type stmt_desc =
   | Assign of string * expr
   | CallStmt of string * expr list
   | Send of string * string * expr list
+  | UnsafeSend of string * string * expr list
   | Become of string * expr list
   | Seq of stmt list
   | If of expr * stmt * stmt
@@ -80,6 +81,9 @@ let rec string_of_expr (e:expr) : string =
   | Var x          -> Printf.sprintf "Var %s" x
   | New (cls, args) -> let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "New(%s, [%s])" cls xs
+  | Array (es, _tyopt) ->
+    let xs = es |> List.map string_of_expr |> String.concat ", " in
+    Printf.sprintf "Array[%s]" xs
 
 let rec string_of_stmt (s:stmt) : string =
   match s.sdesc with
@@ -88,6 +92,8 @@ let rec string_of_stmt (s:stmt) : string =
       Printf.sprintf "CallStmt(%s, [%s])" f xs
   | Send (tgt,meth,args)  -> let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "Send(%s.%s, [%s])" tgt meth xs
+  | UnsafeSend (tgt,meth,args)  -> let xs = args |> List.map string_of_expr |> String.concat ", " in
+      Printf.sprintf "UnsafeSend(%s.%s, [%s])" tgt meth xs
   | Become (cls,args) ->  (* ★ 追加 *)
       let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "Become(%s, [%s])" cls xs
@@ -97,8 +103,6 @@ let rec string_of_stmt (s:stmt) : string =
   | While (e,body)        -> Printf.sprintf "While(%s, %s)" (string_of_expr e) (string_of_stmt body)
   | VarDecl (e1,e2)       -> Printf.sprintf "VarDecl(%s, %s)" e1 (string_of_expr e2)
   | Select (l1,l2)        -> Printf.sprintf "Select( )"
-
-(* 必要に応じて他の構文子を追加 *)
 
 (* 既存の型に合わせて class/decl まわりも文字列化 *)
 (* let string_of_field (name, e) =
@@ -132,7 +136,8 @@ let label_of_expr (e:expr) : string =
   | Call (f,_)     -> "Call " ^ f
   | Expr _         -> "Expr"
   | Var x          -> "Var " ^ x
-  | New (cls, _)      -> "New " ^ cls                 (* ★ 追加 *)
+  | New (cls, _)   -> "New " ^ cls                 (* ★ 追加 *)
+  | Array (_,_)    -> "Array"
 ;;
 
 let children_of_expr (e:expr) : ('a list) =
@@ -157,12 +162,12 @@ let label_of_stmt (s:stmt) : string =
   | Assign (x,_)         -> "Assign " ^ x
   | CallStmt (f,_)       -> "CallStmt " ^ f
   | Send (tgt,m,_)       -> "Send " ^ tgt ^ "." ^ m
+  | UnsafeSend (t, m, _) -> "UnsafeSend " ^ t ^ "." ^ m
   | Become (cls,_)       -> "Become " ^ cls
   | Seq _                -> "Seq"
   | If _                 -> "If"
   | While _              -> "While"
   | VarDecl (x,_)        -> "VarDecl " ^ x
-  | Become (x,_)         -> "Become " ^ x
   | Select (_,_)         -> "Select "
 
 let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
@@ -175,6 +180,8 @@ let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
     | CallStmt (_f, args) ->
       List.iteri (fun i e -> dump_expr ~prefix:child_pref ~is_last:(i = List.length args - 1) e) args
     | Send (_t,_m, args) ->
+      List.iteri (fun i e -> dump_expr ~prefix:child_pref ~is_last:(i = List.length args - 1) e) args
+    | UnsafeSend (_t,_m, args) ->
       List.iteri (fun i e -> dump_expr ~prefix:child_pref ~is_last:(i = List.length args - 1) e) args
     | Seq ss ->
       List.iteri (fun i st -> dump_stmt ~prefix:child_pref ~is_last:(i = List.length ss - 1) st) ss
@@ -285,6 +292,8 @@ let rec pprint_expr ?(lvl=0) (e:expr) : string =
   | New (cls,args) ->
       Printf.sprintf "new %s(%s)" cls
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
+  | Array (es, _) ->
+    "[" ^ String.concat ", " (List.map (pprint_expr ~lvl) es) ^ "]"
 
 let rec pprint_stmt ?(lvl=0) (s:stmt) : string =
   let indent = String.make (lvl*2) ' ' in
@@ -310,6 +319,16 @@ let rec pprint_stmt ?(lvl=0) (s:stmt) : string =
       Printf.sprintf "%swhile (%s) {\n%s\n%s}"
         indent (pprint_expr e)
         (pprint_stmt ~lvl:(lvl+1) body) indent
+  | UnsafeSend (tgt, msg, args) ->
+      Printf.sprintf "%ssend! %s.%s(%s);"
+        indent tgt msg
+        (String.concat ", " (List.map (pprint_expr ~lvl) args))
+  | Become (cls, args) ->
+      Printf.sprintf "%sbecome %s(%s);"
+        indent cls
+        (String.concat ", " (List.map (pprint_expr ~lvl) args))
+  | Select (_cases, (_to_ms_opt, _to_body_opt)) ->
+      Printf.sprintf "%sselect { ... }" indent
 
 let pprint_method ?(lvl=0) (m:method_decl) =
   let args = String.concat ", " m.params in

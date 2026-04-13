@@ -854,6 +854,10 @@ let rec eval_expr (actor:actor) (e : expr) =
       ) else
         call_prim fname vs
   | Expr e -> eval_expr actor e
+  | New (_cls, _args) ->
+      failwith "eval_expr: New is not supported here"
+  | Array (_es, _tyopt) ->
+      failwith "eval_expr: Array is not supported here"
 and eval_stmt (actor:actor) (s : Ast.stmt) =
   match s.sdesc with
   | Assign (x, e) -> set_var_a actor x (eval_expr actor e)
@@ -975,6 +979,15 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
         ignore (call_prim mname vs)
     end
   | Send (tgt, meth, args) ->
+    let actual_target =
+      if tgt = "self" then actor.name
+      else if tgt = "sender" then actor.last_sender
+      else tgt
+    in
+    let arg_vals = List.map (eval_expr actor) args in
+    let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
+    send_message ~from:actor.name actual_target (mk_stmt (CallStmt (meth, arg_exprs)))
+  | UnsafeSend (tgt, meth, args) ->
     let actual_target =
       if tgt = "self" then actor.name
       else if tgt = "sender" then actor.last_sender

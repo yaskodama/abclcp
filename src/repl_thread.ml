@@ -71,6 +71,14 @@ let pp_token = function
   | INTLIT n   -> Printf.sprintf "INT(%d)" n
   | EQ         -> "EQ"
   | DOT        -> "DOT"
+  | UNSAFESEND -> "UNSAFESEND"
+  | GT         -> "GT"
+  | LT         -> "LT"
+  | SELECT     -> "SELECT"
+  | CASE       -> "CASE"
+  | TIMEOUT    -> "TIMEOUT"
+  | ARROW      -> "ARROW"
+  | BECOME     -> "BECOME"
   | EOF       -> "EOF"
 
 let dump_tokens_of_string (src:string) =
@@ -211,7 +219,7 @@ let load_file (fname : string) : Ast.program option =
     (* === 追加: トークン列を表示 === *)
     Printf.printf "[Token stream]\n%!";
     let lexbuf = Lexing.from_string src in
-    let rec show_tokens () =
+    let rec _show_tokens () =
       match token lexbuf with
       | EOF ->
           Printf.printf "EOF\n%!"
@@ -248,7 +256,7 @@ let load_file (fname : string) : Ast.program option =
            | DO -> print_endline "Token: DO"
            | _ -> print_endline "Token: (other)"
           );
-          show_tokens ()
+          _show_tokens ()
     in
 (*    show_tokens (); *)
     let decls =
@@ -283,7 +291,7 @@ let rec string_of_expr (e : Ast.expr) =
   | New (cls, args) -> cls ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
   | Array (_,_) -> "array"
   
-  let rec string_of_stmt (st: Ast.stmt) =
+let rec string_of_stmt (st: Ast.stmt) =
   match st.sdesc with
   | Assign (v, e) -> v ^ " = " ^ string_of_expr e
   | CallStmt (fname, args) -> "call " ^ fname ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
@@ -292,6 +300,11 @@ let rec string_of_expr (e : Ast.expr) =
   | If (cond, t, f) -> "if " ^ string_of_expr cond ^ " then (" ^ string_of_stmt t ^ ") else (" ^ string_of_stmt f ^ ")"
   | While (cond, body) -> "while " ^ string_of_expr cond ^ " do (" ^ string_of_stmt body ^ ")"
   | VarDecl (vname, e) -> vname ^ " = " ^ string_of_expr e
+  | UnsafeSend (tgt, msg, args) -> "send! " ^ tgt ^ "." ^ msg ^ "(" ^
+      String.concat ", " (List.map string_of_expr args) ^ ")"
+  | Become (cls, args) -> "become " ^ cls ^ "(" ^
+      String.concat ", " (List.map string_of_expr args) ^ ")"
+  | Select (_cases, (_to_ms_opt, _to_body_opt)) -> "select { ... }"
 
 let string_of_decl = function
   | Class obj ->
@@ -302,7 +315,8 @@ let string_of_decl = function
        | _ -> None) in
     let methods = List.map (fun m -> "  method " ^ m.mname ^ "() { " ^ string_of_stmt m.body ^ " }") obj.methods in
     "object " ^ obj.cname ^ " {\n" ^ String.concat "\n" (fields @ methods) ^ "\n}"
-
+  | Global st -> "global " ^ string_of_stmt st
+  
 let pending_global_sends : (unit -> unit) list ref = ref []
 
 let program_buffer = ref []
@@ -387,7 +401,6 @@ let rec process_command line =
         )
       | _ -> ())
     | Class _ -> ()
-    | _ -> ()
     ) !program_buffer;
     List.iter (fun thunk -> thunk ()) (List.rev !pending_global_sends);
     pending_global_sends := [];

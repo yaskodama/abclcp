@@ -31,6 +31,7 @@ rule token = parse
 | "method"     { METHOD }
 | "float"      { FLOAT }
 | "call"       { CALL }
+| "send!"      { UNSAFESEND }
 | "send"       { SEND }
 | "if"         { IF }
 | "self"       { SELF }

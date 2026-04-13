@@ -168,8 +168,9 @@ let rec check_stmt (env:env) (s:stmt) : unit =
          set_var_scheme env x sch
      | Some [sch] ->
          let t_old = instantiate sch in
-         unify_at s.sloc t_old t_rhs;
-         let sch' = Types.generalize (ftv_env env) t_rhs in   (* 代入後の型を更新（単相にしたいなら Forall([], t_rhs)）*)
+         ignore(unify_at s.sloc t_old t_rhs);
+         let sch' = Types.generalize (ftv_env env) t_rhs in
+	 				(* 代入後の型を更新（単相にしたいなら Forall([], t_rhs)）*)
          set_var_scheme env x sch'
      | Some _ ->
          raise (Type_error (s.sloc,("cannot assign to overloaded name: " ^ x))));
@@ -182,10 +183,10 @@ let rec check_stmt (env:env) (s:stmt) : unit =
         ()
   | If (cond, tbr, fbr) ->
       let tc = infer_expr env cond in
-      unify_at s.sloc tc TBool;
+      ignore(unify_at s.sloc tc TBool);
       check_stmt env tbr; check_stmt env fbr
   | While (cond, body) ->
-      let tc = infer_expr env cond in unify_at s.sloc tc TBool;
+      let tc = infer_expr env cond in ignore(unify_at s.sloc tc TBool);
       check_stmt env body
   | Seq ss -> List.iter (check_stmt env) ss
   | CallStmt (fname, args) ->
@@ -209,6 +210,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
                     cls (Types.string_of_ty_pretty ty))))
        | None -> ());
       ()
+  | UnsafeSend (_tgt, _meth, args) -> List.iter (fun e -> ignore (infer_expr env e)) args
   | Send (vname, mname, args) ->
       if !in_preinfer then begin
         (* ★ 1パス目（preinfer）：
