@@ -64,6 +64,7 @@ rule token = parse
 | "var"        { VAR }
 | "new"        { NEW }
 | "class"      { CLASS }
+| "remote"     { REMOTE }
 
   (* --- リテラル/識別子 --- *)
 (* 1. 「100.5」形式（整数部・小数部あり） *)

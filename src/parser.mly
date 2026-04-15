@@ -14,7 +14,7 @@ let mk_stmt1 i d : Ast.stmt = { sloc = loc_of_rhs i; sdesc = d }
 %token <float> FLOATLIT
 %token <int> INTLIT
 %token <string> STRINGLIT
-%token METHOD FLOAT CALL SEND UNSAFESEND
+%token METHOD FLOAT CALL SEND UNSAFESEND REMOTE
 %token IF THEN ELSE WHILE DO
 %token ASSIGN PLUS MINUS TIMES DIV LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA
 %token GE LE GT LT SELF SENDER CLASS
@@ -26,7 +26,7 @@ let mk_stmt1 i d : Ast.stmt = { sloc = loc_of_rhs i; sdesc = d }
 %left TIMES DIV
 %start program
 %type <Ast.program> program
-
+%type <Ast.send_target> send_target
 %%
 
 program:
@@ -47,9 +47,10 @@ decl:
   | CLASS ID LBRACE fields methods RBRACE  { Class { cname = $2; fields = $4; methods = $5 } }
   | CLASS ID LBRACE methods RBRACE         { Class { cname = $2; fields = []; methods = $4 } }
   | VAR ID ASSIGN expr SEMICOLON           { Global (mk_stmt1 2 (VarDecl ($2, $4))) }
-  | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON   { Global (mk_stmt1 2 (VarDecl ($2, mk_expr1 4 (New ($5, $7))))) }
-  | SEND ID DOT ID LPAREN args RPAREN SEMICOLON               { Global (mk_stmt1 1 (Send ($2, $4, $6))) }
-  | UNSAFESEND ID DOT ID LPAREN args RPAREN SEMICOLON         { Global (mk_stmt1 1 (UnsafeSend ($2, $4, $6))) }
+  | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON
+    { Global (mk_stmt1 2 (VarDecl ($2, mk_expr1 4 (New ($5, $7))))) }
+  | SEND send_target DOT ID LPAREN args RPAREN SEMICOLON               { Global (mk_stmt1 1 (Send ($2, $4, $6))) }
+  | UNSAFESEND send_target DOT ID LPAREN args RPAREN SEMICOLON         { Global (mk_stmt1 1 (UnsafeSend ($2, $4, $6))) }
   | ID LPAREN args RPAREN SEMICOLON        { Global (mk_stmt1 1 (CallStmt ($1, $3))) }
 
 fields:
@@ -65,13 +66,17 @@ methods:
   | method_decl methods { $1 :: $2 }
 
 method_decl:
-  | METHOD ID LPAREN param_list RPAREN LBRACE stmts RBRACE {
-    { mname = $2; params = $4; body = mk_stmt1 2 (Seq $7) } }
+  | METHOD ID LPAREN param_list RPAREN LBRACE stmts RBRACE
+    { { mname = $2; params = $4; body = mk_stmt1 2 (Seq $7) } }
 
 param_list:
   |    { [] }
   | ID { [$1] }
   | ID COMMA param_list { $1::$3 }
+
+send_target:
+    ID                                                { LocalTarget $1 }
+  | REMOTE LPAREN STRINGLIT COMMA STRINGLIT RPAREN    { RemoteTarget ($3, $5) }
 
 stmts:
   | stmt { [$1] }
@@ -85,10 +90,10 @@ stmt:
   | ID ASSIGN expr SEMICOLON { mk_stmt1 1 (Assign ($1, $3)) }
   | CALL ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (CallStmt ($2, $4)) }
   | CALL ID LPAREN RPAREN SEMICOLON { mk_stmt1 2 (CallStmt ($2, [])) }
-  | SEND SELF DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 4 (Send("self", $4, $6)) }
-  | SEND SENDER DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 4 (Send ("sender", $4, $6)) }
-  | SEND ID DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (Send ($2, $4, $6)) }
-  | UNSAFESEND ID DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (UnsafeSend ($2, $4, $6)) }
+  | SEND SELF DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 4 (Send(LocalTarget "self", $4, $6)) }
+  | SEND SENDER DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 4 (Send (LocalTarget "sender", $4, $6)) }
+  | SEND send_target DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (Send ($2, $4, $6)) }
+  | UNSAFESEND send_target DOT ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (UnsafeSend ($2, $4, $6)) }
   | IF LPAREN expr RPAREN stmt { mk_stmt1 2 (If($3, $5, mk_stmt1 5 (Seq([])))) }
   | IF LPAREN expr RPAREN stmt ELSE stmt { mk_stmt1 3 (If($3, $5, $7)) }
   | WHILE expr DO stmt { mk_stmt1 2 (While ($2, $4)) }

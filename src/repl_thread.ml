@@ -78,6 +78,7 @@ let pp_token = function
   | CASE       -> "CASE"
   | TIMEOUT    -> "TIMEOUT"
   | ARROW      -> "ARROW"
+  | REMOTE     -> "REMOTE"
   | BECOME     -> "BECOME"
   | EOF       -> "EOF"
 
@@ -291,16 +292,21 @@ let rec string_of_expr (e : Ast.expr) =
   | New (cls, args) -> cls ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
   | Array (_,_) -> "array"
   
+let string_of_send_target = function
+  | LocalTarget t -> t
+  | RemoteTarget (hp, a) -> "remote(" ^ hp ^ ", " ^ a ^ ")"
+
 let rec string_of_stmt (st: Ast.stmt) =
   match st.sdesc with
   | Assign (v, e) -> v ^ " = " ^ string_of_expr e
   | CallStmt (fname, args) -> "call " ^ fname ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
-  | Send (tgt, msg, args) -> "send " ^ tgt ^ " " ^ msg ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
+  | Send (tgt, msg, args) -> "send " ^ (string_of_send_target tgt) ^
+    " " ^ msg ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
   | Seq stmts -> String.concat "; " (List.map string_of_stmt stmts)
   | If (cond, t, f) -> "if " ^ string_of_expr cond ^ " then (" ^ string_of_stmt t ^ ") else (" ^ string_of_stmt f ^ ")"
   | While (cond, body) -> "while " ^ string_of_expr cond ^ " do (" ^ string_of_stmt body ^ ")"
   | VarDecl (vname, e) -> vname ^ " = " ^ string_of_expr e
-  | UnsafeSend (tgt, msg, args) -> "send! " ^ tgt ^ "." ^ msg ^ "(" ^
+  | UnsafeSend (tgt, msg, args) -> "send! " ^ (string_of_send_target tgt) ^ "." ^ msg ^ "(" ^
       String.concat ", " (List.map string_of_expr args) ^ ")"
   | Become (cls, args) -> "become " ^ cls ^ "(" ^
       String.concat ", " (List.map string_of_expr args) ^ ")"
@@ -388,7 +394,12 @@ let rec process_command line =
 		  ));
         | _ -> ())
       | Send (tgt, mname, args) -> (
-        pending_global_sends := (fun () -> Eval_thread.send_message ~from:"<top>" tgt (mk_stmt (CallStmt (mname, args)))
+        pending_global_sends := (fun () ->
+          Eval_thread.send_message ~from:"<top>" (string_of_send_target tgt) (mk_stmt (CallStmt (mname, args)))
+          ) :: !pending_global_sends)
+      | UnsafeSend (tgt, mname, args) -> (
+        pending_global_sends := (fun () ->
+          Eval_thread.send_message ~from:"<top>" (string_of_send_target tgt) (mk_stmt (CallStmt (mname, args)))
           ) :: !pending_global_sends)
       | CallStmt (fname, args) -> (
           (* Top-level call (for prims like web_listen / web_expose / print) *)

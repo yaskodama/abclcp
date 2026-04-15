@@ -978,24 +978,47 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
       let vs = List.map (eval_expr actor) args in
         ignore (call_prim mname vs)
     end
-  | Send (tgt, meth, args) ->
-    let actual_target =
-      if tgt = "self" then actor.name
-      else if tgt = "sender" then actor.last_sender
-      else tgt
-    in
+  | Send (target, meth, args) ->
     let arg_vals = List.map (eval_expr actor) args in
     let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
-    send_message ~from:actor.name actual_target (mk_stmt (CallStmt (meth, arg_exprs)))
-  | UnsafeSend (tgt, meth, args) ->
-    let actual_target =
-      if tgt = "self" then actor.name
-      else if tgt = "sender" then actor.last_sender
-      else tgt
-    in
+    begin match target with
+    | LocalTarget tgt ->
+        let actual_target =
+          if tgt = "self" then actor.name
+          else if tgt = "sender" then actor.last_sender
+          else tgt
+        in
+        send_message ~from:actor.name actual_target
+          (mk_stmt (CallStmt (meth, arg_exprs)))
+
+    | RemoteTarget (hostport, tgt) ->
+        Remote_client.remote_send
+          ~hostport
+          ~to_actor:tgt
+          ~meth
+          ~args:arg_exprs
+          ~from:actor.name
+    end
+  | UnsafeSend (target, meth, args) ->
     let arg_vals = List.map (eval_expr actor) args in
     let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
-    send_message ~from:actor.name actual_target (mk_stmt (CallStmt (meth, arg_exprs)))
+    begin match target with
+    | LocalTarget tgt ->
+        let actual_target =
+          if tgt = "self" then actor.name
+          else if tgt = "sender" then actor.last_sender
+          else tgt
+        in
+        send_message ~from:actor.name actual_target
+          (mk_stmt (CallStmt (meth, arg_exprs)))
+    | RemoteTarget (hostport, tgt) ->
+        Remote_client.remote_send
+          ~hostport
+          ~to_actor:tgt
+          ~meth
+          ~args:arg_exprs
+          ~from:actor.name
+    end
   | Select (cases, (to_ms_opt, to_body_opt)) ->
     let start = Unix.gettimeofday () in
     let rec loop () =

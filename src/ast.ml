@@ -13,11 +13,15 @@ type expr = {
   | New of string * expr list    (* new Line(10,20) *)
   | Array of expr list * Types.ty option
 
+type send_target =
+  | LocalTarget of string
+  | RemoteTarget of string * string
+
 type stmt_desc =
   | Assign of string * expr
   | CallStmt of string * expr list
-  | Send of string * string * expr list
-  | UnsafeSend of string * string * expr list
+  | Send of send_target * string * expr list
+  | UnsafeSend of send_target * string * expr list
   | Become of string * expr list
   | Seq of stmt list
   | If of expr * stmt * stmt
@@ -85,15 +89,19 @@ let rec string_of_expr (e:expr) : string =
     let xs = es |> List.map string_of_expr |> String.concat ", " in
     Printf.sprintf "Array[%s]" xs
 
+let string_of_send_target = function
+  | LocalTarget t -> t
+  | RemoteTarget (hp, a) -> "remote(" ^ hp ^ "," ^ a ^ ")"
+
 let rec string_of_stmt (s:stmt) : string =
   match s.sdesc with
   | Assign (x,e)          -> Printf.sprintf "Assign(%s, %s)" x (string_of_expr e)
   | CallStmt (f,args)     -> let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "CallStmt(%s, [%s])" f xs
   | Send (tgt,meth,args)  -> let xs = args |> List.map string_of_expr |> String.concat ", " in
-      Printf.sprintf "Send(%s.%s, [%s])" tgt meth xs
+      Printf.sprintf "Send(%s.%s, [%s])" (string_of_send_target tgt) meth xs
   | UnsafeSend (tgt,meth,args)  -> let xs = args |> List.map string_of_expr |> String.concat ", " in
-      Printf.sprintf "UnsafeSend(%s.%s, [%s])" tgt meth xs
+      Printf.sprintf "UnsafeSend(%s.%s, [%s])" (string_of_send_target tgt) meth xs
   | Become (cls,args) ->  (* ★ 追加 *)
       let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "Become(%s, [%s])" cls xs
@@ -161,8 +169,10 @@ let label_of_stmt (s:stmt) : string =
   match s.sdesc with
   | Assign (x,_)         -> "Assign " ^ x
   | CallStmt (f,_)       -> "CallStmt " ^ f
-  | Send (tgt,m,_)       -> "Send " ^ tgt ^ "." ^ m
-  | UnsafeSend (t, m, _) -> "UnsafeSend " ^ t ^ "." ^ m
+  | Send (LocalTarget t, m, _) -> "Send " ^ t ^ "." ^ m
+  | Send (RemoteTarget (hp, a), m, _) -> "Send remote(" ^ hp ^ "," ^ a ^ ")." ^ m
+  | UnsafeSend (LocalTarget t, m, _) -> "UnsafeSend " ^ t ^ "." ^ m
+  | UnsafeSend (RemoteTarget (hp, a), m, _) -> "UnsafeSend remote(" ^ hp ^ "," ^ a ^ ")." ^ m
   | Become (cls,_)       -> "Become " ^ cls
   | Seq _                -> "Seq"
   | If _                 -> "If"
@@ -179,16 +189,14 @@ let rec dump_stmt ?(prefix="") ?(is_last=true) (s : stmt) =
       dump_expr ~prefix:child_pref ~is_last:true e
     | CallStmt (_f, args) ->
       List.iteri (fun i e -> dump_expr ~prefix:child_pref ~is_last:(i = List.length args - 1) e) args
-    | Send (_t,_m, args) ->
+    | Send (_target,_m,args) ->
       List.iteri (fun i e -> dump_expr ~prefix:child_pref ~is_last:(i = List.length args - 1) e) args
-    | UnsafeSend (_t,_m, args) ->
+    | UnsafeSend (_target,_m,args) ->
       List.iteri (fun i e -> dump_expr ~prefix:child_pref ~is_last:(i = List.length args - 1) e) args
     | Seq ss ->
       List.iteri (fun i st -> dump_stmt ~prefix:child_pref ~is_last:(i = List.length ss - 1) st) ss
-    | Become (_cls, args) ->   (* ★ 追加 *)
-      List.iteri (fun i e ->
-        dump_expr ~prefix:child_pref ~is_last:(i = List.length args - 1) e
-      ) args
+    | Become (_cls, args) ->
+      List.iteri (fun i e -> dump_expr ~prefix:child_pref ~is_last:(i = List.length args - 1) e) args
     | If (e, s1, s2) ->
       dump_expr ~prefix:child_pref ~is_last:false e;
       dump_stmt ~prefix:child_pref ~is_last:false s1;
@@ -306,7 +314,10 @@ let rec pprint_stmt ?(lvl=0) (s:stmt) : string =
       Printf.sprintf "%scall %s(%s);" indent f
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
   | Send (tgt,meth,args) ->
-      Printf.sprintf "%ssend %s.%s(%s);" indent tgt meth
+      Printf.sprintf "%ssend %s.%s(%s);" indent (string_of_send_target tgt) meth
+        (String.concat ", " (List.map (pprint_expr ~lvl) args))
+  | UnsafeSend (tgt,meth,args) ->
+      Printf.sprintf "%ssend! %s.%s(%s);" indent (string_of_send_target tgt) meth
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
   | Seq ss ->
       String.concat "\n" (List.map (pprint_stmt ~lvl) ss)
@@ -319,10 +330,6 @@ let rec pprint_stmt ?(lvl=0) (s:stmt) : string =
       Printf.sprintf "%swhile (%s) {\n%s\n%s}"
         indent (pprint_expr e)
         (pprint_stmt ~lvl:(lvl+1) body) indent
-  | UnsafeSend (tgt, msg, args) ->
-      Printf.sprintf "%ssend! %s.%s(%s);"
-        indent tgt msg
-        (String.concat ", " (List.map (pprint_expr ~lvl) args))
   | Become (cls, args) ->
       Printf.sprintf "%sbecome %s(%s);"
         indent cls

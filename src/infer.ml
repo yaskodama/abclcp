@@ -210,52 +210,82 @@ let rec check_stmt (env:env) (s:stmt) : unit =
                     cls (Types.string_of_ty_pretty ty))))
        | None -> ());
       ()
-  | UnsafeSend (_tgt, _meth, args) -> List.iter (fun e -> ignore (infer_expr env e)) args
-  | Send (vname, mname, args) ->
-      if !in_preinfer then begin
-        (* ★ 1パス目（preinfer）：
-           - 変数や引数の型だけざっくり推論しておく
-           - actor かどうか / メソッドが存在するかはチェックしない *)
-        ignore (infer_expr env (mk_var(vname)));
-        List.iter (fun e -> ignore (infer_expr env e)) args;
-      end else begin
-        (* ★ 2パス目（本番の型チェック） *)
-        if vname = "sender" then begin
-          (* 特別扱い：sender は動的な送り主アクターなので、
-             - actor かどうか
-             - メソッド ping/pong が存在するか
-             は静的にはチェックしない。
-             引数の型だけ推論しておく。 *)
-          List.iter (fun e -> ignore (infer_expr env e)) args;
-        end else begin
-          (* 通常の send: vname の型を actor(C) として取り出し、
-             preinfer で登録したクラスメソッド表から mname の型を調べる *)
-          let t_actor = infer_expr env (mk_var(vname)) in
-          match repr t_actor with
-          | TActor (cls, _) ->
-              (match Types.lookup_class_method_scheme cls mname with
-               | None ->
-                   raise (Type_error (s.sloc,
-                     ("no method " ^ mname ^ " in actor(" ^ cls ^ ")")))
-               | Some sc ->
-                   let tf = repr (Types.instantiate sc) in
-                   match tf with
-                   | TFun (param_tys, ret_ty) ->
-                       let actuals =
-                         List.map (fun e -> repr (infer_expr env e)) args in
-                       if List.length param_tys <> List.length actuals then
-                         raise (Type_error (s.sloc,"arity mismatch in send"));
-                       List.iter2 (Types.unify ~loc:s.sloc) param_tys actuals;
-                       ()
-                   | _ ->
-                       raise (Type_error (s.sloc,
-                         ("method " ^ mname ^ " is not a function: "
-                          ^ string_of_ty tf))))
-          | t_non_actor ->
-              raise (Type_error (s.sloc,
-                ("send target is not actor: " ^ string_of_ty t_non_actor)))
-        end
+  | Send (target, mname, args) ->
+    if !in_preinfer then begin
+      (* ★ 1パス目（preinfer） *)
+      begin match target with
+      | LocalTarget vname ->
+          (* ローカル actor だけ従来どおり軽く見る *)
+          ignore (infer_expr env (mk_var vname))
+      | RemoteTarget (_hostport, _actor_name) ->
+          (* リモート宛先は actor 型を静的に見ない *)
+          ()
+      end;
+      List.iter (fun e -> ignore (infer_expr env e)) args;
+    end else begin
+      (* ★ 2パス目（本番の型チェック） *)
+      match target with
+      | RemoteTarget (_hostport, _actor_name) ->
+          (* リモート送信は送り先の actor 型・メソッド存在を静的にチェックしない *)
+          List.iter (fun e -> ignore (infer_expr env e)) args
+      | LocalTarget vname ->
+          if vname = "sender" then begin
+            (* sender は動的なので、引数だけ型推論 *)
+            List.iter (fun e -> ignore (infer_expr env e)) args
+          end else if vname = "self" then begin
+            (* self もローカル actor として扱う。
+               既存実装で self を infer_expr env (mk_var "self") できるならそのままでよい *)
+            let t_actor = infer_expr env (mk_var vname) in
+            match repr t_actor with
+            | TActor (cls, _) ->
+                (match Types.lookup_class_method_scheme cls mname with
+                 | None ->
+                     raise (Type_error (s.sloc,
+                       ("no method " ^ mname ^ " in actor(" ^ cls ^ ")")))
+                 | Some sc ->
+                     let tf = repr (Types.instantiate sc) in
+                     match tf with
+                     | TFun (param_tys, _ret_ty) ->
+                         let actuals =
+                           List.map (fun e -> repr (infer_expr env e)) args in
+                         if List.length param_tys <> List.length actuals then
+                           raise (Type_error (s.sloc, "arity mismatch in send"));
+                         List.iter2 (Types.unify ~loc:s.sloc) param_tys actuals
+                     | _ ->
+                         raise (Type_error (s.sloc,
+                           ("method " ^ mname ^ " is not a function: "
+                            ^ string_of_ty tf))))
+            | t_non_actor ->
+                raise (Type_error (s.sloc,
+                  ("send target is not actor: " ^ string_of_ty t_non_actor)))
+          end else begin
+            (* 通常のローカル send *)
+            let t_actor = infer_expr env (mk_var vname) in
+            match repr t_actor with
+            | TActor (cls, _) ->
+                (match Types.lookup_class_method_scheme cls mname with
+                 | None ->
+                     raise (Type_error (s.sloc,
+                       ("no method " ^ mname ^ " in actor(" ^ cls ^ ")")))
+                 | Some sc ->
+                     let tf = repr (Types.instantiate sc) in
+                     match tf with
+                     | TFun (param_tys, _ret_ty) ->
+                         let actuals =
+                           List.map (fun e -> repr (infer_expr env e)) args in
+                         if List.length param_tys <> List.length actuals then
+                           raise (Type_error (s.sloc, "arity mismatch in send"));
+                         List.iter2 (Types.unify ~loc:s.sloc) param_tys actuals
+                     | _ ->
+                         raise (Type_error (s.sloc,
+                           ("method " ^ mname ^ " is not a function: "
+                            ^ string_of_ty tf))))
+            | t_non_actor ->
+                raise (Type_error (s.sloc,
+                  ("send target is not actor: " ^ string_of_ty t_non_actor)))
+          end
     end
+  | UnsafeSend (_target, _mname, args) -> List.iter (fun e -> ignore (infer_expr env e)) args
   | Select (cases, (to_ms_opt, to_body_opt)) ->
     (* timeout body *)
     (match (to_ms_opt, to_body_opt) with
@@ -266,7 +296,6 @@ let rec check_stmt (env:env) (s:stmt) : unit =
      | _ ->
          Types.type_error ~loc:s.sloc
            "select: timeout requires both milliseconds and a body");
-
     (* each case introduces fresh types for bound variables *)
     List.iter
       (fun (c:Ast.select_case) ->
