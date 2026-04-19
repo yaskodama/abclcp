@@ -6,8 +6,54 @@ open Thread
 
 exception Quit
 
+(* --- Web console output capture --- *)
+let web_repl_buffer = Buffer.create 4096
+
+let web_repl_clear () =
+  Buffer.clear web_repl_buffer
+
+let web_repl_contents () =
+  Buffer.contents web_repl_buffer
+
+let web_repl_print (s:string) =
+  Buffer.add_string web_repl_buffer s
+
+let web_repl_println (s:string) =
+  Buffer.add_string web_repl_buffer s;
+  Buffer.add_char web_repl_buffer '\n'
+
+let repl_logf fmt =
+  Printf.ksprintf
+    (fun s ->
+      print_string s;
+      flush stdout;
+      web_repl_print s)
+    fmt
+
+let repl_logln s = print_endline s; web_repl_println s
+
+let repl_log_after = ref (-1)
+
+let flush_logs_to_repl () =
+  let (next_id, lines) = Eval_thread.get_web_logs_since !repl_log_after in
+  repl_log_after := next_id;
+  List.iter (fun line ->
+    Printf.printf "%s\n%!" line;
+    web_repl_println line
+  ) lines
+
 (* --- REPL: show replies pushed as events --- *)
 let repl_evt_after = ref (-1)
+
+let flush_replies_to_repl () =
+  let (next_id, lines) = Eval_thread.get_web_evts_since !repl_evt_after in
+  repl_evt_after := next_id;
+  List.iter (fun line ->
+    if String.length line >= 7 && String.sub line 0 7 = "[REPLY]" then begin
+      Printf.printf "%s\n%!" line;
+      web_repl_println line
+    end
+  ) lines
 
 let flush_replies_to_repl () =
   let (next_id, lines) = Eval_thread.get_web_evts_since !repl_evt_after in
@@ -335,15 +381,15 @@ let rec process_command line =
   )
   else if String.trim line = "" then ()
   else if String.length line >= 4 && String.sub line 0 4 = "help" then begin
-    print_endline "Commands:";
-    print_endline "  load <file.abcl>      - load a source file (shows tokens & AST; typechecks)";
-    print_endline "  compile               - build/spawn from the loaded program";
-    print_endline "  list                  - list active objects";
-    print_endline "  send obj.method(args) - send async message";
-    print_endline "  ast <name>            - show AST of a class or instance's class";
-    print_endline "  pprint <name>         - pretty-print the class source";
-    print_endline "  script <file>         - run REPL commands from file";
-    print_endline "  exit / quit           - exit REPL";
+    repl_logln "Commands:";
+    repl_logln "  load <file.abcl>      - load a source file (shows tokens & AST; typechecks)";
+    repl_logln "  compile               - build/spawn from the loaded program";
+    repl_logln "  list                  - list active objects";
+    repl_logln "  send obj.method(args) - send async message";
+    repl_logln "  ast <name>            - show AST of a class or instance's class";
+    repl_logln "  pprint <name>         - pretty-print the class source";
+    repl_logln "  script <file>         - run REPL commands from file";
+    repl_logln "  exit / quit           - exit REPL";
   end
   else if line = "compile" then (
     compiled := true;
@@ -415,24 +461,24 @@ let rec process_command line =
     ) !program_buffer;
     List.iter (fun thunk -> thunk ()) (List.rev !pending_global_sends);
     pending_global_sends := [];
-    print_endline "[Compiled]"
+    repl_logln "[Compiled]"
   )
   else if String.length line > 6 && String.sub line 0 6 = "ssend " then (
             let parts = String.split_on_char '.' (String.sub line 6 (String.length line - 6)) in
               match parts with
               | [obj; meth] -> send_message ~from:"main" obj (mk_stmt (CallStmt (meth, [])))
-              | _ -> print_endline "[Error] Invalid ssend syntax"
+              | _ -> repl_logln "[Error] Invalid ssend syntax"
           )
           else if String.length line > 5 && String.sub line 0 5 = "send " then (
             let payload = String.sub line 5 (String.length line - 5) |> trim in
             let lparen =
               try String.index payload '(' with Not_found ->
-                print_endline "[Error] Invalid send syntax: missing '('"; -1
+                repl_logln "[Error] Invalid send syntax: missing '('"; -1
             in
               if lparen >= 0 then (
                 let rparen =
                   try String.rindex payload ')' with Not_found ->
-                    print_endline "[Error] Invalid send syntax: missing ')'"; -1
+                    repl_logln "[Error] Invalid send syntax: missing ')'"; -1
                 in
                   if rparen > lparen then (
                     let head = String.sub payload 0 lparen |> trim in
@@ -444,7 +490,7 @@ let rec process_command line =
                           let args = parse_args_list args_inside in
                           send_message ~from:"main" obj (mk_stmt (CallStmt (meth, args)))
                         | _ ->
-                        print_endline "[Error] Invalid send target (use obj.method(...))"
+                        repl_logln "[Error] Invalid send target (use obj.method(...))"
                   ) else
                     ()
               ) else
@@ -463,7 +509,7 @@ let rec process_command line =
           try
             while true do
               let cmd = input_line ic in
-                print_endline ("[script] " ^ cmd);
+                repl_logln ("[script] " ^ cmd);
                 try process_command cmd with
                 | Quit -> close_in_noerr ic; raise Quit
                 | Parser.Syntax_error (loc, msg) ->
@@ -474,7 +520,7 @@ let rec process_command line =
             done
           with End_of_file ->
             close_in ic;
-            print_endline "[Script execution completed]"
+            repl_logln "[Script execution completed]"
       with Sys_error msg ->
         Printf.printf "[Error] Could not open script file: %s\n" msg
   )
@@ -494,7 +540,7 @@ let rec process_command line =
             Printf.printf "[Error] no AST found for '%s' (not an instance nor a class)\n%!" name)
         )
   else if line = "list" then (
-  print_endline "[Registered actors and types]";
+  repl_logln "[Registered actors and types]";
     (* すでに生きているアクタ（actor_table）から “変数名” と “クラス名” を確実に取得 *)
     Eval_thread.iter_actor_table (fun aname a ->
       let cls_name = Eval_thread.actor_class_name aname a in
@@ -511,7 +557,7 @@ let rec process_command line =
     flush stdout;
   )
   else if line = "actors" then (
-    print_endline "[actor_table]";
+    repl_logln "[actor_table]";
     Eval_thread.iter_actor_table (fun aname a ->
       let cls_name = Eval_thread.actor_class_name aname a in
       let ty_str =
@@ -533,7 +579,7 @@ let rec process_command line =
     flush stdout;
   )
   else if line = "vlist" then (
-    print_endline "Active objects:";
+    repl_logln "Active objects:";
     Hashtbl.iter (fun name (actor:Eval_thread.actor) ->
     (* 見出し：オブジェクト名のみ *)
     Printf.printf "- %s\n" name;
@@ -556,19 +602,76 @@ let rec process_command line =
     let name = String.trim (String.sub line 7 (String.length line - 7)) in
       match Eval_thread.get_instance_source name with
       | Some cdecl ->
-        print_endline (Ast.pprint_class cdecl)
+        repl_logln (Ast.pprint_class cdecl)
       | None ->
         (match Hashtbl.find_opt Eval_thread.class_env name with
         | Some cdecl ->
-          print_endline (Ast.pprint_class cdecl)
+          repl_logln (Ast.pprint_class cdecl)
         | None ->
           Printf.printf "[Error] cannot find source for '%s'\n%!" name)
   )
+
+let run_repl_command_from_web (cmd:string) : string =
+  web_repl_clear ();
+  try
+    repl_logf "ABCL/c+> %s\n" cmd;
+    process_command cmd;
+
+    for _i = 1 to 10 do
+      Thread.delay 0.05;
+      flush_logs_to_repl ();
+      flush_replies_to_repl ();
+    done;
+    let out = web_repl_contents () in
+    if out = "" then "OK" else out
+  with
+  | Quit ->
+      web_repl_println "Quit";
+      web_repl_contents ()
+  | Failure msg ->
+      web_repl_println ("[Error] " ^ msg);
+      web_repl_contents ()
+  | Parser.Syntax_error (loc, msg) ->
+      web_repl_println ("[Syntax error] " ^ Location.to_string loc ^ ": " ^ msg);
+      web_repl_contents ()
+  | Types.Type_error (loc, msg) ->
+      web_repl_println ("[Type error] " ^ Location.to_string loc ^ ": " ^ msg);
+      web_repl_contents ()
+  | exn ->
+      web_repl_println ("[Error] " ^ Printexc.to_string exn);
+      web_repl_contents ()
+
+let run_repl_command_from_web (cmd:string) : string =
+  web_repl_clear ();
+  try
+    repl_logf "ABCL/c+> %s\n" cmd;
+    process_command cmd;
+    flush_replies_to_repl ();
+    let out = web_repl_contents () in
+    if out = "" then "OK" else out
+  with
+  | Quit ->
+      let msg = "Quit\n" in
+      web_repl_print msg;
+      web_repl_contents ()
+  | Failure msg ->
+      web_repl_println ("[Error] " ^ msg);
+      web_repl_contents ()
+  | Parser.Syntax_error (loc, msg) ->
+      web_repl_println ("[Syntax error] " ^ Location.to_string loc ^ ": " ^ msg);
+      web_repl_contents ()
+  | Types.Type_error (loc, msg) ->
+      web_repl_println ("[Type error] " ^ Location.to_string loc ^ ": " ^ msg);
+      web_repl_contents ()
+  | exn ->
+      web_repl_println ("[Error] " ^ Printexc.to_string exn);
+      web_repl_contents ()
 
 let start_repl () =
   let building = ref false in
   let buf = Buffer.create 4096 in
   let depth = ref 0 in
+  Web_gateway.set_repl_command_handler run_repl_command_from_web;
   let prompt () =
     if !building then print_string "... "
     else print_string "ABCL/c+> ";

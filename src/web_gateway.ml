@@ -23,16 +23,19 @@ open Unix
 open Ast
 open Types
 
+(* ---- REPL command callback ---- *)
+let repl_command_handler : (string -> string) option ref = ref None
+
+let set_repl_command_handler (f:string -> string) = repl_command_handler := Some f
+
 (* ---------- Public API ---------- *)
 
 (* Exposed endpoints: "key" -> actor_name *)
 let exposed : (string, string) Hashtbl.t = Hashtbl.create 32
 
-let expose ~(key:string) ~(actor_name:string) : unit =
-  Hashtbl.replace exposed key actor_name
+let expose ~(key:string) ~(actor_name:string) : unit = Hashtbl.replace exposed key actor_name
 
-let list_exposed () : (string * string) list =
-  Hashtbl.to_seq exposed |> List.of_seq
+let list_exposed () : (string * string) list = Hashtbl.to_seq exposed |> List.of_seq
 
 (* A single running server per process (good enough for now). *)
 let server_thread : Thread.t option ref = ref None
@@ -348,7 +351,6 @@ let json_escape (s:string) : string =
   Buffer.contents b
 
 let html_index () : string =
-  (* A tiny UI that posts JSON data to /api/json/send. *)
   "<!doctype html>\n" ^
   "<html><head><meta charset='utf-8'><title>ABCL/c+ Web Gateway</title></head>\n" ^
   "<body style='font-family: sans-serif'>\n" ^
@@ -360,249 +362,22 @@ let html_index () : string =
   "<label>to (actor name): <input id='to' value='calc'></label><br>\n" ^
   "<label>method: <input id='method' value='add'></label><br>\n" ^
   "<label>args (comma sep): <input id='args' value='1,2'></label><br>\n" ^
+  "<label><input type='checkbox' id='unsafe'> unsafe (skip typecheck)</label><br>\n" ^
   "<button onclick='send()'>Send</button>\n" ^
   "<pre id='out' style='background:#f4f4f4; padding:8px; min-height:2em'></pre>\n" ^
-  "<h4>Actor log (latest prints)</h4>\n" ^
+  "<h4>Actor log</h4>\n" ^
   "<pre id='log' style='background:#111; color:#0f0; padding:8px; min-height:8em; max-height:20em; overflow:auto'></pre>\n" ^
   "<h4>Events</h4>\n" ^
-  "<div id='events' style='background:#222; padding:8px; min-height:6em; max-height:14em; overflow:auto; font-family: monospace'></div>\n" ^
-  "<h4>Message Tree (by msg_id)</h4>\n" ^
+   "<div id='events' style='background:#222; color:#ff0; padding:8px; min-height:6em; max-height:14em; overflow:auto; font-family: monospace'></div>\n" ^
+  "<h4>Replies</h4>\n" ^
+  "<pre id='replies' style='background:#eef; padding:8px; min-height:4em; max-height:10em; overflow:auto'></pre>\n" ^
+  "<h4>Message Tree</h4>\n" ^
   "<div id='tree' style='background:#111; color:#ddd; padding:8px; min-height:8em; max-height:24em; overflow:auto; font-family: monospace'></div>\n" ^
-  "<pre id='replies'></pre>\n" ^
   "</div>\n" ^
   "</div>\n" ^
-  "<script>\n" ^
-  "const SID_KEY = 'abcl_sid';\n" ^
-  "let sid = localStorage.getItem(SID_KEY);\n" ^
-  "if(!sid){\n" ^
-  "sid = 's-' + Math.random().toString(16).slice(2) + '-' + Date.now();\n" ^
-  "localStorage.setItem(SID_KEY, sid);\n" ^
-  "}\n" ^
-  "document.getElementById('out').textContent = 'sid=' + sid;\n" ^
-  "document.getElementById('out').textContent = 'JS loaded';\n" ^
-  "let afterId = -1;\n" ^
-  "let afterEvt = -1;\n" ^
-  "function parseAtom(s){\n" ^
-  "  s = s.trim();\n" ^
-  "  if(!s) return null;\n" ^
-  "  if((s.startsWith(\"\\\"\") && s.endsWith(\"\\\"\")) || (s.startsWith(\"'\") && s.endsWith(\"'\"))){\n" ^
-  "    return s.substring(1, s.length-1);\n" ^
-  "  }\n" ^
-  "  if(s === 'true') return true;\n" ^
-  "  if(s === 'false') return false;\n" ^
-  "  if(s === 'null') return null;\n" ^
-  "  const n = Number(s);\n" ^
-  "  if(Number.isFinite(n) && String(n) === s) return n;\n" ^
-  "  // allow 1.0, -2.5, 1e3 etc\n" ^
-  "  if(Number.isFinite(n)) return n;\n" ^
-  "  return s;\n" ^
-  "}\n" ^
-  "async function poll(){\n" ^
-  "  const to = document.getElementById('to').value;\n" ^
-  "  if(!to){ setTimeout(poll, 800); return; }\n" ^
-  "  try{\n" ^
-  "    const r = await fetch('/api/log?sid=' + encodeURIComponent(sid) + '&after=' + afterId);\n" ^
-  "    if(r.ok){\n" ^
-  "      const j = await r.json();\n" ^
-  "      if(typeof j.next === 'number') afterId = j.next;\n" ^
-  "      if(j.lines && j.lines.length){\n" ^
-  "        const log = document.getElementById('log');\n" ^
-  "        const NL = String.fromCharCode(10);\n" ^
-  "        log.textContent += j.lines.join(NL) + NL;\n" ^
-  "        log.scrollTop = log.scrollHeight;\n" ^
-  "      }\n" ^
-  "    }\n" ^
-  "  }catch(e){\n" ^
-  "    document.getElementById('out').textContent = 'poll error: ' + e;\n" ^
-  "  }\n" ^
-  "  setTimeout(poll, 500);\n" ^
-  "}\n" ^
-  "async function pollEvents(){\n" ^
-  "  const to = document.getElementById('to').value;\n" ^
-  "  document.getElementById('out').textContent = 'pollEvents after=' + afterEvt;\n" ^
-  "  if(!to){ setTimeout(pollEvents, 800); return; }\n" ^
-  "  try{\n" ^
-  "    const r = await fetch('/api/events?actor=' + encodeURIComponent(to) + '&after=' + afterEvt);\n" ^
-  "    if(r.ok){\n" ^
-  "      const j = await r.json();\n" ^
-  "      if(typeof j.next === 'number') afterEvt = j.next;\n" ^
-  "      if(j.lines && j.lines.length){\n" ^
-  "        const box = document.getElementById('events');\n" ^
-  "        for(const line of j.lines){\n" ^
-  "          const row = document.createElement('div');\n" ^
-  "          row.textContent = line;\n" ^
-  "          row.style.whiteSpace = 'pre-wrap';\n" ^
-  "          if(line.startsWith('[FAILED]')){\n" ^
-  "            row.style.color = '#ff5555';\n" ^
-  "            row.style.fontWeight = '700';\n" ^
-  "          } else if(line.startsWith('[ACCEPTED]')){\n" ^
-  "            row.style.color = '#55ff55';\n" ^
-  "          } else if(line.startsWith('[REPLY]')){\n" ^
-  "            row.style.color = '#66ccff';\n" ^
-  "          } else {\n" ^
-  "            row.style.color = '#ffff66';\n" ^
-  "          }\n" ^
-  "          box.appendChild(row);\n" ^
-  "        }\n" ^
-  "        box.scrollTop = box.scrollHeight;\n" ^
-  "      }\n" ^
-  "    }\n" ^
-  "  }catch(e){\n" ^
-  "    document.getElementById('out').textContent = 'events error: ' + e;\n" ^
-  "  }\n" ^
-  "  setTimeout(pollEvents, 500);\n" ^
-  "}\n" ^
-  "async function send(){\n" ^
-  "  const payload = {\n" ^
-  "    sid: sid,\n" ^
-  "    to: document.getElementById('to').value,\n" ^
-  "    method: document.getElementById('method').value,\n" ^
-  "    args: document.getElementById('args').value.split(',')\n" ^
-  "          .map(s=>s.trim()).filter(s=>s.length>0).map(parseAtom),\n" ^
-  "    from: 'browser'\n" ^
-  "  };\n" ^
-  "  try{\n" ^
-  "    const r = await fetch('/api/json/send', {\n" ^
-  "      method: 'POST',\n" ^
-  "      headers: { 'Content-Type': 'application/json' },\n" ^
-  "      body: JSON.stringify(payload)\n" ^
-  "    });\n" ^
-  "    const t = await r.text();\n" ^
-  "    document.getElementById('out').textContent = t;\n" ^
-  "  }catch(e){\n" ^
-  "    document.getElementById('out').textContent = 'send error: ' + e;\n" ^
-  "  }\n" ^
-  "}\n" ^
-  "let ws = null;\n" ^
-  "let wsRetryMs = 500;\n" ^
-  "\n" ^
-  "const msgNodes = new Map();\n" ^
-  "\n" ^
-  "function extractId(line){\n" ^
-  "  const m = line.match(/id=([^\\s]+)/);\n" ^
-  "  return m ? m[1] : null;\n" ^
-  "}\n" ^
-  "\n" ^
-  "function ensureNode(id, title){\n" ^
-  "  if(msgNodes.has(id)) return msgNodes.get(id);\n" ^
-  "  const tree = document.getElementById('tree');\n" ^
-  "  if(!tree) return null;\n" ^
-  "\n" ^
-  "  const root = document.createElement('div');\n" ^
-  "  root.style.border = '1px solid #333';\n" ^
-  "  root.style.borderRadius = '8px';\n" ^
-  "  root.style.padding = '6px';\n" ^
-  "  root.style.margin = '6px 0';\n" ^
-  "\n" ^
-  "  const head = document.createElement('div');\n" ^
-  "  head.textContent = title;\n" ^
-  "  head.style.color = '#55ff55';\n" ^
-  "  head.style.fontWeight = '700';\n" ^
-  "\n" ^
-  "  const body = document.createElement('div');\n" ^
-  "  body.style.marginTop = '4px';\n" ^
-  "  body.style.paddingLeft = '10px';\n" ^
-  "\n" ^
-  "  root.appendChild(head);\n" ^
-  "  root.appendChild(body);\n" ^
-  "  tree.appendChild(root);\n" ^
-  "\n" ^
-  "  const node = {root: root, body: body, head: head};\n" ^
-  "  msgNodes.set(id, node);\n" ^
-  "  return node;\n" ^
-  "}\n" ^
-  "\n" ^
-  "function addChild(id, text, kind){\n" ^
-  "  const node = ensureNode(id, 'id=' + id);\n" ^
-  "  if(!node) return;\n" ^
-  "  const row = document.createElement('div');\n" ^
-  "  row.textContent = text;\n" ^
-  "  row.style.whiteSpace = 'pre-wrap';\n" ^
-  "  if(kind === 'reply') row.style.color = '#66ccff';\n" ^
-  "  else if(kind === 'failed'){ row.style.color = '#ff5555'; row.style.fontWeight = '700'; }\n" ^
-  "  else row.style.color = '#ffff66';\n" ^
-  "  node.body.appendChild(row);\n" ^
-  "}\n" ^
-  "function startWS(){\n" ^
-  "  try{\n" ^
-  "    const out = document.getElementById('out');\n" ^
-  "    const host = (location.hostname === 'localhost') ? ('127.0.0.1:' + location.port) : location.host;\n" ^
-  "    const url  = 'ws://' + host + '/ws?sid=' + encodeURIComponent(sid);\n" ^
-  "    const ws   = new WebSocket(url);\n" ^
-  "\n" ^
-  "    ws.onopen  = () => { if(out) out.textContent = 'WS connected: ' + url; };\n" ^
-  "    ws.onerror = () => { if(out) out.textContent = 'WS error: ' + url; };\n" ^
-  "    ws.onclose = () => { if(out) out.textContent = 'WS closed: ' + url; };\n" ^
-  "\n" ^
-  "    ws.onmessage = (ev) => {\n" ^
-  "      let msg;\n" ^
-  "      try { msg = JSON.parse(ev.data); } catch(e) { return; }\n" ^
-  "      if(!msg || !msg.type) return;\n" ^
-  "\n" ^
-  "      if(msg.type === 'log'){\n" ^
-  "        const log = document.getElementById('log');\n" ^
-  "        if(!log) return;\n" ^
-  "        const NL = String.fromCharCode(10);\n" ^
-  "        log.textContent += (msg.line || '') + NL;\n" ^
-  "        log.scrollTop = log.scrollHeight;\n" ^
-  "        return;\n" ^
-  "      }\n" ^
-  "\n" ^
-  "      if(msg.type === 'event'){\n" ^
-  "        const box = document.getElementById('events');\n" ^
-  "        if(box){\n" ^
-  "          const line = msg.line || '';\n" ^
-  "          const row = document.createElement('div');\n" ^
-  "          row.textContent = line;\n" ^
-  "          row.style.whiteSpace = 'pre-wrap';\n" ^
-  "          if(line.startsWith('[FAILED]')){ row.style.color='#ff5555'; row.style.fontWeight='700'; }\n" ^
-  "          else if(line.startsWith('[ACCEPTED]')){ row.style.color='#55ff55'; }\n" ^
-  "          else if(line.startsWith('[REPLY]')){ row.style.color='#66ccff'; }\n" ^
-  "          else { row.style.color='#ffff66'; }\n" ^
-  "          box.appendChild(row);\n" ^
-  "          box.scrollTop = box.scrollHeight;\n" ^
-  "        }\n" ^
-  "\n" ^
-  "        // ---- Tree update for ACCEPTED/FAILED (need msg_id) ----\n" ^
-  "        const line = msg.line || '';\n" ^
-  "        const id = extractId(line);\n" ^
-  "        if(id){\n" ^
-  "          if(line.startsWith('[ACCEPTED]')){\n" ^
-  "            const node = ensureNode(id, line);\n" ^
-  "            if(node){ node.head.textContent = line; node.head.style.color = '#55ff55'; }\n" ^
-  "          } else if(line.startsWith('[FAILED]')){\n" ^
-  "            addChild(id, line, 'failed');\n" ^
-  "          } else {\n" ^
-  "            addChild(id, line, 'event');\n" ^
-  "          }\n" ^
-  "        }\n" ^
-  "        return;\n" ^
-  "      }\n" ^
-  "\n" ^
-  "      if(msg.type === 'reply'){\n" ^
-  "        const rep = document.getElementById('replies');\n" ^
-  "        if(rep){\n" ^
-  "          const NL = String.fromCharCode(10);\n" ^
-  "          rep.textContent += (msg.line || '') + NL;\n" ^
-  "          rep.scrollTop = rep.scrollHeight;\n" ^
-  "        }\n" ^
-  "        // ---- Tree update for REPLY ----\n" ^
-  "        const line = msg.line || '';\n" ^
-  "        const id = extractId(line);\n" ^
-  "        if(id) addChild(id, line, 'reply');\n" ^
-  "        return;\n" ^
-  "      }\n" ^
-  "    };\n" ^
-  "  }catch(e){\n" ^
-  "    const out = document.getElementById('out');\n" ^
-  "    if(out) out.textContent = 'startWS exception: ' + e;\n" ^
-  "  }\n" ^
-  "}\n" ^
-  "startWS();\n" ^
-  "document.getElementById('out').textContent = 'WS connecting...'\n" ^
-  "</script>\n" ^
+  "<script src='/app.js'></script>\n" ^
   "</body></html>\n"
-
+			  
 (* ---------- Minimal JSON (only what we need) ---------- *)
 
 type jv =
@@ -866,7 +641,37 @@ let actor_for_sid ~(sid:string) ~(base:string) : string =
   in
   Mutex.unlock sid_actor_mu;
   name
-	
+
+let handle_api_repl (body:string) : (int * string * string) =
+  try
+    match parse_json body with
+    | JObject o ->
+        let cmd =
+          match json_get_string "command" o with
+          | Some s -> s
+          | None -> ""
+        in
+        if cmd = "" then
+          (400, "text/plain; charset=utf-8", "missing command")
+        else
+          (match !repl_command_handler with
+           | None ->
+               (500, "text/plain; charset=utf-8",
+                "repl handler is not registered")
+           | Some f ->
+               let result =
+                 try f cmd
+                 with exn -> "[ERROR] " ^ Printexc.to_string exn
+               in
+               (200, "text/plain; charset=utf-8", result))
+    | _ ->
+        (400, "text/plain; charset=utf-8", "JSON must be an object")
+  with
+  | Json_error m ->
+      (400, "text/plain; charset=utf-8", "bad JSON: " ^ m)
+  | exn ->
+      (500, "text/plain; charset=utf-8", "error: " ^ Printexc.to_string exn)
+  
 let handle_send_direct_json (body:string) : (int * string * string) =
   try
     match parse_json body with
@@ -1185,6 +990,13 @@ let handle_ws (client:file_descr) (headers:(string,string) Hashtbl.t) (q:(string
 
       close_all ()
 
+let read_file (path:string) : string =
+  let ic = open_in path in
+  let len = in_channel_length ic in
+  let s = really_input_string ic len in
+  close_in ic;
+  s
+
 let handle_client (client: file_descr) : unit =
   let ic = in_channel_of_descr client in
   let oc = out_channel_of_descr client in
@@ -1236,11 +1048,13 @@ let handle_client (client: file_descr) : unit =
          );
 	 let code, ctype, resp_body =
            match meth, path with
+	   | "GET", "/app.js" -> (200, "application/javascript; charset=utf-8", read_file "app.js")
            | "GET", "/" -> (200, "text/html; charset=utf-8", html_index ())
            | "GET", "/api/log" -> handle_api_log q
 	   | "GET", "/api/events" -> handle_api_events q  
 	   | "POST", "/api/send" -> let params = parse_form_urlencoded body in handle_send_direct params
            | "POST", "/api/json/send" -> handle_send_direct_json body
+           | "POST", "/api/repl" -> handle_api_repl body
            | "POST", _ when String.length path >= String.length "/api/x/" &&
                             String.sub path 0 (String.length "/api/x/") = "/api/x/" ->
                let key = String.sub path (String.length "/api/x/") (String.length path - String.length "/api/x/") in
@@ -1248,7 +1062,7 @@ let handle_client (client: file_descr) : unit =
                handle_send_exposed ~key params
            | "POST", _ when String.length path >= String.length "/api/json/x/" &&
                             String.sub path 0 (String.length "/api/json/x/") = "/api/json/x/" ->
-               let key = String.sub path (String.length "/api/json/x/") (String.length path - String.length "/api/json/x/") in
+               let key=String.sub path (String.length "/api/json/x/") (String.length path - String.length "/api/json/x/") in
                handle_send_exposed_json ~key body
            | _ -> (404, "text/plain; charset=utf-8", "not found")
          in
