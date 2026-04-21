@@ -350,6 +350,53 @@ let json_escape (s:string) : string =
     s;
   Buffer.contents b
 
+let read_file (path:string) : string =
+  let ic = open_in path in
+  let len = in_channel_length ic in
+  let s = really_input_string ic len in
+  close_in ic;
+  s
+
+let html_index () : string =
+  "<!doctype html>\n" ^
+  "<html>\n" ^
+  "<head>\n" ^
+  "  <meta charset='utf-8'>\n" ^
+  "  <title>ABCL/c+ Web Gateway</title>\n" ^
+  "</head>\n" ^
+  "<body style='font-family:sans-serif'>\n" ^
+  "  <h2>ABCL/c+ Web Gateway</h2>\n" ^
+  "  <p>Send a message to an actor in the running ABCL/c+ process.</p>\n" ^
+  "\n" ^
+  "  <div style='display:flex; gap:24px; align-items:flex-start'>\n" ^
+  "    <div>\n" ^
+  "      <h3>Direct send (JSON)</h3>\n" ^
+  "      <label>to (actor name): <input id='to' value='calc'></label><br>\n" ^
+  "      <label>method: <input id='method' value='add'></label><br>\n" ^
+  "      <label>args (comma sep): <input id='args' value='1,2'></label><br>\n" ^
+  "      <label><input type='checkbox' id='unsafe'> unsafe (skip typecheck)</label><br>\n" ^
+  "      <button onclick='send()'>Send</button>\n" ^
+  "\n" ^ "      <pre id='out' style='background:#f4f4f4; padding:8px; min-height:2em'></pre>\n" ^
+  "\n" ^
+  "      <h4>Actor log</h4>\n" ^
+  "      <pre id='log' style='background:#111; color:#0f0; padding:8px; min-height:8em; max-height:20em; overflow:auto'></pre>\n" ^
+  "\n" ^
+  "      <h4>Events</h4>\n" ^
+  "      <div id='events' style='background:#222; color:#ff0; padding:8px; min-height:6em; max-height:14em; overflow:auto; font-family:monospace'></div>\n" ^
+  "\n" ^
+  "      <h4>Replies</h4>\n" ^
+  "      <pre id='replies' style='background:#eef; padding:8px; min-height:4em; max-height:10em; overflow:auto'></pre>\n" ^
+  "\n" ^
+  "      <h4>Message Tree</h4>\n" ^
+  "      <div id='tree' style='background:#111; color:#ddd; padding:8px; min-height:8em; max-height:24em; overflow:auto; font-family:monospace'></div>\n" ^
+  "    </div>\n" ^
+  "  </div>\n" ^
+  "\n" ^
+  "  <script src='/app.js'></script>\n" ^
+  "</body>\n" ^
+  "</html>\n"
+
+(*
 let html_index () : string =
   "<!doctype html>\n" ^
   "<html><head><meta charset='utf-8'><title>ABCL/c+ Web Gateway</title></head>\n" ^
@@ -377,7 +424,8 @@ let html_index () : string =
   "</div>\n" ^
   "<script src='/app.js'></script>\n" ^
   "</body></html>\n"
-			  
+*)
+  
 (* ---------- Minimal JSON (only what we need) ---------- *)
 
 type jv =
@@ -1048,8 +1096,10 @@ let handle_client (client: file_descr) : unit =
          );
 	 let code, ctype, resp_body =
            match meth, path with
+	   | "GET", "/" -> (200, "text/html; charset=utf-8", html_index ())
 	   | "GET", "/app.js" -> (200, "application/javascript; charset=utf-8", read_file "app.js")
-           | "GET", "/" -> (200, "text/html; charset=utf-8", html_index ())
+           | "GET", "/console_server.js" -> (200, "application/javascript", read_file "console_server.js")
+	   | "GET", "/console_browser.js" -> (200, "application/javascript", read_file "console_browser.js")
            | "GET", "/api/log" -> handle_api_log q
 	   | "GET", "/api/events" -> handle_api_events q  
 	   | "POST", "/api/send" -> let params = parse_form_urlencoded body in handle_send_direct params
