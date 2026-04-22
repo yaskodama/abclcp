@@ -49,3 +49,11 @@ export function StringLit(value) {
 export function Binop(op, left, right) {
   return { type: "Binop", op, left, right };
 }
+
+export function Select(cases, timeoutMs = null, timeoutBody = null) {
+  return { type: "Select", cases, timeoutMs, timeoutBody };
+}
+
+export function SelectCase(method, params, body) {
+  return { type: "SelectCase", method, params, body };
+}

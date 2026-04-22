@@ -46,13 +46,23 @@ window.addEventListener("DOMContentLoaded", () => {
     print("Calc initialized");
   }
 
-  method add(a,b) {
-    print("add received");
-    reply(a + b);
+  method main() {
+    print("waiting...");
+    select {
+      case add(a,b) -> {
+        print("add received");
+        reply(a + b);
+      }
+      timeout 3000 -> {
+        print("timeout occurred");
+      }
+    }
+    print("select finished");
   }
 }
 
 var calc = new Calc();
+send calc.main();
 send calc.add(3,4);
     </textarea>
   `;

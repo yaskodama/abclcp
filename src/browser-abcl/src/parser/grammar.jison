@@ -9,6 +9,10 @@
 "print" return 'PRINT';
 "reply" return 'REPLY';
 "new" return 'NEW';
+"select"               return 'SELECT';
+"case"                 return 'CASE';
+"timeout"              return 'TIMEOUT';
+"->"                   return 'ARROW';
 "{" return '{';
 "}" return '}';
 "(" return '(';
@@ -80,16 +84,31 @@ stmts
 
 
 stmt
-  : VAR IDENT '=' expr ';'
-      { $$ = yy.VarDecl($2, $4); }
-  | SEND IDENT '.' IDENT '(' args ')' ';'
-      { $$ = yy.Send($2, $4, $6, false); }
-  | UNSAFESEND IDENT '.' IDENT '(' args ')' ';'
-      { $$ = yy.Send($2, $4, $6, true); }
-  | PRINT '(' expr ')' ';'
-      { $$ = yy.Print($3); }
-  | REPLY '(' expr ')' ';'
-      { $$ = yy.Reply($3); }
+  : VAR IDENT '=' expr ';'                       { $$ = yy.VarDecl($2, $4); }
+  | SEND IDENT '.' IDENT '(' args ')' ';'        { $$ = yy.Send($2, $4, $6, false); }
+  | UNSAFESEND IDENT '.' IDENT '(' args ')' ';'  { $$ = yy.Send($2, $4, $6, true); }
+  | PRINT '(' expr ')' ';'                       { $$ = yy.Print($3); }
+  | REPLY '(' expr ')' ';'                       { $$ = yy.Reply($3); }
+  | SELECT '{' select_cases timeout_opt '}'      { $$ = yy.Select($3, $4.ms, $4.body); }
+  ;
+
+select_cases
+  : select_cases select_case
+      { $$ = $1.concat([$2]); }
+  | select_case
+      { $$ = [$1]; }
+  ;
+
+select_case
+  : CASE IDENT '(' params ')' ARROW '{' stmts '}'
+      { $$ = yy.SelectCase($2, $4, yy.Seq($8)); }
+  ;
+
+timeout_opt
+  : TIMEOUT INT ARROW '{' stmts '}'
+      { $$ = { ms: Number($2), body: yy.Seq($5) }; }
+  |
+      { $$ = { ms: null, body: null }; }
   ;
 
 args

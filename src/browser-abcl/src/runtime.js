@@ -39,13 +39,32 @@ export class Runtime {
     return actor;
   }
 
+  hasSelectableMethod(actor, methodName) {
+    for (const method of actor.methods.values()) {
+      if (!method.body || !method.body.statements) continue;
+
+      for (const st of method.body.statements) {
+        if (st.type === "Select") {
+          for (const c of st.cases) {
+            if (c.method === methodName) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  knowsMessage(actor, methodName) {
+    return actor.methods.has(methodName) || this.hasSelectableMethod(actor, methodName);
+  }
+
   send(actorName, methodName, args, unsafe = false) {
     const actor = this.actors.get(actorName);
     if (!actor) throw new Error("actor not found: " + actorName);
 
-    if (!unsafe && !actor.methods.has(methodName)) {
+    if (!unsafe && !this.knowsMessage(actor, methodName)) {
       throw new Error(`unknown method: ${actor.className}.${methodName}`);
-    }
+    }      
 
     actor.mailbox.push({ methodName, args, unsafe });
     this.print(`[send] ${actorName}.${methodName}(${args.join(", ")})`);
@@ -69,7 +88,7 @@ export class Runtime {
       throw new Error(`unknown method at runtime: ${actor.className}.${methodName}`);
     }
 
-    const env = {};
+    const env = { __currentActor: actor.name };
     method.params.forEach((p, i) => {
       env[p] = args[i];
     });
@@ -120,6 +139,10 @@ export class Runtime {
         return null;
       }
 
+      case "Select": {
+        return this.evalSelect(stmt, env);
+      }
+	
       default:
         throw new Error("Unsupported statement: " + stmt.type);
     }
@@ -133,6 +156,64 @@ export class Runtime {
       return target;
     }
     throw new Error("Unsupported send target: " + JSON.stringify(target));
+  }
+
+  evalSelect(stmt, env) {
+    // 現段階では env.__currentActor が必要
+    const actorName = env.__currentActor;
+    if (!actorName) {
+      throw new Error("select used outside actor method");
+    }
+
+    const actor = this.actors.get(actorName);
+    if (!actor) {
+      throw new Error("current actor not found: " + actorName);
+    }
+
+    // mailbox から最初に一致する message を探す
+    let matchedIndex = -1;
+    let matchedCase = null;
+    let matchedMsg = null;
+
+    for (let i = 0; i < actor.mailbox.length; i++) {
+      const msg = actor.mailbox[i];
+      for (const c of stmt.cases) {
+        if (msg.methodName === c.method) {
+          matchedIndex = i;
+          matchedCase = c;
+          matchedMsg = msg;
+          break;
+        }
+      }
+      if (matchedCase) break;
+    }
+
+       if (matchedCase) {
+      actor.mailbox.splice(matchedIndex, 1);
+
+      const localEnv = { ...env };
+      matchedCase.params.forEach((p, i) => {
+        localEnv[p] = matchedMsg.args[i];
+      });
+
+      let last = null;
+      for (const st of matchedCase.body.statements) {
+        last = this.evalStmt(st, localEnv);
+      }
+      return last;
+    }
+
+    // timeout があればそれを実行
+    if (stmt.timeoutBody) {
+      this.print(`[timeout] ${stmt.timeoutMs}ms`);
+      let last = null;
+      for (const st of stmt.timeoutBody.statements) {
+        last = this.evalStmt(st, env);
+      }
+      return last;
+    }
+
+    return null;
   }
 
   evalExpr(expr, env) {
