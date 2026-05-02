@@ -1,0 +1,20 @@
+class GeminiService {
+  method generate(prompt) {
+    aios_emit("gemini.prompt:" + prompt);
+    var answer = gemini_generate(prompt);
+    aios_emit("gemini.answer:" + answer);
+    reply(answer);
+  }
+}
+
+var gemini = new GeminiService();
+
+aios_register_service("gemini", "gemini");
+
+print("== Gemini single AI solve ==");
+print(aios_service_info("gemini"));
+
+var answer = aios_now("gemini", "generate", "Solve this briefly: If there are 3 boxes with 4 apples each, how many apples are there? Explain in Japanese.");
+
+print("gemini answer = " + answer);
+print(aios_events());

@@ -1,0 +1,42 @@
+class ModelRouterService {
+  var provider = "gemini";
+
+  method use(name) {
+    provider = name;
+    aios_emit("model.provider:" + provider);
+    reply("ok");
+  }
+
+  method generate(prompt) {
+    aios_emit("model.generate:" + provider);
+    var answer = model_generate(provider, prompt);
+    aios_emit("model.answer:" + answer);
+    reply(answer);
+  }
+}
+
+class RouterAgentService {
+  method solve(problem) {
+    aios_emit("router_agent.problem:" + problem);
+    var prompt = "Solve in Japanese. Keep the final answer concise. Problem: " + problem;
+    var answer = aios_now("model", "generate", prompt);
+    aios_emit("router_agent.answer:" + answer);
+    reply(answer);
+  }
+}
+
+var model = new ModelRouterService();
+var agent = new RouterAgentService();
+
+aios_register_service("model", "model");
+aios_register_service("agent", "agent");
+
+print("== AIOS model router solve ==");
+print(aios_services());
+print(aios_service_info("model"));
+
+aios_now("model", "use", "gemini");
+var result = aios_now("agent", "solve", "箱が3つあり、それぞれにリンゴが4個あります。リンゴは全部で何個ですか。");
+
+print("router result = " + result);
+print(aios_events());

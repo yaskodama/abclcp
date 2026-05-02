@@ -1,5 +1,10 @@
 (* infer.ml *)
 open Types
+
+let verbose =
+  match Sys.getenv_opt "AIOS_QUIET" with
+  | Some "1" | Some "true" | Some "yes" -> ref false
+  | _ -> ref true
 open Typing_env
 open Ast
 
@@ -146,6 +151,42 @@ let rec infer_expr (env:env) (e:expr) : ty =
           )
      | None -> ());
     let ms = Types.lookup_class_methods_inst cls in TActor (cls, ms)
+  | FutureSend (target, mname, args) ->
+      let arg_tys = List.map (infer_expr env) args in
+      begin match target with
+      | RemoteTarget (_hostport, _actor_name) -> ()
+      | LocalTarget vname when vname = "sender" -> ()
+      | LocalTarget vname ->
+          let t_actor = infer_expr env (mk_var vname) in
+          (match repr t_actor with
+           | TActor (cls, _) ->
+               (match Types.lookup_class_method_scheme cls mname with
+                | None ->
+                    Types.type_error ~loc:e.loc
+                      ("no method " ^ mname ^ " in actor(" ^ cls ^ ")")
+                | Some sc ->
+                    (match repr (Types.instantiate sc) with
+                     | TFun (param_tys, _ret_ty) ->
+                         if List.length param_tys <> List.length arg_tys then
+                           Types.type_error ~loc:e.loc "arity mismatch in future send";
+                         List.iter2 (Types.unify ~loc:e.loc) param_tys arg_tys
+                     | ty ->
+                         Types.type_error ~loc:e.loc
+                           ("method " ^ mname ^ " is not a function: "
+                            ^ string_of_ty ty)))
+           | t_non_actor ->
+               Types.type_error ~loc:e.loc
+                 ("future target is not actor: " ^ string_of_ty t_non_actor))
+      end;
+      TFuture TAny
+  | NowSend (target, mname, args) ->
+      ignore (infer_expr env { e with desc = FutureSend (target, mname, args) });
+      TAny
+  | Await e1 ->
+      (match repr (infer_expr env e1) with
+       | TFuture t -> t
+       | TAny -> TAny
+       | t -> Types.type_error ~loc:e.loc ("await expected future, got " ^ string_of_ty_pretty t))
   | Array (elems, _) ->
     begin match elems with
     | [] -> TArray TUnit
@@ -337,9 +378,9 @@ let check_decl (env:env) = function
         (* ★ self をこのクラスのアクターとしてローカル環境に追加 *)
         set env_m "self" (Forall ([], TActor (c.Ast.cname, [])));
 
-        (* ★ メソッド仮引数をローカル環境に束縛（今は float 想定） *)
+        (* Method parameters are message payloads; keep them polymorphic. *)
         List.iter (fun p ->
-          set env_m p (Forall ([], TFloat))
+          set env_m p (Forall ([], TVar (Types.fresh_tvar ())))
         ) m.params;
 
         check_stmt env_m m.body
@@ -460,7 +501,7 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
     in_preinfer := true;
     preinfer_all_classes p env0;           (* ★ 先に全クラスのメソッド型を登録 *)
     in_preinfer := false;
-    Types.debug_print_class_method_schemes ();
+    if !verbose then Types.debug_print_class_method_schemes ();
     List.iter (check_decl env0) p;          (* それから通常どおりトップレベルを検査 *)
     Ok env0
   with

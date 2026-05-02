@@ -44,6 +44,64 @@ let prelude () : env =
   let a1 = fresh_tvar () in
   add_poly e "print" (Forall ([(!a1).id], TFun ([TVar a1], TUnit)));
 
+  (* AI-OS capability introspection *)
+  add_mono e "capabilities" (TFun ([], TArray TString));
+  add_mono e "capability_prims" (TFun ([TString], TArray TString));
+  add_mono e "aios_kernel" (TFun ([], TString));
+  add_mono e "aios_actors" (TFun ([], TArray TString));
+  add_mono e "aios_actor_info" (TFun ([TString], TString));
+  add_mono e "aios_actor_methods" (TFun ([TString], TArray TString));
+  add_mono e "aios_mailbox_len" (TFun ([TString], TInt));
+  add_mono e "aios_register_service" (TFun ([TString; TString], TUnit));
+  add_mono e "aios_services" (TFun ([], TArray TString));
+  add_mono e "aios_service_actor" (TFun ([TString], TString));
+  add_mono e "aios_service_info" (TFun ([TString], TString));
+  add_mono e "aios_now" (TFun ([TString; TString], TAny));
+  add_mono e "aios_now" (TFun ([TString; TString; TString], TAny));
+  add_mono e "aios_now" (TFun ([TString; TString; TFloat], TAny));
+  add_mono e "aios_now" (TFun ([TString; TString; TFloat; TFloat], TAny));
+  add_mono e "aios_now" (TFun ([TString; TString; TString; TString], TAny));
+  let a = fresh_tvar () in
+  add_poly e "aios_now" (Forall ([(!a).id], TFun ([TString; TString; TVar a], TAny)));
+  let a = fresh_tvar () in
+  let b = fresh_tvar () in
+  add_poly e "aios_now" (Forall ([(!a).id; (!b).id], TFun ([TString; TString; TVar a; TVar b], TAny)));
+  let a = fresh_tvar () in
+  let b = fresh_tvar () in
+  let c = fresh_tvar () in
+  add_poly e "aios_now" (Forall ([(!a).id; (!b).id; (!c).id], TFun ([TString; TString; TVar a; TVar b; TVar c], TAny)));
+  add_mono e "aios_future" (TFun ([TString; TString], TFuture TAny));
+  add_mono e "aios_future" (TFun ([TString; TString; TString], TFuture TAny));
+  add_mono e "aios_future" (TFun ([TString; TString; TFloat], TFuture TAny));
+  add_mono e "aios_future" (TFun ([TString; TString; TFloat; TFloat], TFuture TAny));
+  add_mono e "aios_future" (TFun ([TString; TString; TString; TString], TFuture TAny));
+  let a = fresh_tvar () in
+  add_poly e "aios_future" (Forall ([(!a).id], TFun ([TString; TString; TVar a], TFuture TAny)));
+  let a = fresh_tvar () in
+  let b = fresh_tvar () in
+  add_poly e "aios_future" (Forall ([(!a).id; (!b).id], TFun ([TString; TString; TVar a; TVar b], TFuture TAny)));
+  let a = fresh_tvar () in
+  let b = fresh_tvar () in
+  let c = fresh_tvar () in
+  add_poly e "aios_future" (Forall ([(!a).id; (!b).id; (!c).id], TFun ([TString; TString; TVar a; TVar b; TVar c], TFuture TAny)));
+  add_mono e "aios_emit" (TFun ([TString], TInt));
+  add_mono e "aios_events" (TFun ([], TArray TString));
+  add_mono e "aios_events_since" (TFun ([TInt], TArray TString));
+  add_mono e "aios_events_since" (TFun ([TFloat], TArray TString));
+  add_mono e "aios_event_count" (TFun ([], TInt));
+  add_mono e "aios_memory_put" (TFun ([TString; TString], TUnit));
+  add_mono e "aios_memory_get" (TFun ([TString], TString));
+  add_mono e "aios_memory_has" (TFun ([TString], TBool));
+  add_mono e "aios_memory_keys" (TFun ([], TArray TString));
+  add_mono e "aios_task_create" (TFun ([TString], TString));
+  add_mono e "aios_task_set" (TFun ([TString; TString; TString], TUnit));
+  add_mono e "aios_task_get" (TFun ([TString; TString], TString));
+  add_mono e "aios_task_info" (TFun ([TString], TString));
+  add_mono e "aios_tasks" (TFun ([], TArray TString));
+  add_mono e "model_generate" (TFun ([TString; TString], TString));
+  add_mono e "gemini_generate" (TFun ([TString], TString));
+  add_mono e "openai_generate" (TFun ([TString], TString));
+
   (* 2.5.1) 二項算術 *)
   let add_f2 f = add_mono e f (TFun ([TFloat; TFloat], TFloat)) in
   List.iter add_f2 [ "+"; "-"; "*"; "/" ];

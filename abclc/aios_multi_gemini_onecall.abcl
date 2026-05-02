@@ -1,0 +1,23 @@
+class GeminiTeamAI {
+  method solve(problem) {
+    aios_emit("team.problem:" + problem);
+    var prompt = "You are an AIOS team. Simulate three cooperating agents in Japanese: Planner creates a short plan, Solver solves, Reviewer checks. Return concise sections Planner:, Solver:, Reviewer:, Final:. Problem: " + problem;
+    var result = gemini_generate(prompt);
+    aios_emit("team.result:" + result);
+    reply(result);
+  }
+}
+
+var team = new GeminiTeamAI();
+
+aios_register_service("team", "team");
+
+print("== One-call Multi-Gemini AIOS solve ==");
+print(aios_services());
+print(aios_service_info("team"));
+
+var result = aios_now("team", "solve", "箱が3つあり、それぞれにリンゴが4個あります。リンゴは全部で何個ですか。");
+
+print("final result = " + result);
+print("== coordination events ==");
+print(aios_events());

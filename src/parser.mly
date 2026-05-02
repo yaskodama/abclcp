@@ -14,7 +14,7 @@ let mk_stmt1 i d : Ast.stmt = { sloc = loc_of_rhs i; sdesc = d }
 %token <float> FLOATLIT
 %token <int> INTLIT
 %token <string> STRINGLIT
-%token METHOD FLOAT CALL SEND UNSAFESEND REMOTE
+%token METHOD FLOAT CALL SEND UNSAFESEND REMOTE NOW FUTURE AWAIT
 %token IF THEN ELSE WHILE DO
 %token ASSIGN PLUS MINUS TIMES DIV LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA
 %token GE LE GT LT SELF SENDER CLASS
@@ -153,6 +153,9 @@ expr:
   | expr TIMES expr { mk_expr1 2 (Binop ("*", $1, $3)) }
   | expr DIV expr { mk_expr1 2 (Binop ("/", $1, $3)) }
   | NEW ID LPAREN args RPAREN { mk_expr1 1 (New ($2, $4)) }
+  | NOW send_target DOT ID LPAREN args RPAREN { mk_expr1 1 (NowSend ($2, $4, $6)) }
+  | FUTURE send_target DOT ID LPAREN args RPAREN { mk_expr1 1 (FutureSend ($2, $4, $6)) }
+  | AWAIT expr { mk_expr1 1 (Await $2) }
   | ID LPAREN args RPAREN { mk_expr1 1 (Call ($1, $3)) }
   | expr GE expr { mk_expr1 2 (Binop (">=", $1, $3)) }
   | expr LE expr { mk_expr1 2 (Binop ("<=", $1, $3)) }

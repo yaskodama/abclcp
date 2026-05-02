@@ -90,6 +90,9 @@ let pp_token = function
   | VAR       -> "VAR"
   | CALL      -> "CALL"
   | SEND      -> "SEND"
+  | NOW       -> "NOW"
+  | FUTURE    -> "FUTURE"
+  | AWAIT     -> "AWAIT"
   | SELF      -> "SELF"
   | SENDER    -> "SENDER"
   | IF        -> "IF"
@@ -210,9 +213,14 @@ let parse_args_list (inside_paren : string) : Ast.expr list =
   split_args inside_paren |> List.map parse_arg_token
 
 let script_file = ref None
+let quiet =
+  match Sys.getenv_opt "AIOS_QUIET" with
+  | Some "1" | Some "true" | Some "yes" -> ref true
+  | _ -> ref false
 
 let speclist = [
   ("-f", Arg.String (fun s -> script_file := Some s), "Script file to execute at startup");
+  ("-q", Arg.Unit (fun () -> quiet := true), "Quiet mode: suppress token, AST, and type debug output");
 ]
 
 let parse_input (s : string) : Ast.program =
@@ -264,7 +272,7 @@ let load_file (fname : string) : Ast.program option =
     close_in ic;
 
     (* === 追加: トークン列を表示 === *)
-    Printf.printf "[Token stream]\n%!";
+    if not !quiet then Printf.printf "[Token stream]\n%!";
     let lexbuf = Lexing.from_string src in
     let rec _show_tokens () =
       match token lexbuf with
@@ -310,8 +318,10 @@ let load_file (fname : string) : Ast.program option =
       let lb = Lexing.from_string src in
       Parser.program Lexer.token lb
     in
-    print_endline "[AST]";
-    Ast.dump_program decls;
+    if not !quiet then begin
+      print_endline "[AST]";
+      Ast.dump_program decls
+    end;
 
     if Typecheck.run decls then begin
       Printf.printf "[Loaded] %s\n%!" fname;
@@ -326,6 +336,10 @@ let load_file (fname : string) : Ast.program option =
 
 let usage_msg = "Usage: abclrepl_thread [-f script_file]"
 
+let string_of_send_target = function
+  | LocalTarget t -> t
+  | RemoteTarget (hp, a) -> "remote(" ^ hp ^ ", " ^ a ^ ")"
+
 let rec string_of_expr (e : Ast.expr) =
   match e.desc with
   | Float f -> string_of_float f
@@ -337,11 +351,14 @@ let rec string_of_expr (e : Ast.expr) =
   | Int i -> string_of_int i
   | New (cls, args) -> cls ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
   | Array (_,_) -> "array"
+  | NowSend (tgt, meth, args) ->
+      "now " ^ string_of_send_target tgt ^ "." ^ meth ^ "(" ^
+      String.concat ", " (List.map string_of_expr args) ^ ")"
+  | FutureSend (tgt, meth, args) ->
+      "future " ^ string_of_send_target tgt ^ "." ^ meth ^ "(" ^
+      String.concat ", " (List.map string_of_expr args) ^ ")"
+  | Await e -> "await " ^ string_of_expr e
   
-let string_of_send_target = function
-  | LocalTarget t -> t
-  | RemoteTarget (hp, a) -> "remote(" ^ hp ^ ", " ^ a ^ ")"
-
 let rec string_of_stmt (st: Ast.stmt) =
   match st.sdesc with
   | Assign (v, e) -> v ^ " = " ^ string_of_expr e
@@ -405,6 +422,7 @@ let rec process_command line =
         (String.concat ", " (List.map (fun (m,a)-> Printf.sprintf "%s/%d" m a) ms_arity));
     | _ -> ()
     ) !program_buffer;
+    let top_actor = Eval_thread.create_actor "<top>" "<top>" in
     List.iter (function
     | Global s -> (
       match s.sdesc with
@@ -438,7 +456,11 @@ let rec process_command line =
                 else
                   Eval_thread.send_message ~from:"<new>" name (mk_stmt (CallStmt ("init", args)))
 		  ));
-        | _ -> ())
+            Hashtbl.replace top_actor.env name (VActor (cls, Hashtbl.create 0))
+        | _ ->
+            let v = Eval_thread.eval_expr top_actor rhs in
+            Hashtbl.replace top_actor.env name v;
+            Eval_thread.set_var name v)
       | Send (tgt, mname, args) -> (
         pending_global_sends := (fun () ->
           Eval_thread.send_message ~from:"<top>" (string_of_send_target tgt) (mk_stmt (CallStmt (mname, args)))
@@ -449,9 +471,8 @@ let rec process_command line =
           ) :: !pending_global_sends)
       | CallStmt (fname, args) -> (
           (* Top-level call (for prims like web_listen / web_expose / print) *)
-          let dummy = Eval_thread.create_actor "<top>" "<top>" in
           try
-            let vs = List.map (Eval_thread.eval_expr dummy) args in
+            let vs = List.map (Eval_thread.eval_expr top_actor) args in
             ignore (Eval_thread.call_prim fname vs)
           with exn ->
             Printf.printf "[Top-level CallStmt error] %s\n%!" (Printexc.to_string exn)
@@ -721,10 +742,12 @@ let start_repl () =
                 loop ()
               | Ok decls ->
             (* AST表示（既存のダンプ関数を使う） *)
-                print_endline "[AST]";
-                Ast.dump_program decls;
+                if not !quiet then begin
+                  print_endline "[AST]";
+                  Ast.dump_program decls
+                end;
                 (* 型検査＆登録 *)
-                if Typecheck.run decls then begin
+                if Typecheck.run (!program_buffer @ decls) then begin
                   program_buffer := !program_buffer @ decls;
                   (* 必要ならクラスの register など、既存の load/compile と同じ処理をここで呼ぶ *)
                   Printf.printf "[Loaded] <repl>\n%!"
@@ -764,6 +787,9 @@ let prim_reply (args : value list) : value =
   match args with
   | [v] ->
       let s = string_of_value v in
+      (match get_current_msg_id () with
+       | Some id -> resolve_future id v
+       | None -> ());
       push_web_evt ("[REPLY] " ^ s);
       VUnit
   | _ ->
@@ -771,12 +797,13 @@ let prim_reply (args : value list) : value =
 
 let () =
   Arg.parse speclist (fun _ -> ()) "Usage: abclrepl_thread [-f script_file]";
+  Infer.verbose := not !quiet;
 
   (match !script_file with
    | Some f -> Printf.printf "[info] -f: %s\n%!" f
    | None   -> Printf.printf "[info] -f: (none)\n%!");
 
-  add_prim "array_empty" (function
+  add_prim ~capability:"Core.Array" ~psig:"() -> any[]" ~description:"create an empty array" "array_empty" (function
     | [] -> make_array [||]
     | _  -> failwith "array_empty(): arity 0 expected");
 
@@ -785,12 +812,12 @@ let () =
      web_expose("/calc", "calc")
      Then open: http://localhost:port/ and send messages from your browser.
   *)
-  add_prim "web_listen" (function
+  add_prim ~capability:"Web" ~psig:"int -> unit" ~description:"start the ABCL/c+ web gateway" "web_listen" (function
     | [VInt p] -> Web_gateway.start ~port:p; VUnit
     | [VFloat f] -> Web_gateway.start ~port:(int_of_float f); VUnit
     | _ -> failwith "web_listen(port): arity 1 expected (int/float)");
 
-  add_prim "web_expose" (function
+  add_prim ~capability:"Web" ~psig:"(string, string) -> unit" ~description:"expose an actor through the web gateway" "web_expose" (function
     | [VString path; VString actor_name] ->
         let key =
           let p = String.trim path in
@@ -801,16 +828,18 @@ let () =
         VUnit
     | _ -> failwith "web_expose(path, actor): arity 2 expected (string,string)");
 
-  add_prim "reply" (function
+  add_prim ~capability:"Console" ~psig:"any -> unit" ~description:"emit a correlated reply event" "reply" (function
   | [v] ->
       let s = string_of_value v in
       (match get_current_msg_id () with
-       | Some id -> push_web_evt (Printf.sprintf "[REPLY] id=%s value=%s" id s)
+       | Some id ->
+           resolve_future id v;
+           push_web_evt (Printf.sprintf "[REPLY] id=%s value=%s" id s)
        | None    -> push_web_evt (Printf.sprintf "[REPLY] value=%s" s));
       VUnit
   | _ -> failwith "reply(x): arity 1 expected");
 
-  add_prim "spawn" (function
+  add_prim ~capability:"Actor" ~psig:"(string, string) -> unit" ~description:"spawn an actor from a registered class" "spawn" (function
   | [VString class_name; VString actor_name] ->
       Eval_thread.spawn_actor ~class_name ~actor_name;  (* これを実装 *)
       VUnit

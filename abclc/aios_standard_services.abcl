@@ -1,0 +1,50 @@
+class MemoryService {
+  var last_key = "";
+  var last_value = "";
+
+  method put(key, value) {
+    last_key = key;
+    last_value = value;
+    reply("ok");
+  }
+
+  method get(key) {
+    reply(last_value);
+  }
+}
+
+class ModelService {
+  method generate(prompt) {
+    reply("model: " + prompt);
+  }
+}
+
+class ToolService {
+  method run(name, input) {
+    reply("tool " + name + ": " + input);
+  }
+}
+
+var memory = new MemoryService();
+var model = new ModelService();
+var tool = new ToolService();
+
+aios_register_service("memory", "memory");
+aios_register_service("model", "model");
+aios_register_service("tool", "tool");
+
+print(aios_services());
+print(capability_prims("AIOS.Service"));
+
+var put_ok = aios_now("memory", "put", "topic", "AIOS");
+print("memory.put = " + put_ok);
+
+var memory_value = aios_now("memory", "get", "topic");
+print("memory.get = " + memory_value);
+
+var model_future = aios_future("model", "generate", "hello");
+var model_text = await model_future;
+print("model.generate = " + model_text);
+
+var tool_text = aios_now("tool", "run", "echo", "done");
+print("tool.run = " + tool_text);

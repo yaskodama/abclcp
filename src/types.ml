@@ -12,6 +12,7 @@ and ty =
   | TFun of ty list * ty
   | TActor of string * (string * ty) list
   | TArray of ty
+  | TFuture of ty
   | TAny
   | TRecord of (string * ty) list
 and scheme = Forall of int list * ty
@@ -140,6 +141,7 @@ let rec string_of_ty (t : ty) : string =
       in
       "{" ^ fs ^ "}"
   | TArray t1 -> Printf.sprintf "%s array" (string_of_ty t1)
+  | TFuture t1 -> Printf.sprintf "future %s" (string_of_ty t1)
   | TFun (ps, r) ->
     let ps_s =
       match ps with
@@ -160,6 +162,7 @@ let rec occurs (v : tvar ref) (t : ty) : bool =
   match repr t with
   | TVar v'      -> v == v'
   | TArray t1    -> occurs v t1
+  | TFuture t1   -> occurs v t1
   | TFun(ps,r)   -> List.exists (occurs v) ps || occurs v r
   | _            -> false
 
@@ -181,6 +184,8 @@ let rec unify ?(loc = Location.dummy) (t1 : ty) (t2 : ty) : unit =
       ()
   | TArray a, TArray b ->
       unify ~loc a b  (* ★ loc を引き継ぐ *)
+  | TFuture a, TFuture b ->
+      unify ~loc a b
   | TFun (ps1, r1), TFun (ps2, r2) ->
       if List.length ps1 <> List.length ps2 then
         raise (Type_error (loc, "arity mismatch"));
@@ -214,6 +219,7 @@ let rec prune t =
            (!tv).link <- Some t'';
            t'')
   | TArray t1 -> TArray (prune t1)
+  | TFuture t1 -> TFuture (prune t1)
   | TRecord fs -> TRecord (List.map (fun (l,t1) -> (l, prune t1)) fs)
   | TActor (n,ms) -> TActor (n, List.map (fun (m,t1)->(m,prune t1)) ms)
   | TFun (ps,r) -> TFun (List.map prune ps, prune r)
@@ -237,6 +243,7 @@ let string_of_ty_pretty (t : ty) : string =
     match prune ty with
     | TVar v      -> name_of (!v).id
     | TArray t1   -> go t1 ^ "[]"
+    | TFuture t1  -> "future " ^ go t1
     | TRecord fs  ->
         "{" ^ (fs |> List.map (fun (l,t)-> l ^ " : " ^ go t) |> String.concat "; ") ^ "}"
     | TActor(n,ms) ->
@@ -266,6 +273,7 @@ let rec ftv_ty t =
        | None -> ISet.singleton (!tv).id
        | Some t' -> ftv_ty t')
   | TArray t1 -> ftv_ty t1
+  | TFuture t1 -> ftv_ty t1
   | TRecord fs ->
       List.fold_left (fun acc (_,t1)->ISet.union acc (ftv_ty t1)) ISet.empty fs
   | TActor (_n,ms) ->
@@ -286,6 +294,7 @@ let instantiate (Forall (qs, t)) : ty =
     match ty with
     | TInt | TFloat | TBool | TString | TAny | TUnit -> ty
     | TArray t1 -> TArray (inst t1)
+    | TFuture t1 -> TFuture (inst t1)
     | TRecord fs -> TRecord (List.map (fun (l,t1)->(l,inst t1)) fs)
     | TActor (n,ms) -> TActor (n, List.map (fun (m,t1)->(m,inst t1)) ms)
     | TFun (ps,r) -> TFun (List.map inst ps, inst r)

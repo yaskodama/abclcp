@@ -1,0 +1,55 @@
+class MemoryService {
+  var last_key = "";
+  var last_value = "";
+
+  method put(key, value) {
+    last_key = key;
+    last_value = value;
+    reply("ok");
+  }
+
+  method get(key) {
+    reply(last_value);
+  }
+}
+
+class ModelService {
+  method generate(prompt) {
+    reply("plan: " + prompt);
+  }
+}
+
+class ToolService {
+  method run(name, input) {
+    reply("tool " + name + " -> " + input);
+  }
+}
+
+class AgentService {
+  method handle(input) {
+    aios_emit("agent.observe " + input);
+    aios_now("memory", "put", "last_input", input);
+
+    var plan_future = aios_future("model", "generate", input);
+    var plan = await plan_future;
+    aios_emit("agent.plan " + plan);
+
+    var result = aios_now("tool", "run", "echo", plan);
+    aios_emit("agent.act " + result);
+    reply(result);
+  }
+}
+
+var memory = new MemoryService();
+var model = new ModelService();
+var tool = new ToolService();
+var agent = new AgentService();
+
+aios_register_service("memory", "memory");
+aios_register_service("model", "model");
+aios_register_service("tool", "tool");
+aios_register_service("agent", "agent");
+
+var output = aios_now("agent", "handle", "build");
+print("agent output = " + output);
+print(aios_events());

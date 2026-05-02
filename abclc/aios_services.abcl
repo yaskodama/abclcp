@@ -1,0 +1,28 @@
+class MemoryService {
+  var last_key = 0.;
+  var last_value = 0.;
+
+  method put(key, value) {
+    last_key = key;
+    last_value = value;
+    reply("ok");
+  }
+
+  method get(key) {
+    reply(last_value);
+  }
+}
+
+var memory = new MemoryService();
+
+aios_register_service("memory", "memory");
+print(aios_services());
+print(aios_service_info("memory"));
+print(aios_service_actor("memory"));
+
+var ok = now memory.put(1., 42.);
+print("memory put = " + ok);
+
+var f = future memory.get(1.);
+var value = await f;
+print("memory get = " + value);

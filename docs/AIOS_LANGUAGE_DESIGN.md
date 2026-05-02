@@ -276,6 +276,13 @@ now target.add(1., 2.) : float
 
 設計上は、`now` は「同期境界」を明示する型つき send である。
 
+実装メモ:
+
+- 2026-05-02 時点で、最小実装として `now target.method(args)` は利用可能。
+- 現在は method 戻り値型が AST に無いため、型検査上の戻り値は `any` として扱う。
+- runtime では `future` message を作成して即 `await` する。
+- 呼び出し先 method は `reply(value)` で結果を返す。
+
 ### `future` Send
 
 `future` は結果を後で受け取る非同期 message send とする。
@@ -331,6 +338,13 @@ is_done   : future t -> bool
 初期実装では `await` のみでもよい。
 
 `future` は現在の `reply` / `msg_id` / session log の仕組みと相性がよい。runtime では message id と future object を対応づけ、reply が来たら future を resolve する。
+
+実装メモ:
+
+- 2026-05-02 時点で、最小実装として `future target.method(args)` と `await f` は利用可能。
+- 型は `future any` として扱う。
+- `reply(value)` が対応する future を resolve する。
+- remote future send はまだ未実装で、ローカル actor を対象にする。
 
 ### Send Modes
 

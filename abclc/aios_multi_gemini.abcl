@@ -1,0 +1,69 @@
+class GeminiPlannerAI {
+  method plan(problem) {
+    aios_emit("planner.observe:" + problem);
+    var prompt = "You are the planner AI in an AIOS. Create a short Japanese solution plan for this problem. Problem: " + problem;
+    var plan = gemini_generate(prompt);
+    aios_emit("planner.plan:" + plan);
+    reply(plan);
+  }
+}
+
+class GeminiSolverAI {
+  method solve(problem, plan) {
+    aios_emit("solver.using_plan:" + plan);
+    var prompt = "You are the solver AI in an AIOS. Solve in Japanese using this plan. Problem: " + problem + " Plan: " + plan;
+    var answer = gemini_generate(prompt);
+    aios_emit("solver.answer:" + answer);
+    reply(answer);
+  }
+}
+
+class GeminiReviewerAI {
+  method review(problem, answer) {
+    aios_emit("reviewer.check:" + answer);
+    var prompt = "You are the reviewer AI in an AIOS. Check the answer briefly in Japanese. Problem: " + problem + " Answer: " + answer;
+    var review = gemini_generate(prompt);
+    aios_emit("reviewer.review:" + review);
+    reply(review);
+  }
+}
+
+class GeminiCoordinatorAI {
+  method solve(problem) {
+    aios_emit("coordinator.problem:" + problem);
+
+    var plan_future = aios_future("planner", "plan", problem);
+    var plan = await plan_future;
+    aios_emit("coordinator.plan:" + plan);
+
+    var answer_future = aios_future("solver", "solve", problem, plan);
+    var answer = await answer_future;
+    aios_emit("coordinator.answer:" + answer);
+
+    var review_future = aios_future("reviewer", "review", problem, answer);
+    var review = await review_future;
+    aios_emit("coordinator.review:" + review);
+
+    reply("answer: " + answer + " review: " + review);
+  }
+}
+
+var planner = new GeminiPlannerAI();
+var solver = new GeminiSolverAI();
+var reviewer = new GeminiReviewerAI();
+var coordinator = new GeminiCoordinatorAI();
+
+aios_register_service("planner", "planner");
+aios_register_service("solver", "solver");
+aios_register_service("reviewer", "reviewer");
+aios_register_service("coordinator", "coordinator");
+
+print("== Multi-Gemini AIOS cooperative solve ==");
+print(aios_services());
+print(aios_service_info("coordinator"));
+
+var result = aios_now("coordinator", "solve", "箱が3つあり、それぞれにリンゴが4個あります。リンゴは全部で何個ですか。");
+
+print("final result = " + result);
+print("== coordination events ==");
+print(aios_events());

@@ -1,0 +1,20 @@
+class OpenAIService {
+  method generate(prompt) {
+    aios_emit("openai.prompt:" + prompt);
+    var answer = openai_generate(prompt);
+    aios_emit("openai.answer:" + answer);
+    reply(answer);
+  }
+}
+
+var openai = new OpenAIService();
+
+aios_register_service("openai", "openai");
+
+print("== OpenAI single AI solve ==");
+print(aios_service_info("openai"));
+
+var answer = aios_now("openai", "generate", "Solve this briefly: If there are 3 boxes with 4 apples each, how many apples are there? Explain in Japanese.");
+
+print("openai answer = " + answer);
+print(aios_events());

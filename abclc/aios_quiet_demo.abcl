@@ -1,0 +1,14 @@
+class QuietDemoService {
+  method run() {
+    aios_emit("quiet_demo.run");
+    reply("quiet demo ok");
+  }
+}
+
+var demo = new QuietDemoService();
+
+aios_register_service("demo", "demo");
+
+print("== AIOS quiet demo ==");
+print(aios_now("demo", "run"));
+print(aios_events());

@@ -13,6 +13,15 @@ type value =
   | VUnit
   | VActor of string * (string, value) Hashtbl.t
   | VArray of value array * Types.ty option
+  | VFuture of future_state
+
+and future_state = {
+  fid : string;
+  fmutex : Mutex.t;
+  fcond : Condition.t;
+  mutable fresult : value option;
+  mutable ferror : string option;
+}
 
 type mmessage = {
   from : string;
@@ -43,6 +52,64 @@ let sid_log_limit = 500
 let current_msg_id : string option ref = ref None
 let set_current_msg_id (id:string option) = current_msg_id := id
 let get_current_msg_id () = !current_msg_id
+
+let future_mu = Mutex.create ()
+let future_next_id = ref 0
+let future_table : (string, future_state) Hashtbl.t = Hashtbl.create 64
+
+let create_future () : future_state =
+  Mutex.lock future_mu;
+  incr future_next_id;
+  let id = "f-" ^ string_of_int !future_next_id in
+  Mutex.unlock future_mu;
+  let f = {
+    fid = id;
+    fmutex = Mutex.create ();
+    fcond = Condition.create ();
+    fresult = None;
+    ferror = None;
+  } in
+  Mutex.lock future_mu;
+  Hashtbl.replace future_table id f;
+  Mutex.unlock future_mu;
+  f
+
+let resolve_future (id:string) (v:value) : unit =
+  Mutex.lock future_mu;
+  let f = Hashtbl.find_opt future_table id in
+  Mutex.unlock future_mu;
+  match f with
+  | None -> ()
+  | Some f ->
+      Mutex.lock f.fmutex;
+      f.fresult <- Some v;
+      Condition.broadcast f.fcond;
+      Mutex.unlock f.fmutex
+
+let reject_future (id:string) (reason:string) : unit =
+  Mutex.lock future_mu;
+  let f = Hashtbl.find_opt future_table id in
+  Mutex.unlock future_mu;
+  match f with
+  | None -> ()
+  | Some f ->
+      Mutex.lock f.fmutex;
+      f.ferror <- Some reason;
+      Condition.broadcast f.fcond;
+      Mutex.unlock f.fmutex
+
+let await_future (f:future_state) : value =
+  Mutex.lock f.fmutex;
+  while f.fresult = None && f.ferror = None do
+    Condition.wait f.fcond f.fmutex
+  done;
+  let result = f.fresult in
+  let error = f.ferror in
+  Mutex.unlock f.fmutex;
+  match result, error with
+  | Some v, _ -> v
+  | None, Some msg -> failwith ("future rejected: " ^ msg)
+  | None, None -> failwith "future await failed"
 
 (* current actor name while executing a message (for session log) *)
 let current_actor_name : string option ref = ref None
@@ -334,6 +401,7 @@ let rec string_of_value v =
         a |> Array.to_list |> List.map string_of_value |> String.concat ", "
       in
       "[" ^ items ^ "]"
+  | VFuture f -> "<future:" ^ f.fid ^ ">"
 
 let pp_recv = function
   | Var id -> id
@@ -347,6 +415,7 @@ let type_name_of_value = function
   | VUnit     -> "unit"
   | VActor _  -> "actor"
   | VArray _  -> "array"
+  | VFuture _ -> "future"
 
 let lookup_opt (env : (string, 'a) Hashtbl.t) (k : string) : 'a option =
   Hashtbl.find_opt env k
@@ -378,6 +447,7 @@ let to_bool = function
   | VUnit -> false
   | VActor _   -> failwith "actor is not allowed as condition"
   | VArray (_,_)   -> failwith "array is not allowed as condition"
+  | VFuture _ -> failwith "future is not allowed as condition"
   | VInt i -> i <> 0
 
 let as_bool = function
@@ -387,6 +457,7 @@ let as_bool = function
   | VUnit     -> false
   | VActor _  -> failwith "actor is not allowed as condition"
   | VArray (_,_)   -> failwith "array is not allowed as condition"
+  | VFuture _ -> failwith "future is not allowed as condition"
   | VInt i -> i <> 0
 
 let as_float (v : value) : float =
@@ -422,10 +493,12 @@ let to_string_plain = function
                 | VBool b   -> if b then "true" else "false"
                 | VUnit     -> "()"
                 | VActor (n,_)  -> "<actor:" ^ n ^ ">"
-                | VArray (_,_)  -> "<array>")
+                | VArray (_,_)  -> "<array>"
+                | VFuture f -> "<future:" ^ f.fid ^ ">")
           |> String.concat ", "
       in
       "[" ^ items ^ "]"
+  | VFuture f -> "<future:" ^ f.fid ^ ">"
 
 (* 追加: 数値かどうか判定＆Floatに昇格するヘルパ *)
 let is_number = function
@@ -464,7 +537,7 @@ let apply_binop op v1 v2 =
     failwith ("unsupported binop/operands: " ^ op)
 
 let expr_of_value = function
-  | VInt n -> String (string_of_int n)
+  | VInt n -> Int n
   | VFloat f  -> Float f
   | VString s -> String s
   | VBool  b  -> String (if b then "true" else "false")  (* Bool/Unit の式型が無ければ文字列化でOK *)
@@ -480,10 +553,12 @@ let expr_of_value = function
                 | VBool b   -> if b then "true" else "false"
                 | VUnit     -> "()"
                 | VActor (n,_)  -> "<actor:" ^ n ^ ">"
-                | VArray (_,_)  -> "<array>")
+                | VArray (_,_)  -> "<array>"
+                | VFuture f -> "<future:" ^ f.fid ^ ">")
           |> String.concat ", "
       in
       String ("[" ^ items ^ "]")
+  | VFuture f -> String ("<future:" ^ f.fid ^ ">")
       
 (* === Value extractors === *)
 let get_var_a (actor:actor) (x:string) : value =
@@ -545,6 +620,7 @@ let prim_typeof =
        let s = Types.string_of_ty_pretty ty in
 	VString (s^"[]")
      | [VArray (_, None)] -> VString "array"
+     | [VFuture _] -> VString "future any"
      | _ -> failwith "typeof: expected exactly one argument")
 
 (* ---- Helpers for array prims ---- *)
@@ -560,6 +636,363 @@ let expect_index (v:value) =
   | _ -> failwith "array_*: index must be int/float"
 
 let make_array (a:value array) = VArray (a,None)
+
+type primitive_info = {
+  pname : string;
+  capability : string;
+  psig : string;
+  pdesc : string;
+}
+
+let static_primitive_catalog = [
+  { pname = "sin"; capability = "Core.Math"; psig = "float -> float"; pdesc = "sine" };
+  { pname = "cos"; capability = "Core.Math"; psig = "float -> float"; pdesc = "cosine" };
+  { pname = "tan"; capability = "Core.Math"; psig = "float -> float"; pdesc = "tangent" };
+  { pname = "asin"; capability = "Core.Math"; psig = "float -> float"; pdesc = "arc sine" };
+  { pname = "acos"; capability = "Core.Math"; psig = "float -> float"; pdesc = "arc cosine" };
+  { pname = "atan"; capability = "Core.Math"; psig = "float -> float"; pdesc = "arc tangent" };
+  { pname = "sqrt"; capability = "Core.Math"; psig = "float -> float"; pdesc = "square root" };
+  { pname = "exp"; capability = "Core.Math"; psig = "float -> float"; pdesc = "exponential" };
+  { pname = "log10"; capability = "Core.Math"; psig = "float -> float"; pdesc = "base-10 logarithm" };
+  { pname = "abs"; capability = "Core.Math"; psig = "float -> float"; pdesc = "absolute value" };
+  { pname = "floor"; capability = "Core.Math"; psig = "float -> float"; pdesc = "floor" };
+  { pname = "ceil"; capability = "Core.Math"; psig = "float -> float"; pdesc = "ceiling" };
+  { pname = "round"; capability = "Core.Math"; psig = "float -> float"; pdesc = "round" };
+  { pname = "typeof"; capability = "Core.Introspection"; psig = "any -> string"; pdesc = "runtime type description" };
+  { pname = "actor_dump"; capability = "Actor.Introspection"; psig = "actor -> unit"; pdesc = "print actor type information" };
+  { pname = "print"; capability = "Console"; psig = "any -> unit"; pdesc = "print a value" };
+  { pname = "wait"; capability = "Time"; psig = "float -> unit"; pdesc = "delay in milliseconds" };
+  { pname = "sdl_init"; capability = "UI.SDL"; psig = "(int|float, int|float) -> unit"; pdesc = "initialize SDL window" };
+  { pname = "sdl_clear"; capability = "UI.SDL"; psig = "() -> unit"; pdesc = "clear SDL window" };
+  { pname = "sdl_present"; capability = "UI.SDL"; psig = "() -> unit"; pdesc = "present SDL frame" };
+  { pname = "sdl_line"; capability = "UI.SDL"; psig = "(number, number, number, number) -> unit"; pdesc = "draw a line" };
+  { pname = "sdl_erase_line"; capability = "UI.SDL"; psig = "(number, number, number, number) -> unit"; pdesc = "erase a line" };
+  { pname = "array_empty"; capability = "Core.Array"; psig = "() -> any[]"; pdesc = "create an empty array" };
+  { pname = "array_len"; capability = "Core.Array"; psig = "any[] -> int"; pdesc = "array length" };
+  { pname = "array_get"; capability = "Core.Array"; psig = "(any[], int) -> any"; pdesc = "array lookup" };
+  { pname = "array_set"; capability = "Core.Array"; psig = "(any[], int, any) -> any[]"; pdesc = "persistent array update" };
+  { pname = "array_push"; capability = "Core.Array"; psig = "(any[], any) -> any[]"; pdesc = "append an array element" };
+  { pname = "aios_kernel"; capability = "AIOS.Kernel"; psig = "() -> string"; pdesc = "kernel summary" };
+  { pname = "aios_actors"; capability = "AIOS.Kernel"; psig = "() -> string[]"; pdesc = "list registered actors" };
+  { pname = "aios_actor_info"; capability = "AIOS.Kernel"; psig = "string -> string"; pdesc = "describe one actor" };
+  { pname = "aios_actor_methods"; capability = "AIOS.Kernel"; psig = "string -> string[]"; pdesc = "list actor methods" };
+  { pname = "aios_mailbox_len"; capability = "AIOS.Kernel"; psig = "string -> int"; pdesc = "actor mailbox length" };
+  { pname = "aios_register_service"; capability = "AIOS.Service"; psig = "(string, string) -> unit"; pdesc = "bind service name to actor" };
+  { pname = "aios_services"; capability = "AIOS.Service"; psig = "() -> string[]"; pdesc = "list registered services" };
+  { pname = "aios_service_actor"; capability = "AIOS.Service"; psig = "string -> string"; pdesc = "look up service actor" };
+  { pname = "aios_service_info"; capability = "AIOS.Service"; psig = "string -> string"; pdesc = "describe one service" };
+  { pname = "aios_now"; capability = "AIOS.Service"; psig = "(service, method, args...) -> any"; pdesc = "synchronous service request" };
+  { pname = "aios_future"; capability = "AIOS.Service"; psig = "(service, method, args...) -> future any"; pdesc = "asynchronous service request" };
+  { pname = "aios_emit"; capability = "AIOS.Event"; psig = "string -> int"; pdesc = "append a kernel event" };
+  { pname = "aios_events"; capability = "AIOS.Event"; psig = "() -> string[]"; pdesc = "list kernel events" };
+  { pname = "aios_events_since"; capability = "AIOS.Event"; psig = "int -> string[]"; pdesc = "list kernel events after id" };
+  { pname = "aios_event_count"; capability = "AIOS.Event"; psig = "() -> int"; pdesc = "next kernel event id" };
+  { pname = "aios_memory_put"; capability = "AIOS.Memory"; psig = "(key, value) -> unit"; pdesc = "store a string value in kernel memory" };
+  { pname = "aios_memory_get"; capability = "AIOS.Memory"; psig = "key -> string"; pdesc = "read a string value from kernel memory" };
+  { pname = "aios_memory_has"; capability = "AIOS.Memory"; psig = "key -> bool"; pdesc = "test if a key exists in kernel memory" };
+  { pname = "aios_memory_keys"; capability = "AIOS.Memory"; psig = "() -> string[]"; pdesc = "list kernel memory keys" };
+  { pname = "aios_task_create"; capability = "AIOS.Task"; psig = "title -> string"; pdesc = "create a kernel task" };
+  { pname = "aios_task_set"; capability = "AIOS.Task"; psig = "(task, field, value) -> unit"; pdesc = "set a task field" };
+  { pname = "aios_task_get"; capability = "AIOS.Task"; psig = "(task, field) -> string"; pdesc = "read a task field" };
+  { pname = "aios_task_info"; capability = "AIOS.Task"; psig = "task -> string"; pdesc = "describe a task" };
+  { pname = "aios_tasks"; capability = "AIOS.Task"; psig = "() -> string[]"; pdesc = "list task ids" };
+  { pname = "model_generate"; capability = "AIOS.Model"; psig = "(provider, prompt) -> string"; pdesc = "generate text with a named model provider" };
+  { pname = "gemini_generate"; capability = "AIOS.Model.Gemini"; psig = "string -> string"; pdesc = "generate text with Gemini" };
+  { pname = "openai_generate"; capability = "AIOS.Model.OpenAI"; psig = "string -> string"; pdesc = "generate text with OpenAI Responses API" };
+]
+
+let dynamic_primitive_catalog : (string, primitive_info) Hashtbl.t = Hashtbl.create 32
+
+let register_dynamic_primitive ?(capability="Dynamic") ?(psig="any") ?(description="runtime primitive") name =
+  Hashtbl.replace dynamic_primitive_catalog name
+    { pname = name; capability; psig; pdesc = description }
+
+let all_primitive_infos () =
+  let dyn = Hashtbl.to_seq_values dynamic_primitive_catalog |> List.of_seq in
+  let merged = Hashtbl.create 64 in
+  List.iter (fun info -> Hashtbl.replace merged info.pname info) static_primitive_catalog;
+  List.iter (fun info -> Hashtbl.replace merged info.pname info) dyn;
+  Hashtbl.to_seq_values merged |> List.of_seq
+
+let sorted_unique xs =
+  xs |> List.sort_uniq String.compare
+
+let list_capabilities () =
+  all_primitive_infos ()
+  |> List.map (fun info -> info.capability)
+  |> sorted_unique
+
+let list_primitives_by_capability cap =
+  all_primitive_infos ()
+  |> List.filter (fun info -> info.capability = cap)
+  |> List.sort (fun a b -> String.compare a.pname b.pname)
+
+let string_array xs =
+  VArray (Array.of_list (List.map (fun s -> VString s) xs), Some Types.TString)
+
+let format_primitive_info info =
+  Printf.sprintf "%s : %s -- %s" info.pname info.psig info.pdesc
+
+let read_all_channel (ic:in_channel) : string =
+  let b = Buffer.create 256 in
+  (try
+     while true do
+       Buffer.add_string b (input_line ic);
+       Buffer.add_char b '\n'
+     done
+   with End_of_file -> ());
+  Buffer.contents b
+
+let gemini_helper_path () : string =
+  if Sys.file_exists "../scripts/gemini_generate.py" then "../scripts/gemini_generate.py"
+  else if Sys.file_exists "scripts/gemini_generate.py" then "scripts/gemini_generate.py"
+  else "../scripts/gemini_generate.py"
+
+let openai_helper_path () : string =
+  if Sys.file_exists "../scripts/openai_generate.py" then "../scripts/openai_generate.py"
+  else if Sys.file_exists "scripts/openai_generate.py" then "scripts/openai_generate.py"
+  else "../scripts/openai_generate.py"
+
+let call_model_helper (label:string) (helper_path:string) (prompt:string) : string =
+  let cmd = "python3 " ^ Filename.quote helper_path in
+  let env = Unix.environment () in
+  let stdout_ic, stdin_oc, stderr_ic = Unix.open_process_full cmd env in
+  output_string stdin_oc prompt;
+  close_out stdin_oc;
+  let stdout = read_all_channel stdout_ic in
+  let stderr = read_all_channel stderr_ic in
+  match Unix.close_process_full (stdout_ic, stdin_oc, stderr_ic) with
+  | Unix.WEXITED 0 -> String.trim stdout
+  | Unix.WEXITED code ->
+      failwith (Printf.sprintf "%s failed (%d): %s" label code (String.trim stderr))
+  | Unix.WSIGNALED n ->
+      failwith (Printf.sprintf "%s signaled (%d)" label n)
+  | Unix.WSTOPPED n ->
+      failwith (Printf.sprintf "%s stopped (%d)" label n)
+
+let call_gemini_generate (prompt:string) : string =
+  call_model_helper "gemini_generate" (gemini_helper_path ()) prompt
+
+let call_openai_generate (prompt:string) : string =
+  call_model_helper "openai_generate" (openai_helper_path ()) prompt
+
+let rec call_provider_generate (provider:string) (prompt:string) : string =
+  match String.lowercase_ascii (String.trim provider) with
+  | "" | "default" ->
+      let p = Sys.getenv_opt "AIOS_MODEL_PROVIDER" |> Option.value ~default:"gemini" in
+      call_provider_generate p prompt
+  | "gemini" | "google" -> call_gemini_generate prompt
+  | "openai" | "chatgpt" -> call_openai_generate prompt
+  | p -> failwith ("model_generate: unknown provider: " ^ p)
+
+let actor_names () =
+  Hashtbl.to_seq_keys actor_table
+  |> List.of_seq
+  |> List.sort String.compare
+
+let actor_info_string (name:string) : string =
+  match Hashtbl.find_opt actor_table name with
+  | None -> "actor " ^ name ^ " not found"
+  | Some a ->
+      let cls = actor_class_name name a in
+      let methods =
+        method_names a
+        |> List.sort String.compare
+        |> String.concat ", "
+      in
+      Printf.sprintf "actor %s class=%s mailbox=%d methods=[%s]"
+        name cls (mailbox_len a) methods
+
+let actor_method_strings (name:string) : string list =
+  match Hashtbl.find_opt actor_table name with
+  | None -> []
+  | Some a -> method_names a |> List.sort String.compare
+
+let service_mu = Mutex.create ()
+let service_registry : (string, string) Hashtbl.t = Hashtbl.create 32
+
+let register_service (service_name:string) (actor_name:string) : unit =
+  if not (Hashtbl.mem actor_table actor_name) then
+    failwith ("aios_register_service: actor not found: " ^ actor_name);
+  Mutex.lock service_mu;
+  Hashtbl.replace service_registry service_name actor_name;
+  Mutex.unlock service_mu
+
+let service_names () : string list =
+  Mutex.lock service_mu;
+  let xs =
+    Hashtbl.to_seq_keys service_registry
+    |> List.of_seq
+    |> List.sort String.compare
+  in
+  Mutex.unlock service_mu;
+  xs
+
+let service_actor (service_name:string) : string option =
+  Mutex.lock service_mu;
+  let r = Hashtbl.find_opt service_registry service_name in
+  Mutex.unlock service_mu;
+  r
+
+let service_info_string (service_name:string) : string =
+  match service_actor service_name with
+  | None -> "service " ^ service_name ^ " not found"
+  | Some actor_name ->
+      "service " ^ service_name ^ " actor=" ^ actor_name ^ " " ^
+      actor_info_string actor_name
+
+let aios_event_mu = Mutex.create ()
+let aios_event_next_id = ref 0
+let aios_event_limit = 500
+let aios_events : (int * string) list ref = ref []
+
+let aios_emit_event (line:string) : int =
+  Mutex.lock aios_event_mu;
+  let id = !aios_event_next_id in
+  incr aios_event_next_id;
+  aios_events := (id, line) :: !aios_events;
+  aios_events := take aios_event_limit !aios_events;
+  Mutex.unlock aios_event_mu;
+  id
+
+let aios_event_count () : int =
+  Mutex.lock aios_event_mu;
+  let n = !aios_event_next_id in
+  Mutex.unlock aios_event_mu;
+  n
+
+let aios_event_lines () : string list =
+  Mutex.lock aios_event_mu;
+  let lines = !aios_events |> List.rev |> List.map snd in
+  Mutex.unlock aios_event_mu;
+  lines
+
+let aios_event_lines_since (after:int) : string list =
+  Mutex.lock aios_event_mu;
+  let lines =
+    !aios_events
+    |> List.filter (fun (id, _) -> id > after)
+    |> List.rev
+    |> List.map snd
+  in
+  Mutex.unlock aios_event_mu;
+  lines
+
+let memory_mu = Mutex.create ()
+let memory_store : (string, string) Hashtbl.t = Hashtbl.create 128
+
+let aios_memory_put (key:string) (value:string) : unit =
+  Mutex.lock memory_mu;
+  Hashtbl.replace memory_store key value;
+  Mutex.unlock memory_mu;
+  ignore (aios_emit_event ("memory.put:" ^ key))
+
+let aios_memory_get (key:string) : string =
+  Mutex.lock memory_mu;
+  let v = Hashtbl.find_opt memory_store key |> Option.value ~default:"" in
+  Mutex.unlock memory_mu;
+  v
+
+let aios_memory_has (key:string) : bool =
+  Mutex.lock memory_mu;
+  let found = Hashtbl.mem memory_store key in
+  Mutex.unlock memory_mu;
+  found
+
+let aios_memory_keys () : string list =
+  Mutex.lock memory_mu;
+  let keys =
+    Hashtbl.to_seq_keys memory_store
+    |> List.of_seq
+    |> List.sort String.compare
+  in
+  Mutex.unlock memory_mu;
+  keys
+
+type task_record = {
+  tid : string;
+  fields : (string, string) Hashtbl.t;
+}
+
+let task_mu = Mutex.create ()
+let task_next_id = ref 0
+let task_store : (string, task_record) Hashtbl.t = Hashtbl.create 64
+
+let aios_task_create (title:string) : string =
+  Mutex.lock task_mu;
+  incr task_next_id;
+  let tid = "task-" ^ string_of_int !task_next_id in
+  let fields = Hashtbl.create 16 in
+  Hashtbl.replace fields "title" title;
+  Hashtbl.replace fields "status" "open";
+  let task = { tid; fields } in
+  Hashtbl.replace task_store tid task;
+  Mutex.unlock task_mu;
+  ignore (aios_emit_event ("task.create:" ^ tid));
+  tid
+
+let aios_task_set (tid:string) (field:string) (value:string) : unit =
+  Mutex.lock task_mu;
+  let task =
+    match Hashtbl.find_opt task_store tid with
+    | Some task -> task
+    | None ->
+        let fields = Hashtbl.create 16 in
+        let task = { tid; fields } in
+        Hashtbl.replace task_store tid task;
+        task
+  in
+  Hashtbl.replace task.fields field value;
+  Mutex.unlock task_mu;
+  ignore (aios_emit_event ("task.set:" ^ tid ^ ":" ^ field))
+
+let aios_task_get (tid:string) (field:string) : string =
+  Mutex.lock task_mu;
+  let value =
+    match Hashtbl.find_opt task_store tid with
+    | None -> ""
+    | Some task -> Hashtbl.find_opt task.fields field |> Option.value ~default:""
+  in
+  Mutex.unlock task_mu;
+  value
+
+let aios_tasks () : string list =
+  Mutex.lock task_mu;
+  let ids = Hashtbl.to_seq_keys task_store |> List.of_seq |> List.sort String.compare in
+  Mutex.unlock task_mu;
+  ids
+
+let aios_task_info (tid:string) : string =
+  Mutex.lock task_mu;
+  let text =
+    match Hashtbl.find_opt task_store tid with
+    | None -> "task " ^ tid ^ " not found"
+    | Some task ->
+        let fields =
+          Hashtbl.to_seq task.fields
+          |> List.of_seq
+          |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+          |> List.map (fun (k, v) -> k ^ "=" ^ v)
+          |> String.concat ", "
+        in
+        "task " ^ task.tid ^ " {" ^ fields ^ "}"
+  in
+  Mutex.unlock task_mu;
+  text
+
+let exprs_of_values (vs:value list) : expr list =
+  List.map (fun v -> mk_expr (expr_of_value v)) vs
+
+let future_service_call ~(from:string) (service_name:string) (meth:string) (args:value list) : future_state =
+  let f = create_future () in
+  match service_actor service_name with
+  | None ->
+      reject_future f.fid ("service not found: " ^ service_name);
+      f
+  | Some actor_name ->
+      send_message ~msg_id:f.fid ~from actor_name
+        (mk_stmt (CallStmt (meth, exprs_of_values args)));
+      f
 
 (* ===== 5) 組み込み関数 ===== *)
 let prim1_float_float name f = (name, function
@@ -671,6 +1104,7 @@ let rec type_of_value = function
   | VString _ -> Types.TString
   | VArray (_, Some t) -> Types.TArray t
   | VArray (_, None) -> Types.TArray Types.TUnit
+  | VFuture _ -> Types.TFuture Types.TAny
   | VUnit -> Types.TUnit
   | _ -> Types.TUnit
 
@@ -810,9 +1244,148 @@ let prim_table : (string, value list -> value) Hashtbl.t =
            (match v with
             | VString _ -> "string" | VInt _ -> "int" | VFloat _ -> "float"
             | VBool _ -> "bool" | VArray _ -> "array" | VUnit -> "unit"
-            | VActor (c,_) -> "actor("^c^")"));
+            | VActor (c,_) -> "actor("^c^")"
+            | VFuture _ -> "future"));
            VUnit
        | _ -> failwith "actor_dump(x): arity 1 expected"));
+    ("capabilities",
+      (function
+        | [] -> string_array (list_capabilities ())
+        | _ -> failwith "capabilities(): arity 0 expected"));
+    ("capability_prims",
+      (function
+        | [VString cap] ->
+            list_primitives_by_capability cap
+            |> List.map format_primitive_info
+            |> string_array
+        | _ -> failwith "capability_prims(capability): arity 1 expected"));
+    ("aios_kernel",
+      (function
+        | [] ->
+            VString (Printf.sprintf
+              "ABCL/c+ AIOS kernel actors=%d capabilities=%d"
+              (List.length (actor_names ()))
+              (List.length (list_capabilities ())))
+        | _ -> failwith "aios_kernel(): arity 0 expected"));
+    ("aios_actors",
+      (function
+        | [] -> string_array (actor_names ())
+        | _ -> failwith "aios_actors(): arity 0 expected"));
+    ("aios_actor_info",
+      (function
+        | [VString name] -> VString (actor_info_string name)
+        | _ -> failwith "aios_actor_info(name): arity 1 expected"));
+    ("aios_actor_methods",
+      (function
+        | [VString name] -> string_array (actor_method_strings name)
+        | _ -> failwith "aios_actor_methods(name): arity 1 expected"));
+    ("aios_mailbox_len",
+      (function
+        | [VString name] ->
+            (match Hashtbl.find_opt actor_table name with
+             | None -> VInt (-1)
+             | Some a -> VInt (mailbox_len a))
+        | _ -> failwith "aios_mailbox_len(name): arity 1 expected"));
+    ("aios_register_service",
+      (function
+        | [VString service_name; VString actor_name] ->
+            register_service service_name actor_name;
+            VUnit
+        | _ -> failwith "aios_register_service(service, actor): arity 2 expected"));
+    ("aios_services",
+      (function
+        | [] -> string_array (service_names ())
+        | _ -> failwith "aios_services(): arity 0 expected"));
+    ("aios_service_actor",
+      (function
+        | [VString service_name] ->
+            (match service_actor service_name with
+             | Some actor_name -> VString actor_name
+             | None -> VString "")
+        | _ -> failwith "aios_service_actor(service): arity 1 expected"));
+    ("aios_service_info",
+      (function
+        | [VString service_name] -> VString (service_info_string service_name)
+        | _ -> failwith "aios_service_info(service): arity 1 expected"));
+    ("aios_future",
+      (function
+        | VString service_name :: VString meth :: args ->
+            VFuture (future_service_call ~from:"<service>" service_name meth args)
+        | _ -> failwith "aios_future(service, method, ...args): expected service and method strings"));
+    ("aios_now",
+      (function
+        | VString service_name :: VString meth :: args ->
+            await_future (future_service_call ~from:"<service>" service_name meth args)
+        | _ -> failwith "aios_now(service, method, ...args): expected service and method strings"));
+    ("aios_emit",
+      (function
+        | [VString line] -> VInt (aios_emit_event line)
+        | _ -> failwith "aios_emit(event): arity 1 expected"));
+    ("aios_events",
+      (function
+        | [] -> string_array (aios_event_lines ())
+        | _ -> failwith "aios_events(): arity 0 expected"));
+    ("aios_events_since",
+      (function
+        | [VInt after] -> string_array (aios_event_lines_since after)
+        | [VFloat after] -> string_array (aios_event_lines_since (int_of_float after))
+        | _ -> failwith "aios_events_since(after): arity 1 expected"));
+    ("aios_event_count",
+      (function
+        | [] -> VInt (aios_event_count ())
+        | _ -> failwith "aios_event_count(): arity 0 expected"));
+    ("aios_memory_put",
+      (function
+        | [VString key; VString value] ->
+            aios_memory_put key value;
+            VUnit
+        | _ -> failwith "aios_memory_put(key, value): arity 2 expected"));
+    ("aios_memory_get",
+      (function
+        | [VString key] -> VString (aios_memory_get key)
+        | _ -> failwith "aios_memory_get(key): arity 1 expected"));
+    ("aios_memory_has",
+      (function
+        | [VString key] -> VBool (aios_memory_has key)
+        | _ -> failwith "aios_memory_has(key): arity 1 expected"));
+    ("aios_memory_keys",
+      (function
+        | [] -> string_array (aios_memory_keys ())
+        | _ -> failwith "aios_memory_keys(): arity 0 expected"));
+    ("aios_task_create",
+      (function
+        | [VString title] -> VString (aios_task_create title)
+        | _ -> failwith "aios_task_create(title): arity 1 expected"));
+    ("aios_task_set",
+      (function
+        | [VString tid; VString field; VString value] ->
+            aios_task_set tid field value;
+            VUnit
+        | _ -> failwith "aios_task_set(task, field, value): arity 3 expected"));
+    ("aios_task_get",
+      (function
+        | [VString tid; VString field] -> VString (aios_task_get tid field)
+        | _ -> failwith "aios_task_get(task, field): arity 2 expected"));
+    ("aios_task_info",
+      (function
+        | [VString tid] -> VString (aios_task_info tid)
+        | _ -> failwith "aios_task_info(task): arity 1 expected"));
+    ("aios_tasks",
+      (function
+        | [] -> string_array (aios_tasks ())
+        | _ -> failwith "aios_tasks(): arity 0 expected"));
+    ("model_generate",
+      (function
+        | [VString provider; VString prompt] -> VString (call_provider_generate provider prompt)
+        | _ -> failwith "model_generate(provider, prompt): arity 2 expected"));
+    ("gemini_generate",
+      (function
+        | [VString prompt] -> VString (call_gemini_generate prompt)
+        | _ -> failwith "gemini_generate(prompt): arity 1 expected"));
+    ("openai_generate",
+      (function
+        | [VString prompt] -> VString (call_openai_generate prompt)
+        | _ -> failwith "openai_generate(prompt): arity 1 expected"));
   ];
   h
 
@@ -824,11 +1397,18 @@ let call_prim name args =
       Hashtbl.iter (fun k _ -> print_endline ("  - " ^ k)) prim_table; *)
       failwith ("Unknown function: " ^ name)
 
-let add_prim name fn = Hashtbl.replace prim_table name fn
+let add_prim ?(capability="Dynamic") ?(psig="any") ?(description="runtime primitive") name fn =
+  Hashtbl.replace prim_table name fn;
+  register_dynamic_primitive ~capability ~psig ~description name
 
 let find_actor_exn name =
   try Hashtbl.find actor_table name
   with Not_found -> failwith ("send: unknown actor: " ^ name)
+
+let actual_local_target (actor:actor) (tgt:string) : string =
+  if tgt = "self" then actor.name
+  else if tgt = "sender" then actor.last_sender
+  else tgt
 
 let rec eval_expr (actor:actor) (e : expr) =
   match e.desc with
@@ -858,6 +1438,26 @@ let rec eval_expr (actor:actor) (e : expr) =
       failwith "eval_expr: New is not supported here"
   | Array (_es, _tyopt) ->
       failwith "eval_expr: Array is not supported here"
+  | FutureSend (target, meth, args) ->
+      let f = create_future () in
+      let arg_vals = List.map (eval_expr actor) args in
+      let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
+      begin match target with
+      | LocalTarget tgt ->
+          send_message ~msg_id:f.fid ~from:actor.name (actual_local_target actor tgt)
+            (mk_stmt (CallStmt (meth, arg_exprs)))
+      | RemoteTarget (_hostport, _tgt) ->
+          reject_future f.fid "future remote send is not implemented"
+      end;
+      VFuture f
+  | NowSend (target, meth, args) ->
+      (match eval_expr actor { e with desc = FutureSend (target, meth, args) } with
+       | VFuture f -> await_future f
+       | _ -> failwith "now: internal future send failed")
+  | Await e ->
+      (match eval_expr actor e with
+       | VFuture f -> await_future f
+       | v -> failwith ("await: expected future, got " ^ type_name_of_value v))
 and eval_stmt (actor:actor) (s : Ast.stmt) =
   match s.sdesc with
   | Assign (x, e) -> set_var_a actor x (eval_expr actor e)
@@ -983,12 +1583,7 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
     let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
     begin match target with
     | LocalTarget tgt ->
-        let actual_target =
-          if tgt = "self" then actor.name
-          else if tgt = "sender" then actor.last_sender
-          else tgt
-        in
-        send_message ~from:actor.name actual_target
+        send_message ~from:actor.name (actual_local_target actor tgt)
           (mk_stmt (CallStmt (meth, arg_exprs)))
 
     | RemoteTarget (hostport, tgt) ->
@@ -1004,12 +1599,7 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
     let arg_exprs = List.map (fun v -> mk_expr (expr_of_value v)) arg_vals in
     begin match target with
     | LocalTarget tgt ->
-        let actual_target =
-          if tgt = "self" then actor.name
-          else if tgt = "sender" then actor.last_sender
-          else tgt
-        in
-        send_message ~from:actor.name actual_target
+        send_message ~from:actor.name (actual_local_target actor tgt)
           (mk_stmt (CallStmt (meth, arg_exprs)))
     | RemoteTarget (hostport, tgt) ->
         Remote_client.remote_send
@@ -1028,6 +1618,8 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
       match picked with
       | Some (m, binds, body_stmt) ->
           (* preserve your existing reply/msg_id correlation *)
+          let prev_actor_name = get_current_actor_name () in
+          let prev_msg_id = get_current_msg_id () in
           set_current_actor_name (Some actor.name);
           set_current_msg_id m.msg_id;
 
@@ -1035,8 +1627,8 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
           List.iter (fun (x,v) -> Hashtbl.replace actor.env x v) binds;
 
           (try eval_stmt actor body_stmt with _ -> ());
-          set_current_msg_id None;
-          set_current_actor_name None
+          set_current_msg_id prev_msg_id;
+          set_current_actor_name prev_actor_name
       | None ->
           (* no match *)
           (match to_ms_opt, to_body_opt with
@@ -1063,6 +1655,8 @@ and actor_loop actor = (
     done;
     let msg = Queue.pop actor.queue in
     Mutex.unlock actor.mutex;
+    let prev_actor_name = get_current_actor_name () in
+    let prev_msg_id = get_current_msg_id () in
     set_current_actor_name (Some actor.name);
     set_current_msg_id msg.msg_id;
     (try
@@ -1074,11 +1668,14 @@ and actor_loop actor = (
           | Some s -> s
           | None -> "<no-id>"
         in
+          (match msg.msg_id with
+           | Some id -> reject_future id (Printexc.to_string exn)
+           | None -> ());
           push_web_evt (Printf.sprintf "[FAILED] id=%s to=%s reason=runtime:%s"
             id actor.name (Printexc.to_string exn))
     );
-    set_current_msg_id None;
-    set_current_actor_name None;
+    set_current_msg_id prev_msg_id;
+    set_current_actor_name prev_actor_name;
     done)
 and resolve_actor_from_term env recv_term =
   match recv_term with

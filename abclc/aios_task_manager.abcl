@@ -1,0 +1,40 @@
+class TaskService {
+  method create(title) {
+    reply(aios_task_create(title));
+  }
+
+  method set(task, field, value) {
+    aios_task_set(task, field, value);
+    reply("ok");
+  }
+
+  method get(task, field) {
+    reply(aios_task_get(task, field));
+  }
+
+  method info(task) {
+    reply(aios_task_info(task));
+  }
+
+  method list() {
+    reply(aios_tasks());
+  }
+}
+
+var task = new TaskService();
+
+aios_register_service("task", "task");
+
+print("== AIOS task manager ==");
+print(aios_service_info("task"));
+
+var tid = aios_now("task", "create", "solve apple problem");
+aios_now("task", "set", tid, "problem", "3 boxes with 4 apples");
+aios_now("task", "set", tid, "answer", "12");
+aios_now("task", "set", tid, "status", "done");
+
+print("task id = " + tid);
+print("task answer = " + aios_now("task", "get", tid, "answer"));
+print(aios_now("task", "info", tid));
+print(aios_now("task", "list"));
+print(aios_events());
