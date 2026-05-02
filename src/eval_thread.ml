@@ -776,11 +776,15 @@ let call_gemini_generate (prompt:string) : string =
 let call_openai_generate (prompt:string) : string =
   call_model_helper "openai_generate" (openai_helper_path ()) prompt
 
+let call_mock_generate (prompt:string) : string =
+  "mock model response: " ^ prompt
+
 let rec call_provider_generate (provider:string) (prompt:string) : string =
   match String.lowercase_ascii (String.trim provider) with
   | "" | "default" ->
       let p = Sys.getenv_opt "AIOS_MODEL_PROVIDER" |> Option.value ~default:"gemini" in
       call_provider_generate p prompt
+  | "mock" | "test" | "offline" -> call_mock_generate prompt
   | "gemini" | "google" -> call_gemini_generate prompt
   | "openai" | "chatgpt" -> call_openai_generate prompt
   | p -> failwith ("model_generate: unknown provider: " ^ p)

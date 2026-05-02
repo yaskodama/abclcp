@@ -113,10 +113,12 @@ print(aios_tasks());
 ```abcl
 var answer = model_generate("gemini", "Solve: 3 boxes with 4 apples each");
 var answer2 = model_generate("openai", "Solve: 3 boxes with 4 apples each");
+var answer3 = model_generate("mock", "Solve: 3 boxes with 4 apples each");
 ```
 
 `AIOS.Model` は provider 名で model backend を切り替える capability である。
 `"gemini"` / `"google"` は Gemini、`"openai"` / `"chatgpt"` は OpenAI を使う。
+`"mock"` / `"test"` / `"offline"` は外部APIを呼ばない deterministic mock を使う。
 provider に `"default"` または空文字列を渡した場合は `AIOS_MODEL_PROVIDER` を読み、
 未設定なら Gemini を使う。
 

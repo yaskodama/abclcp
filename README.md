@@ -122,6 +122,13 @@ printf 'load ../abclc/aios_model_router.abcl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
+Offline workflow smoke test:
+
+```sh
+printf 'load ../abclc/aios_workflow_mock.abcl\ncompile\nquit\n' | \
+  SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread -q
+```
+
 Gemini workflow smoke test:
 
 ```sh

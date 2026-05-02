@@ -1,0 +1,78 @@
+class TaskService {
+  method create(title) {
+    reply(aios_task_create(title));
+  }
+
+  method set(task, field, value) {
+    aios_task_set(task, field, value);
+    reply("ok");
+  }
+
+  method get(task, field) {
+    reply(aios_task_get(task, field));
+  }
+
+  method info(task) {
+    reply(aios_task_info(task));
+  }
+}
+
+class ModelRouterService {
+  var provider = "mock";
+
+  method use(name) {
+    provider = name;
+    aios_emit("model.provider:" + provider);
+    reply("ok");
+  }
+
+  method generate(prompt) {
+    aios_emit("model.generate:" + provider);
+    var answer = model_generate(provider, prompt);
+    aios_emit("model.answer:" + answer);
+    reply(answer);
+  }
+}
+
+class WorkflowAgentService {
+  method solve(title, problem) {
+    aios_emit("workflow.start:" + title);
+
+    var tid = aios_now("task", "create", title);
+    aios_now("task", "set", tid, "problem", problem);
+    aios_now("task", "set", tid, "status", "solving");
+
+    var solve_prompt = "Solve this problem. Problem: " + problem;
+    var answer = aios_now("model", "generate", solve_prompt);
+    aios_now("task", "set", tid, "answer", answer);
+
+    aios_now("task", "set", tid, "status", "reviewing");
+    var review_prompt = "Review this answer. Problem: " + problem + " Answer: " + answer;
+    var review = aios_now("model", "generate", review_prompt);
+    aios_now("task", "set", tid, "review", review);
+    aios_now("task", "set", tid, "status", "done");
+
+    aios_emit("workflow.done:" + tid);
+    reply(tid);
+  }
+}
+
+var task = new TaskService();
+var model = new ModelRouterService();
+var agent = new WorkflowAgentService();
+
+aios_register_service("task", "task");
+aios_register_service("model", "model");
+aios_register_service("agent", "agent");
+
+print("== AIOS mock workflow ==");
+print(aios_services());
+
+aios_now("model", "use", "mock");
+var tid = aios_now("agent", "solve", "offline workflow test", "3 boxes with 4 apples");
+
+print("task id = " + tid);
+print(aios_now("task", "info", tid));
+print("answer = " + aios_now("task", "get", tid, "answer"));
+print("review = " + aios_now("task", "get", tid, "review"));
+print(aios_events());
