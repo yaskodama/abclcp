@@ -156,6 +156,7 @@ Use an external reviewer machine or Docker container:
 
 ```sh
 export REMOTE_REVIEWER_HOSTPORT='192.168.1.50:18080'
+sh scripts/check_remote_reviewer_ja.sh
 sh scripts/run_remote_reviewer_client_ja.sh
 ```
 
@@ -170,6 +171,7 @@ Then run the client side:
 
 ```sh
 export REMOTE_REVIEWER_HOSTPORT='127.0.0.1:18080'
+sh scripts/check_remote_reviewer_ja.sh
 sh scripts/run_remote_reviewer_client_ja.sh
 ```
 

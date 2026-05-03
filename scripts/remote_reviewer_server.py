@@ -47,7 +47,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    host = os.environ.get("REMOTE_REVIEWER_HOST", "127.0.0.1")
+    host = os.environ.get("REMOTE_REVIEWER_HOST", "0.0.0.0")
     port = int(os.environ.get("REMOTE_REVIEWER_PORT", "18080"))
     server = HTTPServer((host, port), Handler)
     print(f"remote reviewer listening on {host}:{port}", flush=True)
