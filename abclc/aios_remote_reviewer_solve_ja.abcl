@@ -1,0 +1,42 @@
+class SolverActorJa {
+  method solve(problem) {
+    aios_emit("solver.problem:" + problem);
+    var answer = "12個です。3つの箱にそれぞれ4個あるので、3 x 4 = 12です。";
+    aios_emit("solver.answer:" + answer);
+    reply(answer);
+  }
+}
+
+class PlannerActorJa {
+  var reviewer_host = "";
+
+  method solve(problem) {
+    aios_emit("planner.problem:" + problem);
+    reviewer_host = remote_reviewer_host();
+    aios_emit("planner.remote_host:" + reviewer_host);
+
+    var answer_future = aios_future("solver", "solve", problem);
+    var answer = await answer_future;
+    aios_emit("planner.answer:" + answer);
+
+    var review = remote_review_ja(reviewer_host, problem, answer);
+    aios_emit("planner.remote_review:" + review);
+
+    reply("回答: " + answer + " | レビュー: " + review);
+  }
+}
+
+var solver = new SolverActorJa();
+var planner = new PlannerActorJa();
+
+aios_register_service("solver", "solver");
+aios_register_service("planner", "planner");
+
+print("== リモートレビューア協調問題解決 ==");
+print(aios_services());
+
+var result = aios_now("planner", "solve", "箱が3つあり、それぞれにリンゴが4個あります。リンゴは全部で何個ですか。");
+
+print("最終結果 = " + result);
+print("== 協調イベント ==");
+print(aios_events());

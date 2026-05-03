@@ -48,10 +48,36 @@ let sid_log_next : (string, int ref) Hashtbl.t = Hashtbl.create 64
 let sid_logs : (string, (int * string) list ref) Hashtbl.t = Hashtbl.create 64
 let sid_log_limit = 500
 
+type exec_context = {
+  mutable ctx_msg_id : string option;
+  mutable ctx_actor_name : string option;
+}
+
+let exec_context_mu = Mutex.create ()
+let exec_contexts : (int, exec_context) Hashtbl.t = Hashtbl.create 64
+
+let current_thread_id () = Thread.id (Thread.self ())
+
+let current_exec_context () : exec_context =
+  let tid = current_thread_id () in
+  Mutex.lock exec_context_mu;
+  let ctx =
+    match Hashtbl.find_opt exec_contexts tid with
+    | Some ctx -> ctx
+    | None ->
+        let ctx = { ctx_msg_id = None; ctx_actor_name = None } in
+        Hashtbl.replace exec_contexts tid ctx;
+        ctx
+  in
+  Mutex.unlock exec_context_mu;
+  ctx
+
 (* current message id while executing a message (for reply correlation) *)
-let current_msg_id : string option ref = ref None
-let set_current_msg_id (id:string option) = current_msg_id := id
-let get_current_msg_id () = !current_msg_id
+let set_current_msg_id (id:string option) =
+  (current_exec_context ()).ctx_msg_id <- id
+
+let get_current_msg_id () =
+  (current_exec_context ()).ctx_msg_id
 
 let future_mu = Mutex.create ()
 let future_next_id = ref 0
@@ -112,9 +138,11 @@ let await_future (f:future_state) : value =
   | None, None -> failwith "future await failed"
 
 (* current actor name while executing a message (for session log) *)
-let current_actor_name : string option ref = ref None
-let set_current_actor_name (nm:string option) = current_actor_name := nm
-let get_current_actor_name () = !current_actor_name
+let set_current_actor_name (nm:string option) =
+  (current_exec_context ()).ctx_actor_name <- nm
+
+let get_current_actor_name () =
+  (current_exec_context ()).ctx_actor_name
 
 (* ---------------- Web/Debug log buffer (per actor) ---------------- *)
 type log_entry = int * string
@@ -697,8 +725,13 @@ let static_primitive_catalog = [
   { pname = "aios_task_info"; capability = "AIOS.Task"; psig = "task -> string"; pdesc = "describe a task" };
   { pname = "aios_tasks"; capability = "AIOS.Task"; psig = "() -> string[]"; pdesc = "list task ids" };
   { pname = "model_generate"; capability = "AIOS.Model"; psig = "(provider, prompt) -> string"; pdesc = "generate text with a named model provider" };
+  { pname = "ai_call"; capability = "AIOS.Model"; psig = "prompt -> string"; pdesc = "generate text with default AI provider" };
+  { pname = "ai_call_with_system"; capability = "AIOS.Model"; psig = "(system, prompt) -> string"; pdesc = "generate text with a system instruction and default AI provider" };
   { pname = "gemini_generate"; capability = "AIOS.Model.Gemini"; psig = "string -> string"; pdesc = "generate text with Gemini" };
   { pname = "openai_generate"; capability = "AIOS.Model.OpenAI"; psig = "string -> string"; pdesc = "generate text with OpenAI Responses API" };
+  { pname = "remote_reviewer_host"; capability = "AIOS.Remote"; psig = "() -> string"; pdesc = "remote reviewer host:port from REMOTE_REVIEWER_HOSTPORT" };
+  { pname = "remote_review"; capability = "AIOS.Remote"; psig = "(hostport, problem, answer) -> string"; pdesc = "ask a remote reviewer service over HTTP" };
+  { pname = "remote_review_ja"; capability = "AIOS.Remote"; psig = "(hostport, problem, answer) -> string"; pdesc = "ask a remote reviewer service over HTTP in Japanese" };
 ]
 
 let dynamic_primitive_catalog : (string, primitive_info) Hashtbl.t = Hashtbl.create 32
@@ -753,6 +786,11 @@ let openai_helper_path () : string =
   else if Sys.file_exists "scripts/openai_generate.py" then "scripts/openai_generate.py"
   else "../scripts/openai_generate.py"
 
+let remote_review_helper_path () : string =
+  if Sys.file_exists "../scripts/remote_review_call.py" then "../scripts/remote_review_call.py"
+  else if Sys.file_exists "scripts/remote_review_call.py" then "scripts/remote_review_call.py"
+  else "../scripts/remote_review_call.py"
+
 let call_model_helper (label:string) (helper_path:string) (prompt:string) : string =
   let cmd = "python3 " ^ Filename.quote helper_path in
   let env = Unix.environment () in
@@ -770,24 +808,100 @@ let call_model_helper (label:string) (helper_path:string) (prompt:string) : stri
   | Unix.WSTOPPED n ->
       failwith (Printf.sprintf "%s stopped (%d)" label n)
 
+let call_remote_review (hostport:string) (problem:string) (answer:string) : string =
+  let cmd =
+    "python3 " ^ Filename.quote (remote_review_helper_path ()) ^ " " ^
+    Filename.quote hostport
+  in
+  let input = problem ^ "\n---ANSWER---\n" ^ answer in
+  let env = Unix.environment () in
+  let stdout_ic, stdin_oc, stderr_ic = Unix.open_process_full cmd env in
+  output_string stdin_oc input;
+  close_out stdin_oc;
+  let stdout = read_all_channel stdout_ic in
+  let stderr = read_all_channel stderr_ic in
+  match Unix.close_process_full (stdout_ic, stdin_oc, stderr_ic) with
+  | Unix.WEXITED 0 -> String.trim stdout
+  | Unix.WEXITED code ->
+      failwith (Printf.sprintf "remote_review failed (%d): %s" code (String.trim stderr))
+  | Unix.WSIGNALED n ->
+      failwith (Printf.sprintf "remote_review signaled (%d)" n)
+  | Unix.WSTOPPED n ->
+      failwith (Printf.sprintf "remote_review stopped (%d)" n)
+
+let call_remote_review_ja (hostport:string) (problem:string) (answer:string) : string =
+  let cmd =
+    "python3 " ^ Filename.quote (remote_review_helper_path ()) ^ " " ^
+    Filename.quote hostport ^ " --ja"
+  in
+  let input = problem ^ "\n---ANSWER---\n" ^ answer in
+  let env = Unix.environment () in
+  let stdout_ic, stdin_oc, stderr_ic = Unix.open_process_full cmd env in
+  output_string stdin_oc input;
+  close_out stdin_oc;
+  let stdout = read_all_channel stdout_ic in
+  let stderr = read_all_channel stderr_ic in
+  match Unix.close_process_full (stdout_ic, stdin_oc, stderr_ic) with
+  | Unix.WEXITED 0 -> String.trim stdout
+  | Unix.WEXITED code ->
+      failwith (Printf.sprintf "remote_review_ja failed (%d): %s" code (String.trim stderr))
+  | Unix.WSIGNALED n ->
+      failwith (Printf.sprintf "remote_review_ja signaled (%d)" n)
+  | Unix.WSTOPPED n ->
+      failwith (Printf.sprintf "remote_review_ja stopped (%d)" n)
+
+let remote_reviewer_host () : string =
+  Sys.getenv_opt "REMOTE_REVIEWER_HOSTPORT"
+  |> Option.value ~default:"127.0.0.1:18080"
+
 let call_gemini_generate (prompt:string) : string =
   call_model_helper "gemini_generate" (gemini_helper_path ()) prompt
 
 let call_openai_generate (prompt:string) : string =
   call_model_helper "openai_generate" (openai_helper_path ()) prompt
 
+let contains_sub (s:string) (needle:string) : bool =
+  let n = String.length s and m = String.length needle in
+  let rec loop i =
+    if m = 0 then true
+    else if i + m > n then false
+    else if String.sub s i m = needle then true
+    else loop (i + 1)
+  in
+  loop 0
+
 let call_mock_generate (prompt:string) : string =
-  "mock model response: " ^ prompt
+  let p = String.lowercase_ascii prompt in
+  if contains_sub p "code reviewer" then
+    "A code reviewer checks correctness, clarity, maintainability, and risks."
+  else if contains_sub p "planner" && contains_sub prompt "12 * 11" then
+    "Compute 12 * 11 and return only the number."
+  else if contains_sub p "solver" && contains_sub prompt "12 * 11" then
+    "132"
+  else if contains_sub p "reviewer" && contains_sub prompt "132" then
+    "OK: 132 is the correct product of 12 and 11."
+  else
+    "mock model response: " ^ prompt
 
 let rec call_provider_generate (provider:string) (prompt:string) : string =
   match String.lowercase_ascii (String.trim provider) with
   | "" | "default" ->
-      let p = Sys.getenv_opt "AIOS_MODEL_PROVIDER" |> Option.value ~default:"gemini" in
+      let p =
+        match Sys.getenv_opt "ABCL_AI_PROVIDER" with
+        | Some p when String.trim p <> "" -> p
+        | _ -> Sys.getenv_opt "AIOS_MODEL_PROVIDER" |> Option.value ~default:"gemini"
+      in
       call_provider_generate p prompt
   | "mock" | "test" | "offline" -> call_mock_generate prompt
   | "gemini" | "google" -> call_gemini_generate prompt
   | "openai" | "chatgpt" -> call_openai_generate prompt
   | p -> failwith ("model_generate: unknown provider: " ^ p)
+
+let call_ai (prompt:string) : string =
+  call_provider_generate "default" prompt
+
+let call_ai_with_system (system:string) (prompt:string) : string =
+  call_provider_generate "default" ("System: " ^ system ^ "\nUser: " ^ prompt)
 
 let actor_names () =
   Hashtbl.to_seq_keys actor_table
@@ -1382,6 +1496,14 @@ let prim_table : (string, value list -> value) Hashtbl.t =
       (function
         | [VString provider; VString prompt] -> VString (call_provider_generate provider prompt)
         | _ -> failwith "model_generate(provider, prompt): arity 2 expected"));
+    ("ai_call",
+      (function
+        | [VString prompt] -> VString (call_ai prompt)
+        | _ -> failwith "ai_call(prompt): arity 1 expected"));
+    ("ai_call_with_system",
+      (function
+        | [VString system; VString prompt] -> VString (call_ai_with_system system prompt)
+        | _ -> failwith "ai_call_with_system(system, prompt): arity 2 expected"));
     ("gemini_generate",
       (function
         | [VString prompt] -> VString (call_gemini_generate prompt)
@@ -1390,6 +1512,20 @@ let prim_table : (string, value list -> value) Hashtbl.t =
       (function
         | [VString prompt] -> VString (call_openai_generate prompt)
         | _ -> failwith "openai_generate(prompt): arity 1 expected"));
+    ("remote_review",
+      (function
+        | [VString hostport; problem; answer] ->
+            VString (call_remote_review hostport (string_of_value problem) (string_of_value answer))
+        | _ -> failwith "remote_review(hostport, problem, answer): arity 3 expected"));
+    ("remote_reviewer_host",
+      (function
+        | [] -> VString (remote_reviewer_host ())
+        | _ -> failwith "remote_reviewer_host(): arity 0 expected"));
+    ("remote_review_ja",
+      (function
+        | [VString hostport; problem; answer] ->
+            VString (call_remote_review_ja hostport (string_of_value problem) (string_of_value answer))
+        | _ -> failwith "remote_review_ja(hostport, problem, answer): arity 3 expected"));
   ];
   h
 

@@ -32,6 +32,7 @@ print(capability_prims("Actor"));
 - `AIOS.Task`
 - `AIOS.Model.Gemini`
 - `AIOS.Model.OpenAI`
+- `AIOS.Remote`
 - `AIOS.Service`
 - `Console`
 - `Core.Array`
@@ -137,3 +138,15 @@ var answer = openai_generate("Solve: 3 boxes with 4 apples each");
 ```
 
 `AIOS.Model.OpenAI` は `OPENAI_API_KEY` 環境変数を使って OpenAI Responses API にpromptを送る capability である。
+
+## AIOS.Remote
+
+```abcl
+var host = remote_reviewer_host();
+var review = remote_review(host, problem, answer);
+var review_ja = remote_review_ja(host, problem, answer);
+```
+
+`AIOS.Remote` は別プロセスや別マシンで動くAIOS補助サービスを呼び出すための capability である。
+現在は reviewer 用のHTTP同期呼び出しを提供する。
+`remote_reviewer_host()` は `REMOTE_REVIEWER_HOSTPORT` を読み、未設定なら `127.0.0.1:18080` を返す。

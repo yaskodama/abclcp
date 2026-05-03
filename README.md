@@ -96,6 +96,83 @@ printf 'load ../abclc/aios_agent.abcl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
+Three actor cooperative solve:
+
+```sh
+printf 'load ../abclc/aios_three_actor_solve.abcl\ncompile\nquit\n' | \
+  SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread -q
+```
+
+Larger Japanese cooperative solve:
+
+```sh
+printf 'load ../abclc/aios_larger_problem_solve_ja.abcl\ncompile\nquit\n' | \
+  SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread -q
+```
+
+Or run it with the script:
+
+```sh
+sh scripts/run_larger_problem_ja.sh
+```
+
+The same larger problem using `aios_now` message sends:
+
+```sh
+sh scripts/run_larger_problem_now_ja.sh
+```
+
+Future timeline sample with parallel solver and reviewer brief:
+
+```sh
+sh scripts/run_future_timeline_ja.sh
+```
+
+Three-role AI sample using `now` / `future` / `await` syntax:
+
+```sh
+ABCL_AI_PROVIDER=mock sh scripts/run_user_three_role_ai.sh
+```
+
+Chart:
+
+```text
+docs/FUTURE_TIMELINE_CHART.md
+```
+
+Remote reviewer cooperative solve:
+
+```sh
+sh scripts/run_remote_reviewer_demo.sh
+```
+
+Japanese remote reviewer cooperative solve:
+
+```sh
+sh scripts/run_remote_reviewer_demo_ja.sh
+```
+
+Use an external reviewer machine or Docker container:
+
+```sh
+export REMOTE_REVIEWER_HOSTPORT='192.168.1.50:18080'
+sh scripts/run_remote_reviewer_client_ja.sh
+```
+
+The reviewer service can also run in Docker:
+
+```sh
+docker build -f docker/remote-reviewer.Dockerfile -t abclcp-remote-reviewer .
+docker run --rm -p 18080:18080 abclcp-remote-reviewer
+```
+
+Then run the client side:
+
+```sh
+export REMOTE_REVIEWER_HOSTPORT='127.0.0.1:18080'
+sh scripts/run_remote_reviewer_client_ja.sh
+```
+
 Kernel memory smoke test:
 
 ```sh

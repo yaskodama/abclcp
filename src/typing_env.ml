@@ -99,8 +99,17 @@ let prelude () : env =
   add_mono e "aios_task_info" (TFun ([TString], TString));
   add_mono e "aios_tasks" (TFun ([], TArray TString));
   add_mono e "model_generate" (TFun ([TString; TString], TString));
+  add_mono e "ai_call" (TFun ([TString], TString));
+  add_mono e "ai_call_with_system" (TFun ([TString; TString], TString));
   add_mono e "gemini_generate" (TFun ([TString], TString));
   add_mono e "openai_generate" (TFun ([TString], TString));
+  let a = fresh_tvar () in
+  let b = fresh_tvar () in
+  add_poly e "remote_review" (Forall ([(!a).id; (!b).id], TFun ([TString; TVar a; TVar b], TString)));
+  add_mono e "remote_reviewer_host" (TFun ([], TString));
+  let a = fresh_tvar () in
+  let b = fresh_tvar () in
+  add_poly e "remote_review_ja" (Forall ([(!a).id; (!b).id], TFun ([TString; TVar a; TVar b], TString)));
 
   (* 2.5.1) 二項算術 *)
   let add_f2 f = add_mono e f (TFun ([TFloat; TFloat], TFloat)) in

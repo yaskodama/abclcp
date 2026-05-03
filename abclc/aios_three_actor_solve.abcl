@@ -1,0 +1,51 @@
+class SolverActor {
+  method solve(problem) {
+    aios_emit("solver.problem:" + problem);
+    var answer = "12 because 3 boxes times 4 apples is 12";
+    aios_emit("solver.answer:" + answer);
+    reply(answer);
+  }
+}
+
+class ReviewerActor {
+  method review(problem, answer) {
+    aios_emit("reviewer.problem:" + problem);
+    aios_emit("reviewer.answer:" + answer);
+    var review = "accepted: the answer is correct";
+    aios_emit("reviewer.review:" + review);
+    reply(review);
+  }
+}
+
+class PlannerActor {
+  method solve(problem) {
+    aios_emit("planner.problem:" + problem);
+
+    var answer_future = aios_future("solver", "solve", problem);
+    var answer = await answer_future;
+    aios_emit("planner.answer:" + answer);
+
+    var review_future = aios_future("reviewer", "review", problem, answer);
+    var review = await review_future;
+    aios_emit("planner.review:" + review);
+
+    reply("answer: " + answer + " | review: " + review);
+  }
+}
+
+var solver = new SolverActor();
+var reviewer = new ReviewerActor();
+var planner = new PlannerActor();
+
+aios_register_service("solver", "solver");
+aios_register_service("reviewer", "reviewer");
+aios_register_service("planner", "planner");
+
+print("== Three actor cooperative solve ==");
+print(aios_services());
+
+var result = aios_now("planner", "solve", "If there are 3 boxes with 4 apples each, how many apples are there?");
+
+print("final result = " + result);
+print("== coordination events ==");
+print(aios_events());

@@ -1,0 +1,68 @@
+class PlannerActorJa {
+  method plan(problem) {
+    aios_emit("planner.problem:" + problem);
+    var plan = "計画: 1) モジュール総数を出す 2) 必要テスト総数を出す 3) 完了済みテストを引く 4) 配備チェック項目を足す";
+    aios_emit("planner.plan:" + plan);
+    reply(plan);
+  }
+}
+
+class SolverActorJa {
+  method solve(problem, plan) {
+    aios_emit("solver.plan:" + plan);
+    var answer = "計算: 3チーム x 4モジュール = 12モジュール。12モジュール x 2テスト = 24テスト。完了済み5テストを引くと残り19テスト。配備チェック3項目を足すと、残作業は合計22件です。";
+    aios_emit("solver.answer:" + answer);
+    reply(answer);
+  }
+}
+
+class ReviewerActorJa {
+  method review(problem, plan, answer) {
+    aios_emit("reviewer.problem:" + problem);
+    aios_emit("reviewer.plan:" + plan);
+    aios_emit("reviewer.answer:" + answer);
+    var review = "レビュー: 計算は正しいです。12モジュール、24テスト、残り19テスト、配備チェック3件なので、合計22件です。";
+    aios_emit("reviewer.review:" + review);
+    reply(review);
+  }
+}
+
+class CoordinatorActorJa {
+  method solve(problem) {
+    aios_emit("coordinator.problem:" + problem);
+
+    var plan_future = aios_future("planner", "plan", problem);
+    var plan = await plan_future;
+    aios_emit("coordinator.plan:" + plan);
+
+    var answer_future = aios_future("solver", "solve", problem, plan);
+    var answer = await answer_future;
+    aios_emit("coordinator.answer:" + answer);
+
+    var review_future = aios_future("reviewer", "review", problem, plan, answer);
+    var review = await review_future;
+    aios_emit("coordinator.review:" + review);
+
+    reply("最終回答: " + answer + " | " + review);
+  }
+}
+
+var planner = new PlannerActorJa();
+var solver = new SolverActorJa();
+var reviewer = new ReviewerActorJa();
+var coordinator = new CoordinatorActorJa();
+
+aios_register_service("planner", "planner");
+aios_register_service("solver", "solver");
+aios_register_service("reviewer", "reviewer");
+aios_register_service("coordinator", "coordinator");
+
+print("== 大きめの問題を3アクターで協調して解く ==");
+print(aios_services());
+
+var problem = "3つの開発チームがあります。各チームは4個のモジュールを担当します。各モジュールには2個のテストが必要です。すでに5個のテストが完了しています。最後に配備チェックが3項目あります。残っている作業は合計何件ですか。";
+var result = aios_now("coordinator", "solve", problem);
+
+print(result);
+print("== 協調イベント ==");
+print(aios_events());

@@ -1,0 +1,81 @@
+class PlannerActorJa {
+  method plan(problem) {
+    aios_emit("planner.start:" + problem);
+    wait(500.);
+    var plan = "計画: モジュール数、テスト数、完了済み数、配備チェック数を順に計算する";
+    aios_emit("planner.done:" + plan);
+    reply(plan);
+  }
+}
+
+class SolverActorJa {
+  method solve(problem, plan) {
+    aios_emit("solver.start:" + plan);
+    wait(2000.);
+    var answer = "答え: 3チーム x 4モジュール = 12モジュール。12 x 2 = 24テスト。24 - 5 = 19。19 + 3 = 22件。";
+    aios_emit("solver.done:" + answer);
+    reply(answer);
+  }
+}
+
+class ReviewerActorJa {
+  method brief(problem, plan) {
+    aios_emit("reviewer.brief.start:" + plan);
+    wait(2000.);
+    var brief = "要点: 12モジュール、24テスト、完了済み5、配備チェック3";
+    aios_emit("reviewer.brief.done:" + brief);
+    reply(brief);
+  }
+
+  method review(problem, answer, brief) {
+    aios_emit("reviewer.review.start:" + brief);
+    wait(500.);
+    var verdict = "判定: 正しい。残作業は22件です。";
+    aios_emit("reviewer.review.done:" + verdict);
+    reply(verdict);
+  }
+}
+
+class MainThreadActorJa {
+  method run(problem) {
+    aios_emit("main.start:" + problem);
+
+    var plan = aios_now("planner", "plan", problem);
+    aios_emit("main.after_now_plan:" + plan);
+
+    var answer_future = aios_future("solver", "solve", problem, plan);
+    var brief_future = aios_future("reviewer", "brief", problem, plan);
+    aios_emit("main.future_sent:solver+reviewer.brief");
+
+    var answer = await answer_future;
+    aios_emit("main.await_answer:" + answer);
+
+    var brief = await brief_future;
+    aios_emit("main.await_brief:" + brief);
+
+    var verdict = aios_now("reviewer", "review", problem, answer, brief);
+    aios_emit("main.after_now_review:" + verdict);
+
+    reply("最終結果: " + answer + " | " + brief + " | " + verdict);
+  }
+}
+
+var planner = new PlannerActorJa();
+var solver = new SolverActorJa();
+var reviewer = new ReviewerActorJa();
+var main_thread = new MainThreadActorJa();
+
+aios_register_service("planner", "planner");
+aios_register_service("solver", "solver");
+aios_register_service("reviewer", "reviewer");
+aios_register_service("main", "main_thread");
+
+print("== future型メッセージ送信タイムライン ==");
+print(aios_services());
+
+var problem = "3つの開発チームがあります。各チームは4個のモジュールを担当します。各モジュールには2個のテストが必要です。すでに5個のテストが完了しています。最後に配備チェックが3項目あります。残っている作業は合計何件ですか。";
+var result = aios_now("main", "run", problem);
+
+print(result);
+print("== タイムラインイベント ==");
+print(aios_events());
