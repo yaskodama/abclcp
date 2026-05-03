@@ -7,6 +7,12 @@ PKGS=-package tsdl,unix
 
 all: thread_repl
 
+smoke:
+	cd .. && sh scripts/aios_smoke.sh
+
+now-future:
+	cd .. && sh scripts/run_now_future.sh
+
 parser.ml parser.mli: parser.mly
 	$(YACC) parser.mly
 

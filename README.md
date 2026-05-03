@@ -49,6 +49,25 @@ around the current actor runtime.
 
 ## AIOS Kernel Smoke Test
 
+Run the offline smoke suite:
+
+```sh
+sh scripts/aios_smoke.sh
+```
+
+Run only the `now` / `future` sample:
+
+```sh
+sh scripts/run_now_future.sh
+```
+
+From `src/`, the same checks are available through make:
+
+```sh
+opam exec -- make now-future
+opam exec -- make smoke
+```
+
 ```sh
 cd src
 opam exec -- make
