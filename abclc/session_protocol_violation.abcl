@@ -1,0 +1,25 @@
+class Planner {
+  method plan(problem) {
+    reply("plan");
+  }
+}
+
+class Solver {
+  method solve(plan) {
+    reply("answer");
+  }
+}
+
+var planner = new Planner();
+var solver = new Solver();
+
+protocol_define("BadOrderProtocol", "planner.plan -> solver.solve");
+var sid = protocol_start("BadOrderProtocol");
+
+print("== ABCL/c+ session protocol violation sample ==");
+print(protocol_state(sid));
+
+// This intentionally violates the protocol. The next expected message is
+// planner.plan, so solver.solve is rejected before it enters solver's mailbox.
+var bad = now solver.solve("no plan yet");
+print(bad);

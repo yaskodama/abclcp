@@ -36,6 +36,10 @@ var reviewer = new Reviewer();
 
 var question = "What is 12 * 11? Show only the number.";
 
+protocol_define("UserThreeRoleAI", "planner.plan -> solver.solve -> reviewer.brief -> reviewer.review");
+var sid = protocol_start("UserThreeRoleAI");
+print("[protocol] " + protocol_state(sid));
+
 var plan = now planner.plan(question);
 print("[plan] " + plan);
 
@@ -50,3 +54,8 @@ print("[reviewer brief] " + brief);
 
 var verdict = now reviewer.review(answer);
 print("[verdict] " + verdict);
+
+print("[protocol] " + protocol_state(sid));
+protocol_end(sid);
+print("[protocol] " + protocol_state(sid));
+print("[protocol events] " + protocol_events());

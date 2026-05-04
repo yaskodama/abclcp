@@ -60,9 +60,18 @@ aios_register_service("coordinator", "coordinator");
 print("== 大きめの問題を3アクターで協調して解く ==");
 print(aios_services());
 
+protocol_define("LargerProblemFutureJa", "coordinator.solve -> planner.plan -> solver.solve -> reviewer.review");
+var sid = protocol_start("LargerProblemFutureJa");
+print(protocol_state(sid));
+
 var problem = "3つの開発チームがあります。各チームは4個のモジュールを担当します。各モジュールには2個のテストが必要です。すでに5個のテストが完了しています。最後に配備チェックが3項目あります。残っている作業は合計何件ですか。";
 var result = aios_now("coordinator", "solve", problem);
 
 print(result);
+print(protocol_state(sid));
+protocol_end(sid);
+print(protocol_state(sid));
+print("== セッション型イベント ==");
+print(protocol_events());
 print("== 協調イベント ==");
 print(aios_events());

@@ -51,8 +51,17 @@ aios_register_service("coordinator", "coordinator");
 print("== Multi-AI cooperative solve ==");
 print(aios_services());
 
+protocol_define("MultiAISolve", "coordinator.solve -> planner.plan -> solver.solve -> reviewer.review");
+var sid = protocol_start("MultiAISolve");
+print(protocol_state(sid));
+
 var result = aios_now("coordinator", "solve", "If there are 3 boxes with 4 apples each, how many apples are there?");
 
 print("final result = " + result);
+print(protocol_state(sid));
+protocol_end(sid);
+print(protocol_state(sid));
+print("== protocol events ==");
+print(protocol_events());
 print("== coordination events ==");
 print(aios_events());

@@ -1,0 +1,48 @@
+class Planner {
+  method plan(problem) {
+    aios_emit("planner.plan:" + problem);
+    reply("Compute the total by multiplying boxes by apples per box.");
+  }
+}
+
+class Solver {
+  method solve(plan) {
+    aios_emit("solver.solve:" + plan);
+    reply("12");
+  }
+}
+
+class Reviewer {
+  method review(answer) {
+    aios_emit("reviewer.review:" + answer);
+    reply("OK: answer is 12.");
+  }
+}
+
+var planner = new Planner();
+var solver = new Solver();
+var reviewer = new Reviewer();
+
+protocol_define("SolveProtocol", "planner.plan -> solver.solve -> reviewer.review");
+var sid = protocol_start("SolveProtocol");
+
+print("== ABCL/c+ session protocol sample ==");
+print(protocol_state(sid));
+
+var plan = now planner.plan("3 boxes with 4 apples");
+print("plan = " + plan);
+print(protocol_state(sid));
+
+var answer_future = future solver.solve(plan);
+var answer = await answer_future;
+print("answer = " + answer);
+print(protocol_state(sid));
+
+var verdict = now reviewer.review(answer);
+print("verdict = " + verdict);
+print(protocol_state(sid));
+
+protocol_end(sid);
+print(protocol_state(sid));
+print(protocol_events());
+print(aios_events());

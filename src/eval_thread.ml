@@ -27,6 +27,7 @@ type mmessage = {
   from : string;
   stmt : Ast.stmt;
   msg_id : string option;
+  session_id : string option;
 }
 
 type actor = {
@@ -51,6 +52,7 @@ let sid_log_limit = 500
 type exec_context = {
   mutable ctx_msg_id : string option;
   mutable ctx_actor_name : string option;
+  mutable ctx_session_id : string option;
 }
 
 let exec_context_mu = Mutex.create ()
@@ -65,7 +67,7 @@ let current_exec_context () : exec_context =
     match Hashtbl.find_opt exec_contexts tid with
     | Some ctx -> ctx
     | None ->
-        let ctx = { ctx_msg_id = None; ctx_actor_name = None } in
+        let ctx = { ctx_msg_id = None; ctx_actor_name = None; ctx_session_id = None } in
         Hashtbl.replace exec_contexts tid ctx;
         ctx
   in
@@ -143,6 +145,12 @@ let set_current_actor_name (nm:string option) =
 
 let get_current_actor_name () =
   (current_exec_context ()).ctx_actor_name
+
+let set_current_session_id (sid:string option) =
+  (current_exec_context ()).ctx_session_id <- sid
+
+let get_current_session_id () =
+  (current_exec_context ()).ctx_session_id
 
 (* ---------------- Web/Debug log buffer (per actor) ---------------- *)
 type log_entry = int * string
@@ -458,6 +466,173 @@ let find_actor_exn name =
   try Hashtbl.find actor_table name with Not_found ->
     failwith ("send: unknown actor: " ^ name)
 
+(* ===== Session protocol runtime =====
+   A protocol is a linear sequence of actor.method steps. A session carries a
+   protocol position across now/future/send boundaries and rejects out-of-order
+   messages before they enter an actor mailbox. *)
+type protocol_step = {
+  step_actor : string;
+  step_method : string;
+}
+
+type protocol_def = {
+  proto_name : string;
+  proto_steps : protocol_step array;
+}
+
+type session_state = {
+  sid : string;
+  proto : protocol_def;
+  mutable pos : int;
+  mutable closed : bool;
+}
+
+let protocol_mu = Mutex.create ()
+let protocol_defs : (string, protocol_def) Hashtbl.t = Hashtbl.create 32
+let protocol_sessions : (string, session_state) Hashtbl.t = Hashtbl.create 64
+let protocol_next_id = ref 0
+let protocol_log : string list ref = ref []
+let protocol_log_limit = 500
+
+let protocol_push_log line =
+  protocol_log := line :: !protocol_log;
+  protocol_log := take protocol_log_limit !protocol_log
+
+let protocol_trim s = String.trim s
+
+let protocol_split_arrows (spec:string) : string list =
+  let n = String.length spec in
+  let rec loop i start acc =
+    if i + 1 < n && spec.[i] = '-' && spec.[i + 1] = '>' then
+      let part = String.sub spec start (i - start) |> protocol_trim in
+      loop (i + 2) (i + 2) (part :: acc)
+    else if i >= n then
+      let part = String.sub spec start (n - start) |> protocol_trim in
+      List.rev (part :: acc)
+    else
+      loop (i + 1) start acc
+  in
+  loop 0 0 [] |> List.filter (fun s -> s <> "")
+
+let protocol_parse_step raw =
+  match String.split_on_char '.' (protocol_trim raw) with
+  | [actor; meth] when protocol_trim actor <> "" && protocol_trim meth <> "" ->
+      { step_actor = protocol_trim actor; step_method = protocol_trim meth }
+  | _ ->
+      failwith ("protocol_define: expected actor.method step, got: " ^ raw)
+
+let protocol_define (name:string) (spec:string) : unit =
+  let parts = protocol_split_arrows spec in
+  let steps = Array.of_list (List.map protocol_parse_step parts) in
+  if Array.length steps = 0 then
+    failwith "protocol_define: protocol must contain at least one step";
+  Mutex.lock protocol_mu;
+  let p = { proto_name = name; proto_steps = steps } in
+  Hashtbl.replace protocol_defs name p;
+  protocol_push_log ("define " ^ name ^ " = " ^ spec);
+  Mutex.unlock protocol_mu
+
+let protocol_start (name:string) : string =
+  Mutex.lock protocol_mu;
+  let proto =
+    match Hashtbl.find_opt protocol_defs name with
+    | Some p -> p
+    | None ->
+        Mutex.unlock protocol_mu;
+        failwith ("protocol_start: unknown protocol: " ^ name)
+  in
+  incr protocol_next_id;
+  let sid = name ^ "-" ^ string_of_int !protocol_next_id in
+  let st = { sid; proto; pos = 0; closed = false } in
+  Hashtbl.replace protocol_sessions sid st;
+  protocol_push_log ("start " ^ sid);
+  Mutex.unlock protocol_mu;
+  set_current_session_id (Some sid);
+  sid
+
+let protocol_expected_locked (st:session_state) : string =
+  if st.pos >= Array.length st.proto.proto_steps then "<complete>"
+  else
+    let step = st.proto.proto_steps.(st.pos) in
+    step.step_actor ^ "." ^ step.step_method
+
+let protocol_check_send ?session_id ~(target:string) ~(meth:string) () : unit =
+  let sid_opt = match session_id with Some _ -> session_id | None -> get_current_session_id () in
+  match sid_opt with
+  | None -> ()
+  | Some sid ->
+      Mutex.lock protocol_mu;
+      let finish_ok () = Mutex.unlock protocol_mu in
+      let fail msg =
+        Mutex.unlock protocol_mu;
+        failwith msg
+      in
+      begin match Hashtbl.find_opt protocol_sessions sid with
+      | None -> fail ("protocol: unknown session: " ^ sid)
+      | Some st ->
+          if st.closed then fail ("protocol " ^ sid ^ " is closed");
+          if st.pos >= Array.length st.proto.proto_steps then
+            fail ("protocol " ^ sid ^ " is already complete; unexpected " ^ target ^ "." ^ meth);
+          let step = st.proto.proto_steps.(st.pos) in
+          if step.step_actor = target && step.step_method = meth then begin
+            st.pos <- st.pos + 1;
+            protocol_push_log
+              (Printf.sprintf "ok %s step %d/%d %s.%s"
+                 sid st.pos (Array.length st.proto.proto_steps) target meth);
+            finish_ok ()
+          end else
+            let expected = step.step_actor ^ "." ^ step.step_method in
+            fail
+              (Printf.sprintf "protocol %s violation: expected %s, got %s.%s"
+                 sid expected target meth)
+      end
+
+let protocol_state_string (sid:string) : string =
+  Mutex.lock protocol_mu;
+  let s =
+    match Hashtbl.find_opt protocol_sessions sid with
+    | None -> "session " ^ sid ^ " not found"
+    | Some st ->
+        let n = Array.length st.proto.proto_steps in
+        let status =
+          if st.closed then "closed"
+          else if st.pos >= n then "complete"
+          else "active"
+        in
+        Printf.sprintf "session %s protocol=%s status=%s pos=%d/%d next=%s"
+          sid st.proto.proto_name status st.pos n (protocol_expected_locked st)
+  in
+  Mutex.unlock protocol_mu;
+  s
+
+let protocol_end (sid:string) : unit =
+  Mutex.lock protocol_mu;
+  let current = get_current_session_id () in
+  begin match Hashtbl.find_opt protocol_sessions sid with
+  | None ->
+      Mutex.unlock protocol_mu;
+      failwith ("protocol_end: unknown session: " ^ sid)
+  | Some st ->
+      if st.pos < Array.length st.proto.proto_steps then begin
+        let msg =
+          Printf.sprintf "protocol_end: %s is incomplete; next=%s"
+            sid (protocol_expected_locked st)
+        in
+        Mutex.unlock protocol_mu;
+        failwith msg
+      end;
+      st.closed <- true;
+      protocol_push_log ("end " ^ sid);
+      Mutex.unlock protocol_mu
+  end;
+  if current = Some sid then set_current_session_id None
+
+let protocol_event_lines () : string list =
+  Mutex.lock protocol_mu;
+  let lines = List.rev !protocol_log in
+  Mutex.unlock protocol_mu;
+  lines
+
 let get_var x =
   try Hashtbl.find env x
   with Not_found -> failwith ("unbound variable: " ^ x)
@@ -613,7 +788,7 @@ let create_actor name cls =
     last_sender = "";
   }
 
-let send_message ?msg_id ~from (target_name:string) (stmt:Ast.stmt) : unit = (
+let send_message ?msg_id ?session_id ~from (target_name:string) (stmt:Ast.stmt) : unit = (
 (*  let log_message () = (
     let oc = open_out_gen [Open_creat; Open_append; Open_text] 0o644 "message_log.txt" in
     Printf.fprintf oc "[SEND] to %s: %s\n" target_name
@@ -623,7 +798,12 @@ let send_message ?msg_id ~from (target_name:string) (stmt:Ast.stmt) : unit = (
 (*  log_message (); *)
   match Hashtbl.find_opt actor_table target_name with
   | Some actor ->
-      let m = { msg_id; from; stmt } in
+      (match stmt.sdesc with
+       | CallStmt (meth, _) ->
+           protocol_check_send ?session_id ~target:target_name ~meth ()
+       | _ -> ());
+      let sid = match session_id with Some _ -> session_id | None -> get_current_session_id () in
+      let m = { msg_id; session_id = sid; from; stmt } in
       Mutex.lock actor.mutex;
       actor.last_sender <- from;
       Queue.push m actor.queue;
@@ -724,6 +904,13 @@ let static_primitive_catalog = [
   { pname = "aios_task_get"; capability = "AIOS.Task"; psig = "(task, field) -> string"; pdesc = "read a task field" };
   { pname = "aios_task_info"; capability = "AIOS.Task"; psig = "task -> string"; pdesc = "describe a task" };
   { pname = "aios_tasks"; capability = "AIOS.Task"; psig = "() -> string[]"; pdesc = "list task ids" };
+  { pname = "protocol_define"; capability = "Protocol.Session"; psig = "(name, actor.method -> ...) -> unit"; pdesc = "define a linear message protocol" };
+  { pname = "protocol_start"; capability = "Protocol.Session"; psig = "name -> session"; pdesc = "start a protocol session and make it current" };
+  { pname = "protocol_use"; capability = "Protocol.Session"; psig = "session -> unit"; pdesc = "make an existing session current in this thread" };
+  { pname = "protocol_current"; capability = "Protocol.Session"; psig = "() -> session"; pdesc = "return current session id" };
+  { pname = "protocol_state"; capability = "Protocol.Session"; psig = "session -> string"; pdesc = "describe protocol session progress" };
+  { pname = "protocol_end"; capability = "Protocol.Session"; psig = "session -> unit"; pdesc = "close a complete protocol session" };
+  { pname = "protocol_events"; capability = "Protocol.Session"; psig = "() -> string[]"; pdesc = "list protocol checker events" };
   { pname = "model_generate"; capability = "AIOS.Model"; psig = "(provider, prompt) -> string"; pdesc = "generate text with a named model provider" };
   { pname = "ai_call"; capability = "AIOS.Model"; psig = "prompt -> string"; pdesc = "generate text with default AI provider" };
   { pname = "ai_call_with_system"; capability = "AIOS.Model"; psig = "(system, prompt) -> string"; pdesc = "generate text with a system instruction and default AI provider" };
@@ -1492,6 +1679,40 @@ let prim_table : (string, value list -> value) Hashtbl.t =
       (function
         | [] -> string_array (aios_tasks ())
         | _ -> failwith "aios_tasks(): arity 0 expected"));
+    ("protocol_define",
+      (function
+        | [VString name; VString spec] -> protocol_define name spec; VUnit
+        | _ -> failwith "protocol_define(name, spec): arity 2 expected"));
+    ("protocol_start",
+      (function
+        | [VString name] -> VString (protocol_start name)
+        | _ -> failwith "protocol_start(name): arity 1 expected"));
+    ("protocol_use",
+      (function
+        | [VString sid] ->
+            Mutex.lock protocol_mu;
+            let exists = Hashtbl.mem protocol_sessions sid in
+            Mutex.unlock protocol_mu;
+            if not exists then failwith ("protocol_use: unknown session: " ^ sid);
+            set_current_session_id (Some sid);
+            VUnit
+        | _ -> failwith "protocol_use(session): arity 1 expected"));
+    ("protocol_current",
+      (function
+        | [] -> VString (match get_current_session_id () with Some sid -> sid | None -> "")
+        | _ -> failwith "protocol_current(): arity 0 expected"));
+    ("protocol_state",
+      (function
+        | [VString sid] -> VString (protocol_state_string sid)
+        | _ -> failwith "protocol_state(session): arity 1 expected"));
+    ("protocol_end",
+      (function
+        | [VString sid] -> protocol_end sid; VUnit
+        | _ -> failwith "protocol_end(session): arity 1 expected"));
+    ("protocol_events",
+      (function
+        | [] -> string_array (protocol_event_lines ())
+        | _ -> failwith "protocol_events(): arity 0 expected"));
     ("model_generate",
       (function
         | [VString provider; VString prompt] -> VString (call_provider_generate provider prompt)
@@ -1760,14 +1981,17 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
           (* preserve your existing reply/msg_id correlation *)
           let prev_actor_name = get_current_actor_name () in
           let prev_msg_id = get_current_msg_id () in
+          let prev_session_id = get_current_session_id () in
           set_current_actor_name (Some actor.name);
           set_current_msg_id m.msg_id;
+          set_current_session_id m.session_id;
 
           (* bind variables into actor.env *)
           List.iter (fun (x,v) -> Hashtbl.replace actor.env x v) binds;
 
           (try eval_stmt actor body_stmt with _ -> ());
           set_current_msg_id prev_msg_id;
+          set_current_session_id prev_session_id;
           set_current_actor_name prev_actor_name
       | None ->
           (* no match *)
@@ -1797,8 +2021,10 @@ and actor_loop actor = (
     Mutex.unlock actor.mutex;
     let prev_actor_name = get_current_actor_name () in
     let prev_msg_id = get_current_msg_id () in
+    let prev_session_id = get_current_session_id () in
     set_current_actor_name (Some actor.name);
     set_current_msg_id msg.msg_id;
+    set_current_session_id msg.session_id;
     (try
       eval_stmt actor msg.stmt
       with exn ->
@@ -1815,6 +2041,7 @@ and actor_loop actor = (
             id actor.name (Printexc.to_string exn))
     );
     set_current_msg_id prev_msg_id;
+    set_current_session_id prev_session_id;
     set_current_actor_name prev_actor_name;
     done)
 and resolve_actor_from_term env recv_term =

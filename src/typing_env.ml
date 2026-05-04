@@ -98,6 +98,13 @@ let prelude () : env =
   add_mono e "aios_task_get" (TFun ([TString; TString], TString));
   add_mono e "aios_task_info" (TFun ([TString], TString));
   add_mono e "aios_tasks" (TFun ([], TArray TString));
+  add_mono e "protocol_define" (TFun ([TString; TString], TUnit));
+  add_mono e "protocol_start" (TFun ([TString], TString));
+  add_mono e "protocol_use" (TFun ([TString], TUnit));
+  add_mono e "protocol_current" (TFun ([], TString));
+  add_mono e "protocol_state" (TFun ([TString], TString));
+  add_mono e "protocol_end" (TFun ([TString], TUnit));
+  add_mono e "protocol_events" (TFun ([], TArray TString));
   add_mono e "model_generate" (TFun ([TString; TString], TString));
   add_mono e "ai_call" (TFun ([TString], TString));
   add_mono e "ai_call_with_system" (TFun ([TString; TString], TString));

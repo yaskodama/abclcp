@@ -1,0 +1,226 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{url}
+
+\title{AICE: A Typed Actor-based Intelligent Computing Environment}
+
+\author{
+Yasushi Kodama\\
+Faculty of Business Administration\\
+Hosei University
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We present AICE (Actor-based Intelligent Computing Environment), a lightweight and distributed AI execution framework built on a typed actor language AIPL. AICE integrates asynchronous message passing, selective receive, and AI agent composition under a statically typed setting.
+
+We introduce a three-layer type system consisting of value types, actor types, and communication types, and show that type safety alone is insufficient to guarantee correctness of asynchronous communication.
+
+We formalize the operational semantics of selective receive and propose an optional integration of session types for protocol-level guarantees.
+\end{abstract}
+
+\section{Introduction}
+
+Modern AI systems require distributed, concurrent, and lightweight execution environments. Existing systems lack formal guarantees and are often too heavy for edge or embedded deployment.
+
+This paper proposes AICE, a typed actor-based computing environment built on AIPL.
+
+\paragraph{Contributions}
+\begin{itemize}
+\item A typed actor language AIPL
+\item AICE architecture for AI execution
+\item Formal operational semantics for asynchronous messaging
+\item Analysis of limitations of type safety
+\item Optional session type integration
+\end{itemize}
+
+\section{Language Overview}
+
+\subsection{Syntax}
+
+\begin{align*}
+e &::= x \mid n \mid e_1 + e_2 \mid new\ C \mid send\ e.m(e^*) \\
+s &::= e \mid s_1 ; s_2 \mid if\ e\ then\ s_1\ else\ s_2 \mid select\ \{b_i\} \\
+b &::= when\ m(x^*) \rightarrow s
+\end{align*}
+
+\section{Type System}
+
+\subsection{Types}
+
+\[
+\tau ::= int \mid string \mid unit \mid \tau_1 \to \tau_2 \mid actor(C)
+\]
+
+Extended form:
+
+\[
+actor(C, P)
+\]
+
+\subsection{Typing Judgement}
+
+\[
+\Gamma \vdash e : \tau
+\quad
+\Gamma \vdash s : unit
+\]
+
+\subsection{Send Typing}
+
+\[
+\frac{
+\Gamma \vdash e : actor(C)
+\quad
+m : \tau_1 \times \dots \times \tau_n \to unit \in C
+\quad
+\Gamma \vdash e_i : \tau_i
+}{
+\Gamma \vdash send\ e.m(e_1,\dots,e_n) : unit
+}
+\]
+
+\subsection{Select Typing}
+
+\[
+\frac{
+\Gamma \vdash s_i : unit \quad \forall i
+}{
+\Gamma \vdash select\ \{b_i\} : unit
+}
+\]
+
+\section{Operational Semantics}
+
+\subsection{Configuration}
+
+\[
+\langle A, M, s \rangle
+\]
+
+\subsection{Send}
+
+\[
+\langle A, M, send\ B.m(v) \rangle \rightarrow \langle A, M, unit \rangle
+\]
+
+Mailbox update:
+
+\[
+MB_B := MB_B \cup \{(m, v, A)\}
+\]
+
+\subsection{Select}
+
+\[
+\frac{
+(m, v, sender) \in M
+}{
+\langle A, M, select \rangle \rightarrow \langle A, M \setminus \{m\}, s \rangle
+}
+\]
+
+\subsection{Blocking}
+
+If no message matches:
+
+\[
+\langle A, M, select \rangle \rightarrow wait
+\]
+
+\subsection{Non-determinism}
+
+Multiple matches:
+
+\[
+select \rightarrow s_1 \quad \text{or} \quad s_2
+\]
+
+\section{Limitations of Type Safety}
+
+We show that type safety does not guarantee communication correctness.
+
+\subsection{Example}
+
+\begin{lstlisting}
+send calc.add(3,4);
+send calc.result(10);
+\end{lstlisting}
+
+Even if well-typed, execution order is not guaranteed.
+
+\section{Session Types (Optional)}
+
+\subsection{Protocol}
+
+\[
+P = A \rightarrow B : m_1 ; B \rightarrow A : m_2
+\]
+
+\subsection{Design}
+
+Session types are optional and do not interfere with HM inference.
+
+\section{AICE Architecture}
+
+\begin{itemize}
+\item Actor runtime
+\item Scheduler
+\item Mailbox system
+\item Network layer
+\item AI actors
+\end{itemize}
+
+\subsection{AI Actor Roles}
+
+\begin{itemize}
+\item PlannerActor
+\item LLMActor
+\item MemoryActor
+\item ToolActor
+\end{itemize}
+
+\section{Case Study}
+
+\subsection{Calculator}
+
+\begin{lstlisting}
+send calc.add(3,4)
+\end{lstlisting}
+
+\subsection{AI Pipeline}
+
+\[
+User \rightarrow Planner \rightarrow LLM \rightarrow Memory
+\]
+
+\section{Discussion}
+
+Key insight:
+
+\[
+\text{Value typing} \neq \text{Communication correctness}
+\]
+
+\section{Related Work}
+
+Actor systems, session types, and AIOS frameworks.
+
+\section{Conclusion}
+
+We proposed AICE and demonstrated that type safety alone is insufficient for asynchronous actor systems.
+
+Future work includes protocol inference, formal verification, and deployment on embedded systems.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

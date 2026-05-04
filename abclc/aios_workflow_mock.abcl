@@ -69,10 +69,20 @@ print("== AIOS mock workflow ==");
 print(aios_services());
 
 aios_now("model", "use", "mock");
+
+protocol_define("MockWorkflow", "agent.solve -> task.create -> task.set -> task.set -> model.generate -> task.set -> task.set -> model.generate -> task.set -> task.set");
+var sid = protocol_start("MockWorkflow");
+print(protocol_state(sid));
+
 var tid = aios_now("agent", "solve", "offline workflow test", "3 boxes with 4 apples");
+
+print(protocol_state(sid));
+protocol_end(sid);
+print(protocol_state(sid));
 
 print("task id = " + tid);
 print(aios_now("task", "info", tid));
 print("answer = " + aios_now("task", "get", tid, "answer"));
 print("review = " + aios_now("task", "get", tid, "review"));
+print(protocol_events());
 print(aios_events());
