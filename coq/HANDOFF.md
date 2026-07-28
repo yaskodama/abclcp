@@ -1,6 +1,6 @@
 # AIPL 形式化 — セッション再開用ドキュメント
 
-最終更新: 2026-07-28
+最終更新: 2026-07-28（A1 埋め込みまで完了・公開/非公開の分離まで完了）
 
 ## 30 秒で状況を把握する
 
@@ -167,7 +167,35 @@ ABCM が AIPL⁻ の「await を含まない断片」にちょうど収まって
 | HM の Coq とレポート | `~/hm_prover`（branch `coq-soundness-safety`） |
 | AICE/AIPL ポータル | `~/Dropbox/アプリ/site44/kodama-lab.site44.com/aice/` |
 
-## 未コミット
+## リポジトリの構成（2026-07-28 に整理した）
 
-`~/aios/abclcp` は **git に入れていない**（`coq/` と `docs/` は元から untracked）。
-コミットするかは未決。`~/seminar/abcm-soundness` は push 済み。
+**`~/aios/abclcp` は二つの GitHub リポジトリに分かれている。** ディレクトリ単位の
+公開設定ができないため、公開してよいものと論文ドラフトを分離した。
+
+| リポジトリ | 公開設定 | 中身 | ローカル |
+|---|---|---|---|
+| `yaskodama/abclcp` | **PUBLIC** | `coq/`, `docs/`, `src/`（処理系）| `~/aios/abclcp`（branch `make-src-base`）|
+| `yaskodama/abclcp-papers` | **PRIVATE** | 論文ドラフト 7 本 + `RETURN_PROMPT.md` | `~/aios/abclcp/paper`（**入れ子の別リポジトリ**）|
+| `yaskodama/abcm-soundness` | **PRIVATE** | ABCM の Coq とレポート | `~/seminar/abcm-soundness` |
+| `yaskodama/hm_prover` | PUBLIC | HM の Coq とレポート | `~/hm_prover`（branch `coq-soundness-safety`）|
+
+**注意点**
+
+- `~/aios/abclcp/paper/` は**入れ子の git リポジトリ**である。親の `abclcp` は
+  `.gitignore` の `/paper/` で完全に無視している。paper/ で作業したら
+  そちらで別途コミットすること。
+- `coq/ABCM.v` は非公開リポジトリの原本へのシンボリックリンクなので
+  **公開側では追跡していない**（`.gitignore`）。用意の仕方は `coq/README.md`。
+- 公開側の全ファイルはコミット済み。作業ツリーはクリーン。
+
+## 未解決の宿題（判断待ち）
+
+`paper/aios.{tex,pdf,dvi,aux,log}` が**古いコミットで公開リポジトリの履歴に
+残っている**。前々回のセッションで `abclcp` に入っていたもので、2026-07-28 に
+追跡からは外した（今後の HEAD には出ない）が、**履歴からは消えていない**。
+
+消すなら `git filter-repo` 等で履歴を書き換えて force push が要る。他の履歴も
+書き換わり、既に clone された分は回収できない。**未実施。判断待ち。**
+
+なお `aios.log` は検査済みで、資格情報のパターンに引っかかったのは LaTeX 内部の
+`token=\toks29` だけだった。
