@@ -1,0 +1,14 @@
+# Coq のビルド生成物
+*.vo
+*.vok
+*.vos
+*.glob
+.*.aux
+.lia.cache
+.nia.cache
+_chk.v
+
+# ABCM.v は非公開リポジトリ yaskodama/abcm-soundness の原本への
+# シンボリックリンクなので、この公開リポジトリには含めない。
+# README.md の手順で用意すること。
+ABCM.v
