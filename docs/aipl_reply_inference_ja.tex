@@ -74,7 +74,8 @@ AIPL（ABCL$^{c}$+）の型健全性・型安全性の検討の中で、「メ�
 \texttt{apply\_binop} が整数どうしの演算でも \texttt{VFloat} を返しており、
 $\vdash e : \ty{int}$ なのに $e \Downarrow \ty{VFloat}$ となる
 preservation の破れが見つかった。型を精密にしたことで初めて観測できた
-ずれであり、直し方の選択肢とともに報告する。
+ずれであり、整数どうしの \texttt{+ - *} を整数のまま返すよう評価器を修正し、
+除算は型も値も \ty{float} に揃えた。
 副次的に、オーバーロード解決 \texttt{pick\_overload} に潜んでいた
 2 つの欠陥（失敗候補の単一化が巻き戻らない／候補の優先順位が登録順の逆）を
 発見し、これも修正した。
@@ -552,20 +553,17 @@ method main() : unit {
 を行った。\texttt{timeout} 本体は囲むメソッドの \texttt{msg\_id} のまま走るので、
 そちらは従来どおり囲むメソッドに属する。
 
-\section{実行して分かったこと：評価器が型検査器と食い違う}
+\section{実行して分かったこと：評価器が型検査器と食い違っていた}
 \label{sec:runtime}
 
 追加した機能を一通り使う統合サンプル（付録 A.11）を書き、型検査だけでなく
 実際に処理系で走らせたところ、静的な型と実行結果が食い違っていた。
 
 \begin{lstlisting}[language={}]
-$ ./src/abclrepl_thread -q -f run_s11.repl
-stock ready
 stock = 10
 ok, left=7.          <-- take : int と宣言したのに小数点が付く
 sold out
 twice = 42.          <-- twice も推論では int
-[stock] done
 \end{lstlisting}
 
 最小再現は次のとおりである（付録 A.13）。
@@ -578,8 +576,9 @@ print(v);
 \end{lstlisting}
 
 型検査は \texttt{T\#f -> int} で通るが、実行すると \texttt{3.}、つまり
-\texttt{VFloat} が返る。原因は \texttt{eval\_thread.ml} の
-\texttt{apply\_binop} にある。
+\texttt{VFloat} が返っていた。原因は \texttt{eval\_thread.ml} の
+\texttt{apply\_binop} で、整数どうしであっても \texttt{VFloat} を
+返していたことである。
 
 \begin{lstlisting}
 (* --- Int/Float mixed: promote to Float --- *)
@@ -588,10 +587,9 @@ print(v);
     VFloat (match op with "+" -> a +. b | ...)
 \end{lstlisting}
 
-整数どうしであっても \texttt{VFloat} を返している。一方
-\texttt{typing\_env.ml} は \texttt{+ : (int * int) -> int} を持っている。
+一方 \texttt{typing\_env.ml} は \texttt{+ : (int * int) -> int} を持っている。
 すなわち $\vdash e : \ty{int}$ でありながら $e \Downarrow \ty{VFloat}$ で、
-\textbf{preservation が成り立っていない}。
+\textbf{preservation が成り立っていなかった}。
 
 \begin{remark}
 この食い違いは \texttt{+} の型付けが入った時点から存在していたもので、
@@ -603,18 +601,80 @@ $\rho$ を導入して戻り値に具体型が付くようになり、さらに�
 型を精密にすると、型システムと実装のずれが可視化されるという例である。
 \end{remark}
 
-直し方は 2 通りあり、どちらを採るかは言語仕様の決定になる。
+\subsection{修正}
 
-\begin{enumerate}
-\item \texttt{VInt} どうしの \texttt{+ - *} は \texttt{VInt} を返すようにし、
-  \texttt{/} は \ty{float} のままとして \texttt{typing\_env} の \texttt{/} を
-  $(\ty{int} \times \ty{int}) \to \ty{float}$ に変える。
-\item \texttt{/} も含めて整数演算にする。型付けはそのままでよいが、
-  \texttt{7 / 2} が \texttt{3} になるので既存プログラムの数値が変わる。
-\end{enumerate}
+整数どうしの \texttt{+ - *} は整数のまま返すようにし、除算だけは
+整数除算を行わず \ty{float} を返す方針に統一した。型側もそれに合わせる。
 
-いずれも評価器の意味論を変えるため、本稿では手を入れていない。
-再現用のサンプルを付録 A.13 として残した。
+\begin{lstlisting}
+(* eval_thread.ml *)
+| ("+"|"-"|"*"), VInt a, VInt b ->
+    VInt (match op with "+" -> a + b | "-" -> a - b | "*" -> a * b | _ -> assert false)
+(* "/" is not listed here: it falls through to the float case below *)
+
+(* typing_env.ml *)
+List.iter add_f3 [ "+"; "-"; "*" ];              (* (int * int) -> int *)
+add_mono e "/" (TFun ([TInt; TInt], TFloat));    (* no integer division *)
+\end{lstlisting}
+
+\texttt{/} を \ty{int} に型付けしたままにすると、\texttt{7 / 2} の型が
+\ty{int} で値が \texttt{3.5} になり、逆向きの食い違いが生まれる。
+また整数除算に変えると既存プログラムの数値が変わってしまう。
+どちらも避けるため、\texttt{/} は型も値も \ty{float} に揃えた。
+
+修正後は四則すべてで静的な型と実行結果が一致する。
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+式 & 型 & 修正前の値 & 修正後の値 \\
+\midrule
+\texttt{7 + 2} & \ty{int}   & \texttt{9.}   & \texttt{9} \\
+\texttt{7 - 2} & \ty{int}   & \texttt{5.}   & \texttt{5} \\
+\texttt{7 * 2} & \ty{int}   & \texttt{14.}  & \texttt{14} \\
+\texttt{7 / 2} & \ty{float} & \texttt{3.5}  & \texttt{3.5} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+統合サンプルの出力も揃った。
+
+\begin{lstlisting}[language={}]
+stock = 10
+ok, left=7
+sold out
+twice = 42
+[stock] done
+\end{lstlisting}
+
+\subsection{残る食い違いと、その境界}
+
+\texttt{a + b} の両辺が未束縛の型変数のときは、\S\ref{sec:overload} のとおり
+principal type が存在しない。型検査は \ty{float} を選んで警告を出すが、
+実行時に整数が渡れば \texttt{VInt} が返るので、ここだけは依然として食い違う。
+
+\begin{lstlisting}[language={}]
+class A { method add(a, b) { reply(a + b); } }
+...
+[warn] ambiguous overload of + for ('a, 'a): ... (picked float)
+  A#add -> float          <-- 静的
+3                         <-- 実行結果は VInt
+\end{lstlisting}
+
+ただしこの残余は\textbf{型検査器が自ら「曖昧である」と警告している
+プログラムに限られる}。戻り値型を注釈すれば期待型が overload 解決へ流れて
+\ty{int} に確定し、実行結果とも一致する（付録 A.7）。
+すなわち「principal type が無いところでは実装と型が揃わないことがある」
+という形に問題が閉じ込められており、これは注釈を書く動機として
+\S\ref{sec:limits} が挙げたものと同じである。
+
+\begin{remark}
+本稿の退行試験（\S\ref{sec:experiment}）はコーパス 63 本すべてで
+判定が変わらないことを確認しているが、これは\emph{型検査の}判定である。
+今回の \texttt{apply\_binop} の変更は\emph{実行時の値}を変える
+（整数演算の結果が \texttt{7.} から \texttt{7} になる）。
+表示や文字列連結の見た目が変わるので、その点は既存プログラムに影響する。
+\end{remark}
 
 \section{副産物：\texttt{pick\_overload} の 2 つの欠陥}
 \label{sec:overload}
@@ -668,6 +728,7 @@ principal type が存在しない。\texttt{reply} の型が推論だけでは�
 \end{remark}
 
 \section{実験}
+\label{sec:experiment}
 
 \subsection{サンプル}
 
@@ -748,10 +809,11 @@ x1 = cx - dx + x;   // cx, dx : float, x : method parameter
   これは実装の手抜きではなく、宣言なしには原理的に埋まらない。
   送信\emph{する}側は相手の本体を持たないので、対向ノードの
   インタフェース記述を読み込む仕組みが要る。
-\item \textbf{評価器が型検査器と食い違っている}（\S\ref{sec:runtime}）。
-  \texttt{apply\_binop} が整数どうしの演算でも \texttt{VFloat} を返すため、
-  \ty{int} と型付けした式が実行時に float になる。
-  意味論の変更を伴うので本稿では直していない。
+\item \textbf{principal type が無い式では、型と実行結果が揃わないことがある}
+  （\S\ref{sec:runtime}）。\texttt{apply\_binop} の食い違いは修正したが、
+  両辺が未束縛の \texttt{a + b} は型検査が \ty{float} を選ぶ一方
+  実行時に \texttt{VInt} が返りうる。型検査器はこれを ambiguous と
+  警告しており、注釈を書けば解消する。
 \end{enumerate}
 
 \section{結論と次の一歩}
@@ -1045,9 +1107,9 @@ $ ./src/abclrepl_thread -q -f run_s11.repl
 [Registered types for class Order: place/1, serve/0, twice/1]
 stock ready
 stock = 10
-ok, left=7.
+ok, left=7
 sold out
-twice = 42.
+twice = 42
 [stock] done
 \end{lstlisting}
 
@@ -1084,8 +1146,10 @@ $ ./tc docs/samples/reply_inference/s13_runtime_mismatch.abcl
   T#f -> int
 
 $ ./src/abclrepl_thread -q -f run_s13.repl
-3.
+3
 \end{lstlisting}
+
+修正前はここが \texttt{3.} だった（\S\ref{sec:runtime}）。
 
 \section{型検査ドライバ \texttt{tc\_main.ml}}
 \label{sec:driver}
@@ -1115,6 +1179,10 @@ REPL（SDL に依存する）を起動せずに型検査だけを走らせるた
 \item \texttt{src/Makefile}（1 行）---
   リンク順を修正（\texttt{types.cmo} を \texttt{ast.cmo} より前へ）。
 \item \texttt{src/repl\_thread.ml}（+1）--- トークン表示に \texttt{COLON} を追加。
+\item \texttt{src/eval\_thread.ml}（+14）--- \texttt{VInt} どうしの
+  \texttt{+ - *} を \texttt{VInt} で返す（\S\ref{sec:runtime}）。
+\item \texttt{src/typing\_env.ml}（+4 / -1）--- \texttt{/} を
+  $(\ty{int} \times \ty{int}) \to \ty{float}$ に型付け。
 \item \texttt{abclc/web\_calc.abcl}, \texttt{src/web\_calc.abcl},
   \texttt{src/web\_calc1.abcl} --- 公開アクターに戻り値型注釈を付けて移行。
 \end{itemize}

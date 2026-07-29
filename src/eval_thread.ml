@@ -715,6 +715,19 @@ let as_float_value = function
       
 let apply_binop op v1 v2 =
   match op, v1, v2 with
+ (* --- 整数どうしの + - * は整数のまま返す ---
+    typing_env が + - * : (int * int) -> int と型付けしているので、
+    ここで Float に昇格すると |- e : int なのに e ⇓ VFloat になり
+    preservation が破れる。実際 method f() : int { reply(1 + 2); } が
+    3. を返していた。
+    除算だけは別扱いで、整数どうしでも Float を返す（下の一般ケースへ落ちる）。
+    型側も / : (int * int) -> float としてこれに合わせてある。 *)
+  | ("+"|"-"|"*"), VInt a, VInt b ->
+      VInt (match op with
+        | "+" -> a + b | "-" -> a - b
+        | "*" -> a * b
+        | _ -> assert false)
+
  (* --- 数値演算: Int/Float 混在を許可（Float に昇格） --- *)
   | ("+"|"-"|"*"|"/"), v1, v2 when is_number v1 && is_number v2 ->
       let a = as_float_value v1 and b = as_float_value v2 in

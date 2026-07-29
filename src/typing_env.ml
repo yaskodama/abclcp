@@ -122,7 +122,10 @@ let prelude () : env =
   let add_f2 f = add_mono e f (TFun ([TFloat; TFloat], TFloat)) in
   List.iter add_f2 [ "+"; "-"; "*"; "/" ];
   let add_f3 f = add_mono e f (TFun ([TInt; TInt], TInt)) in
-  List.iter add_f3 [ "+"; "-"; "*"; "/" ];
+  List.iter add_f3 [ "+"; "-"; "*" ];
+  (* 整数除算は行わない。int / int も float を返す（評価器の apply_binop に合わせる）。
+     ここを (int * int) -> int にすると 7 / 2 の型が int、値が 3.5 になって食い違う。 *)
+  add_mono e "/" (TFun ([TInt; TInt], TFloat));
 
   (* 2.5.2) 二項関係 *)
   let add_f4 f = add_mono e f (TFun ([TFloat; TFloat], TBool)) in

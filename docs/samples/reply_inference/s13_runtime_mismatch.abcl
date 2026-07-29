@@ -1,25 +1,28 @@
-// (13) 型検査器と評価器の食い違い（最小再現）
+// (13) 型検査器と評価器の食い違い —— 発見と修正の回帰テスト
 //
-//      型検査:  [OK]  T#f -> int
-//      実行時:  3.    ← VFloat
+//      発見時:
+//        型検査  [OK]  T#f -> int
+//        実行時  3.          ← VFloat。|- e : int なのに e ⇓ VFloat で
+//                              preservation が破れていた。
 //
-//      typing_env は + : (int * int) -> int を持っているのに、
-//      eval_thread の apply_binop は + - * / を常に VFloat で返す。
+//      原因は eval_thread の apply_binop が + - * / を整数どうしでも
+//      VFloat で返していたこと。typing_env は + : (int * int) -> int を
+//      持っていたので、両者が食い違っていた。
 //
-//        | ("+"|"-"|"*"|"/"), v1, v2 when is_number v1 && is_number v2 ->
-//            let a = as_float_value v1 and b = as_float_value v2 in
-//            VFloat (...)
+//      修正 (a):
+//        - eval_thread : VInt 同士の + - * は VInt を返す
+//        - typing_env  : / だけ (int * int) -> float に型付けし直す
+//                        （整数除算は行わない。7 / 2 は 3.5 のまま）
 //
-//      すなわち |- e : int なのに e ⇓ VFloat であり、preservation が成り立たない。
-//      この食い違い自体は + の型付けが入った時点から存在していたが、
-//      メソッドの戻り値型が unit / any 固定だったため観測できなかった。
-//      reply から戻り値型を推論・宣言できるようになって初めて表に出た。
+//      現在:
+//        型検査  [OK]  T#f -> int
+//        実行時  3
 //
-//      直し方は 2 通りあり、どちらを採るかは言語仕様の決定になる。
-//        (a) VInt 同士の + - * は VInt を返すようにする。/ は float のままとし、
-//            typing_env の / を (int * int) -> float に変える
-//        (b) / も含めて整数演算にする（7 / 2 が 3 になるので既存プログラムに影響）
-//      本レポート時点では評価器には手を入れていない。
+//      なお a + b の両辺が未束縛の型変数のときは principal type が無く、
+//      型検査は float を選んで警告を出す一方、実行時に int が渡れば
+//      VInt が返る。この食い違いだけは残っているが、対象は
+//      「ambiguous overload」と警告されるプログラムに限られ、
+//      戻り値型を注釈すれば解消する（s7 を参照）。
 class T {
   method f() : int {
     reply(1 + 2);
