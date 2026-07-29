@@ -1,4 +1,4 @@
-// (5) principal type が無い式
+// (5) principal type が無い式は拒否される
 //
 //     a も b も未束縛の型変数なので、+ の候補がどれも同じ資格で一致する。
 //
@@ -9,15 +9,18 @@
 //     潰され、b も string に焼き付いていた。
 //     RotateThreeLines.abcl が誤ってエラーになっていたのもこれが原因。
 //
-//     文字列連結を ++ に分けたので string の候補は消えた。残るのは
-//     (float * float) -> float と (int * int) -> int の2つで、
-//     principal type はやはり無い。型検査器は ambiguous と警告して
-//     float を選ぶ。注釈を書けば期待型が overload 解決へ流れて確定する
-//     （s7 を参照）。
+//     文字列連結を ++ に分けたので string の候補は消えたが、
+//     (float * float) -> float と (int * int) -> int が残り、
+//     principal type はやはり無い。
 //
-// TYPE_RUNTIME_DIFF: expect-mismatch
-//   静的には float、実行時は int が返る。principal type が無いので当然で、
-//   注釈を書けば解消する。
+//     以前はここで警告を出して float を既定に選んでいたが、静的には float、
+//     実行時には int が返るという食い違いを生んでいた（型検査器が自ら
+//     「曖昧」と言っているのだから、黙って選ぶべきではない）。
+//     コーパス 49 本で実測して 1 本も落ちなかったので、いまはエラーにしている。
+//     AIOS_LAX_OVERLOAD=1 で従来の警告動作に戻せる。
+//
+//     直し方は戻り値型を注釈すること。期待型が overload 解決へ流れて
+//     一意に決まる（s7 を参照）。
 class Calc {
   method add(a, b) {
     reply(a + b);

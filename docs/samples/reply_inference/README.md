@@ -29,7 +29,7 @@ for f in docs/samples/reply_inference/s*.abcl; do ./tc "$f"; done
 | `s2_missing_reply.abcl` | reply を書き忘れたメソッドの結果を now で使う | 型エラー `(unit, int)`。パッチ前は `(any, int)` で原因が読めなかった |
 | `s3_conflict.abcl` | 分岐ごとに異なる型を reply する | 型エラー `reply type mismatch`。**パッチ前は素通りしていた** |
 | `s4_chain.abcl` | ρ がアクター境界を越えて伝播すること | OK。`Store#get->int` → `Front#fetch->string` |
-| `s5_overload_ambiguity.abcl` | `a + b` に principal type が無いこと | OK ＋ ambiguous 警告（`float`/`int`）。strict なら型エラー |
+| `s5_overload_ambiguity.abcl` | `a + b` に principal type が無いこと | **型エラー**（ambiguous）。`AIOS_LAX_OVERLOAD=1` で警告に戻る |
 | `s6_usable_result.abcl` | now の結果を算術に使う | OK。**パッチ前は `no overload of + matches (any, int)` で落ちていた** |
 | `s7_annotation_ok.abcl` | 戻り値型注釈 `method m(x) : T`。期待型が overload 解決へ流れること | OK。`add : (int * int) -> int`。**s5 の曖昧性が注釈だけで解消する** |
 | `s8_annotation_conflict.abcl` | 宣言型と食い違う reply | 型エラー `declared to reply with int, but replies with string here` |
@@ -151,3 +151,26 @@ python3 scripts/type_runtime_diff.py abclc/*.abcl docs/samples/reply_inference/s
 
 string 由来の曖昧性は消えたが、`int`/`float` の曖昧性は残る。
 完全に消すには `+` と `+.` のように数値側も分ける必要がある。
+
+
+## 曖昧 overload はエラー、仮引数は署名に結線
+
+- **曖昧な overload は既定でエラー**。以前は警告して `float` を既定に選んでいたが、
+  静的 `float` / 実行時 `int` という食い違いを生んでいた。コーパス49本で実測して
+  破綻0本だったので格上げした。`AIOS_LAX_OVERLOAD=1` で従来動作に戻る
+- **メソッド本体の仮引数を署名の引数型に結線**した。以前は fresh な型変数を
+  振っていたため本体と呼び出し側が別世界で、実質「引数の型検査をしていない」状態だった
+
+```
+class C { method m(a) : int { reply(a + 1); } }
+var r = now c.m("hello");
+  結線前: OK            ← 素通り
+  結線後: type mismatch
+```
+
+影響は57本中2本で、どちらも真陽性だった。`abclc/Hello.abcl` は
+`float count` に `new Hello(5)`（int）という本物の不整合で、`new Hello(5.)` に直した。
+
+注意: メソッドの引数は**単相**である。スキームの引数型変数は generalize されず
+全呼び出し地点で共有されるので、同じメソッドを `int` と `string` で呼ぶと衝突する。
+多相にするにはスキームの一般化が必要だが、それは ρ が量化される問題を再燃させる。

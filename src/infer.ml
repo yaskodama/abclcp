@@ -169,11 +169,14 @@ let unify_try (loc : Location.t) (t1 : ty) (t2 : ty) : bool =
 (*  オーバーロード解決                                                *)
 (* ---------------------------------------------------------------- *)
 
-(* AIOS_STRICT_OVERLOAD=1 で、曖昧な overload を警告ではなくエラーにする *)
+(* 曖昧な overload は既定でエラーにする。
+   principal type が無い箇所は注釈で決める、という規律にするため。
+   コーパス 49 本で実測して 1 本も落ちなかったので既定 ON にできた。
+   AIOS_LAX_OVERLOAD=1 で従来の「警告して既定候補を選ぶ」動作に戻せる。 *)
 let strict_overload =
-  match Sys.getenv_opt "AIOS_STRICT_OVERLOAD" with
-  | Some "1" | Some "true" | Some "yes" -> ref true
-  | _ -> ref false
+  match Sys.getenv_opt "AIOS_LAX_OVERLOAD" with
+  | Some "1" | Some "true" | Some "yes" -> ref false
+  | _ -> ref true
 
 (* 型に現れる型変数セルを、link 鎖もたどって集める。
    トライアルで焼き付いた束縛を巻き戻すための対象リストになる。 *)
@@ -730,10 +733,29 @@ let check_decl (env:env) = function
         (* ★ self をこのクラスのアクターとしてローカル環境に追加 *)
         set env_m "self" (Forall ([], TActor (c.Ast.cname, [])));
 
-        (* Method parameters are message payloads; keep them polymorphic. *)
-        List.iter (fun p ->
-          set env_m p (Forall ([], TVar (Types.fresh_tvar ())))
-        ) m.params;
+        (* ★ 本体の仮引数を、preinfer が作ったスキームの引数型に結線する。
+           以前はここで fresh な型変数を振っていたため、本体が要求する型と
+           呼び出し側が渡す型が別世界になっていた。実質「引数の型検査を
+           していない」状態で、
+             method m(a) : int { reply(a + 1); }   に   now c.m("hello")
+           が素通りしていた。
+
+           スキームの引数型変数は generalize されていない（preinfer で
+           env_m に置かれているため ftv_env に入る）ので、instantiate しても
+           そのまま残り、すべての送信地点と共有される。したがってここで
+           束縛すれば、本体・呼び出し側の双方から同じ変数へ制約が集まる。 *)
+        let fresh_params () =
+          List.iter (fun p ->
+            set env_m p (Forall ([], TVar (Types.fresh_tvar ())))
+          ) m.params
+        in
+        (match Types.lookup_class_method_scheme c.Ast.cname m.mname with
+         | Some sc ->
+             (match repr (Types.instantiate sc) with
+              | TFun (ps, _) when List.length ps = List.length m.params ->
+                  List.iter2 (fun p t -> set env_m p (Forall ([], t))) m.params ps
+              | _ -> fresh_params ())
+         | None -> fresh_params ());
 
         (* ★ reply をこのメソッド専用に単相で束縛し、
            グローバルの reply : forall a. a -> unit を隠す。

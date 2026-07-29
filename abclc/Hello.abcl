@@ -16,7 +16,7 @@ class Hello {
   }
 }
 
-var h = new Hello(5);      // ← 生成時に init(5) が自動呼び出しされる
+var h = new Hello(5.);      // ← 生成時に init(5) が自動呼び出しされる
 send h.greet();            // Hello! count = 5
 send h.inc();              // count incremented to 6
 send h.greet();            // Hello! count = 6

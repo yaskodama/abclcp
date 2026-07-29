@@ -87,6 +87,12 @@ preservation の破れが見つかった。型を精密にしたことで初め�
 「\texttt{+} が数値演算と文字列連結を兼ねる」構造を解消するため、
 文字列連結を \texttt{++} へ分離し、既存コード 38 ファイル・255 箇所を
 型検査器のエラー位置に従って機械的に移行した。
+そのうえで、実測に基づいて曖昧な overload をエラーへ格上げし
+（コーパス 49 本で破綻 0 本）、最大の穴であった
+「本体の仮引数が署名と繋がっていない」を結線した
+（57 本のうち影響 2 本、いずれも真陽性）。
+これにより \texttt{method m(a) : int \{ reply(a + 1); \}} を
+\texttt{now c.m("hello")} で呼ぶ誤りが静的に捕まるようになった。
 \end{abstract}
 
 \tableofcontents
@@ -919,6 +925,106 @@ case ごとに独立に検査する。
 \texttt{+} と \texttt{+.} のように数値側も分ける必要があり、これは
 \ty{int} と \ty{float} をどう扱うかという別の設計判断になる。
 
+\section{仮引数の結線と、曖昧性の厳格化}
+\label{sec:wiring}
+
+\S\ref{sec:harden} の表 \ref{tab:holes} で「最も深刻」とした穴 1
+（仮引数が署名と繋がっていない）に手を入れた。前節までの整理で
+条件が揃ったためである。
+
+\subsection{測って順序を決める}
+
+前節では「穴 1 を直すとクラス本体が呼び出しより先に検査される順序のせいで
+既存コードが大量に落ちる」と見積もっていた。実際に試作して測ると
+そうではなかった。
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+変更 & 影響 & \\
+\midrule
+曖昧 overload をエラーにする & OK だった 49 本のうち 0 本が破綻 & ほぼ無料 \\
+仮引数を署名に結線する       & OK だった 57 本のうち 2 本         & 予想より安い \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+しかも落ちる 2 本はどちらも真陽性だった。
+
+\begin{itemize}
+\item \texttt{abclc/Hello.abcl} --- フィールドが
+  \texttt{float count = 0.;} で \texttt{init(n) \{ count = n; \}} なので
+  本体は $n : \ty{float}$ を要求する。しかし \texttt{new Hello(5)} は
+  \ty{int} を渡していた。\textbf{本物の int/float 不整合}である
+  （\texttt{new Hello(5.)} が正しい）。
+\item \texttt{s5\_overload\_ambiguity.abcl} --- 本体が \ty{float}、
+  呼び出しが \ty{int}。principal type が無いことを示す負例なので当然。
+\end{itemize}
+
+見積りが外れたのは \S\ref{sec:concat} の \texttt{++} 分離が効いたためである。
+文字列連結の候補が消えて引数が \ty{string} に焼き付かなくなったので、
+本体で決まる型と呼び出し側の型が衝突しにくくなっていた。
+\textbf{順序を先に整えたことが、後の変更を安くした}。
+
+\subsection{曖昧 overload をエラーにする}
+
+これまで曖昧な overload は警告を出して既定候補（\ty{float}）を選んでいた。
+しかしそれは静的に \ty{float}、実行時に \ty{int} という食い違いを
+生んでいた（\S\ref{sec:runtime}）。型検査器が自ら「曖昧」と言っているのだから
+黙って選ぶべきではない。実測でコストが 0 だったので既定でエラーにした。
+\texttt{AIOS\_LAX\_OVERLOAD=1} で従来動作に戻せる。
+
+\subsection{仮引数を署名に結線する}
+
+\texttt{check\_decl} で仮引数に fresh な型変数を振るのをやめ、
+\texttt{preinfer} が作ったスキームの引数型を束縛する。
+
+\begin{lstlisting}
+let fresh_params () =
+  List.iter (fun p -> set env_m p (Forall ([], TVar (Types.fresh_tvar ())))) m.params
+in
+(match Types.lookup_class_method_scheme c.Ast.cname m.mname with
+ | Some sc ->
+     (match repr (Types.instantiate sc) with
+      | TFun (ps, _) when List.length ps = List.length m.params ->
+          List.iter2 (fun p t -> set env_m p (Forall ([], t))) m.params ps
+      | _ -> fresh_params ())
+ | None -> fresh_params ());
+\end{lstlisting}
+
+スキームの引数型変数は generalize されていない（\texttt{preinfer} が
+\texttt{env\_m} に置くので \texttt{ftv\_env} に入る）ので、
+\texttt{instantiate} してもそのまま残り、すべての送信地点と共有される。
+したがってここで束縛すれば、本体と呼び出し側の双方から同じ変数へ
+制約が集まる。
+
+これで穴 1 が閉じた。
+
+\begin{lstlisting}[language=AIPL]
+class C { method m(a) : int { reply(a + 1); } }
+var r = now c.m("hello");
+\end{lstlisting}
+
+\begin{lstlisting}[language={}]
+変更前: OK                                  <-- 引数の型検査が効いていない
+変更後: line 3, col 9: type mismatch
+\end{lstlisting}
+
+\begin{remark}
+2 つの変更は互いを補強する。\texttt{AIOS\_LAX\_OVERLOAD=1} にしても
+\texttt{s5} は通らない。曖昧性が \ty{float} に既定された結果が
+呼び出し側の \ty{int} と衝突するからで、結線が入った以上
+「黙って選ぶ」だけでは矛盾を隠せなくなっている。
+\end{remark}
+
+\begin{remark}
+メソッドの引数は結線の前後いずれも\emph{単相}である。スキームの引数型変数は
+generalize されていないため全呼び出し地点で共有され、同じメソッドを
+\ty{int} と \ty{string} で呼ぶと衝突する。多相にするにはスキームを
+一般化する必要があるが、それは $\rho$ が量化されてしまう問題
+（\S 2 の要点）を再燃させる。証明との相性を考えると単相のままが妥当である。
+\end{remark}
+
 \section{実験}
 \label{sec:experiment}
 
@@ -978,21 +1084,26 @@ $ python3 scripts/type_runtime_diff.py --timeout 12 \
 対象 78 本 / 突き合わせできた 32 本 / 照合したペア 90 件
   (型変数・any のため判定せず 6 件)
 
-既知の食い違い 1 件（expect-mismatch 宣言あり）:
-  s5_overload_ambiguity.abcl: Calc#add は型検査では float だが、
-                              実行時は int を reply した
 想定外の食い違いなし
 \end{lstlisting}
+
+\S\ref{sec:wiring} で曖昧な overload をエラーへ格上げしたことで、
+最後まで残っていた \texttt{s5} の食い違いも消えた。
+\emph{静的には \ty{float}、実行時は \ty{int}} という状態そのものが
+型検査を通らなくなったためである。
+\texttt{expect-mismatch} 宣言も不要になり、いまは既知・未知いずれの
+食い違いも報告されない。
 
 突き合わせできたのが 32 本にとどまるのは、残りが API キーや
 ネットワーク、SDL を必要とするか、待ち受けに入って \texttt{reply} を
 一度も実行しないためである。判定できないものは失敗にしていない。
 
-唯一の食い違いは \texttt{s5}、すなわち principal type が無いことを
-示すために置いてある負例だけである。\texttt{abclc/now\_future.abcl} も
-同じ形だったので、\texttt{: int} を注釈して静的・動的を揃えた。
-\textbf{残る食い違いが「型検査器自身が曖昧と警告しているもの」に
-一致している}ことが、機械的に確認できた形になる。
+この節を最初に書いた時点では \texttt{s5} が唯一の食い違いだった。
+「残る食い違いは型検査器自身が曖昧と警告しているものに一致する」という
+性質が機械的に確認でき、それが\S\ref{sec:wiring}で
+「ならば警告ではなくエラーにすべきだ」という判断の根拠になった。
+\texttt{abclc/now\_future.abcl} も同じ形だったので \texttt{: int} を
+注釈して静的・動的を揃えてある。
 
 \subsection{型検査の退行}
 
@@ -1463,6 +1574,10 @@ REPL（SDL に依存する）を起動せずに型検査だけを走らせるた
   \texttt{infer.ml}、\texttt{eval\_thread.ml}。
 \item \texttt{abclc/*.abcl} ほか 38 ファイル / 255 箇所 --- \texttt{+} を
   \texttt{++} へ移行。
+\item \texttt{src/infer.ml} --- 曖昧 overload を既定でエラーに、
+  仮引数を署名へ結線（\S\ref{sec:wiring}）。
+\item \texttt{abclc/Hello.abcl} --- \texttt{new Hello(5)} $\to$
+  \texttt{new Hello(5.)}（結線で露見した int/float 不整合）。
 \item \texttt{abclc/web\_calc.abcl}, \texttt{src/web\_calc.abcl},
   \texttt{src/web\_calc1.abcl} --- 公開アクターに戻り値型注釈を付けて移行。
 \end{itemize}
