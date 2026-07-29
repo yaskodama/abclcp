@@ -35,6 +35,24 @@ for f in docs/samples/reply_inference/s*.abcl; do ./tc "$f"; done
 | `s8_annotation_conflict.abcl` | 宣言型と食い違う reply | 型エラー `declared to reply with int, but replies with string here` |
 | `s9_missing_path.abcl` | 全パス被覆検査 | 型エラー `some execution path does not reply`。**注釈が無ければ書けない検査** |
 | `s10_expose_unannotated.abcl` | リモート境界での注釈必須 | `web_expose` した Adder は型エラー、`web_listen` だけで届く Logger は警告 |
+| `s11_service.abcl` | **追加機能を一通り使う統合サンプル** | OK。`serve -> unit`（case の reply は place へ帰属）、注釈の無い `twice -> int` |
+| `s12_service_exposed.abcl` | s11 を外部公開した版 | 型エラー。ローカルなら推論で済む `twice` が公開すると宣言必須になる |
+| `s13_runtime_mismatch.abcl` | **型検査器と評価器の食い違い** | 型検査 OK (`T#f -> int`) だが実行すると `3.`（VFloat） |
+
+## 実際に処理系で走らせる
+
+型検査だけでなく実行する場合は、REPL コマンドのファイルを作って `-f` に渡す。
+
+```sh
+cat > run.repl <<'EOF'
+load docs/samples/reply_inference/s11_service.abcl
+compile
+EOF
+./src/abclrepl_thread -q -f run.repl < /dev/null
+```
+
+`-f` に `.abcl` を直接渡すと REPL コマンドとして 1 行ずつ解釈されるので、
+クラス定義は読まれない（`Actor stock not found` になる）。`load` + `compile` が正しい。
 
 ## 戻り値型注釈の構文
 

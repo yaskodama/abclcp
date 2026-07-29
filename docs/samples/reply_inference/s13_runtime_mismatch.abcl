@@ -1,0 +1,31 @@
+// (13) 型検査器と評価器の食い違い（最小再現）
+//
+//      型検査:  [OK]  T#f -> int
+//      実行時:  3.    ← VFloat
+//
+//      typing_env は + : (int * int) -> int を持っているのに、
+//      eval_thread の apply_binop は + - * / を常に VFloat で返す。
+//
+//        | ("+"|"-"|"*"|"/"), v1, v2 when is_number v1 && is_number v2 ->
+//            let a = as_float_value v1 and b = as_float_value v2 in
+//            VFloat (...)
+//
+//      すなわち |- e : int なのに e ⇓ VFloat であり、preservation が成り立たない。
+//      この食い違い自体は + の型付けが入った時点から存在していたが、
+//      メソッドの戻り値型が unit / any 固定だったため観測できなかった。
+//      reply から戻り値型を推論・宣言できるようになって初めて表に出た。
+//
+//      直し方は 2 通りあり、どちらを採るかは言語仕様の決定になる。
+//        (a) VInt 同士の + - * は VInt を返すようにする。/ は float のままとし、
+//            typing_env の / を (int * int) -> float に変える
+//        (b) / も含めて整数演算にする（7 / 2 が 3 になるので既存プログラムに影響）
+//      本レポート時点では評価器には手を入れていない。
+class T {
+  method f() : int {
+    reply(1 + 2);
+  }
+}
+
+var t = new T();
+var v = now t.f();
+print(v);

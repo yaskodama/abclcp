@@ -1,0 +1,83 @@
+// (11) 今回追加した機能を全部使う統合サンプル
+//
+//   - method m(x) : T     戻り値型注釈
+//   - 全パス被覆検査       place の if/else が両方 reply する
+//   - 双方向型付け         宣言型が overload 解決へ流れる
+//   - select の rho 帰属   case place(k) の reply は serve ではなく place へ返る
+//   - reply からの推論     注釈の無い twice は従来どおり推論される (-> int)
+//
+// これを外部公開した版が s12_service_exposed.abcl。
+
+class Stock {
+  var n = 10;
+
+  method init() {
+    print("stock ready");
+  }
+
+  // n が int なので n - k の overload は一意に決まり、k も int に固定される
+  method take(k) : int {
+    n = n - k;
+    if (n < 0) { n = 0; }
+    reply(n);
+  }
+
+  method peek() : int {
+    reply(n);
+  }
+
+  // reply を持たない tell 型。unit を宣言しておけば被覆検査は課されない
+  method note(msg) : unit {
+    print("[stock] " + msg);
+  }
+}
+
+class Order {
+  // 宣言が string なので、両方の分岐が string で reply することを検査される
+  method place(k) : string {
+    var left = now stock.take(k);
+    if (left > 0) {
+      reply("ok, left=" + left);
+    } else {
+      reply("sold out");
+    }
+  }
+
+  // ★ この select の case 本体の reply は serve ではなく place への返信。
+  //    eval_thread が case 実行前に set_current_msg_id を差し替えるため。
+  //    したがって serve 自身は何も reply せず、unit のままでよい。
+  method serve() : unit {
+    print("[order] serving");
+    select {
+      case place(k) -> {
+        var left = now stock.take(k);
+        reply("served, left=" + left);
+      }
+      timeout 3000 -> {
+        print("[order] idle");
+      }
+    }
+  }
+
+  // 注釈を省略したメソッドは従来どおり reply から推論される（-> int）
+  method twice(a) {
+    reply(a * 2);
+  }
+}
+
+var stock = new Stock();
+var order = new Order();
+
+var s0 = now stock.peek();
+print("stock = " + s0);
+
+var r1 = now order.place(3);
+print(r1);
+
+var r2 = now order.place(99);
+print(r2);
+
+var t = now order.twice(21);
+print("twice = " + t);
+
+send stock.note("done");

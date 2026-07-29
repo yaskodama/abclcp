@@ -70,6 +70,11 @@ AIPL（ABCL$^{c}$+）の型健全性・型安全性の検討の中で、「メ�
 \texttt{web\_listen} であること、および \texttt{select} の case 本体の
 \texttt{reply} は囲むメソッドではなく選択されたメッセージに返ることが分かり、
 後者は $\rho$ の帰属の誤りとして修正した。
+追加機能を一通り使う統合サンプルを書いて実際に処理系で走らせたところ、
+\texttt{apply\_binop} が整数どうしの演算でも \texttt{VFloat} を返しており、
+$\vdash e : \ty{int}$ なのに $e \Downarrow \ty{VFloat}$ となる
+preservation の破れが見つかった。型を精密にしたことで初めて観測できた
+ずれであり、直し方の選択肢とともに報告する。
 副次的に、オーバーロード解決 \texttt{pick\_overload} に潜んでいた
 2 つの欠陥（失敗候補の単一化が巻き戻らない／候補の優先順位が登録順の逆）を
 発見し、これも修正した。
@@ -547,6 +552,70 @@ method main() : unit {
 を行った。\texttt{timeout} 本体は囲むメソッドの \texttt{msg\_id} のまま走るので、
 そちらは従来どおり囲むメソッドに属する。
 
+\section{実行して分かったこと：評価器が型検査器と食い違う}
+\label{sec:runtime}
+
+追加した機能を一通り使う統合サンプル（付録 A.11）を書き、型検査だけでなく
+実際に処理系で走らせたところ、静的な型と実行結果が食い違っていた。
+
+\begin{lstlisting}[language={}]
+$ ./src/abclrepl_thread -q -f run_s11.repl
+stock ready
+stock = 10
+ok, left=7.          <-- take : int と宣言したのに小数点が付く
+sold out
+twice = 42.          <-- twice も推論では int
+[stock] done
+\end{lstlisting}
+
+最小再現は次のとおりである（付録 A.13）。
+
+\begin{lstlisting}[language=AIPL]
+class T { method f() : int { reply(1 + 2); } }
+var t = new T();
+var v = now t.f();
+print(v);
+\end{lstlisting}
+
+型検査は \texttt{T\#f -> int} で通るが、実行すると \texttt{3.}、つまり
+\texttt{VFloat} が返る。原因は \texttt{eval\_thread.ml} の
+\texttt{apply\_binop} にある。
+
+\begin{lstlisting}
+(* --- Int/Float mixed: promote to Float --- *)
+| ("+"|"-"|"*"|"/"), v1, v2 when is_number v1 && is_number v2 ->
+    let a = as_float_value v1 and b = as_float_value v2 in
+    VFloat (match op with "+" -> a +. b | ...)
+\end{lstlisting}
+
+整数どうしであっても \texttt{VFloat} を返している。一方
+\texttt{typing\_env.ml} は \texttt{+ : (int * int) -> int} を持っている。
+すなわち $\vdash e : \ty{int}$ でありながら $e \Downarrow \ty{VFloat}$ で、
+\textbf{preservation が成り立っていない}。
+
+\begin{remark}
+この食い違いは \texttt{+} の型付けが入った時点から存在していたもので、
+本稿の変更が持ち込んだものではない。しかしメソッドの戻り値型が
+\ty{unit} / \ty{any} に固定されていた間は、型システムが数値について
+何も約束していなかったため観測できなかった。
+$\rho$ を導入して戻り値に具体型が付くようになり、さらに注釈で
+\ty{int} と\emph{宣言}できるようになったことで、初めて表に出た。
+型を精密にすると、型システムと実装のずれが可視化されるという例である。
+\end{remark}
+
+直し方は 2 通りあり、どちらを採るかは言語仕様の決定になる。
+
+\begin{enumerate}
+\item \texttt{VInt} どうしの \texttt{+ - *} は \texttt{VInt} を返すようにし、
+  \texttt{/} は \ty{float} のままとして \texttt{typing\_env} の \texttt{/} を
+  $(\ty{int} \times \ty{int}) \to \ty{float}$ に変える。
+\item \texttt{/} も含めて整数演算にする。型付けはそのままでよいが、
+  \texttt{7 / 2} が \texttt{3} になるので既存プログラムの数値が変わる。
+\end{enumerate}
+
+いずれも評価器の意味論を変えるため、本稿では手を入れていない。
+再現用のサンプルを付録 A.13 として残した。
+
 \section{副産物：\texttt{pick\_overload} の 2 つの欠陥}
 \label{sec:overload}
 
@@ -675,8 +744,14 @@ x1 = cx - dx + x;   // cx, dx : float, x : method parameter
   引数側が呼び出し地点由来・戻り値側が本体由来の混成シグネチャが表示されうる。
   結線は素朴に行うとクラス本体が呼び出しより先に検査される順序のせいで
   誤検出が増えるため、本変更では触っていない。
-\item \textbf{リモート境界は \ty{any} のままである。}
+\item \textbf{リモート送信先は \ty{any} のままである。}
   これは実装の手抜きではなく、宣言なしには原理的に埋まらない。
+  送信\emph{する}側は相手の本体を持たないので、対向ノードの
+  インタフェース記述を読み込む仕組みが要る。
+\item \textbf{評価器が型検査器と食い違っている}（\S\ref{sec:runtime}）。
+  \texttt{apply\_binop} が整数どうしの演算でも \texttt{VFloat} を返すため、
+  \ty{int} と型付けした式が実行時に float になる。
+  意味論の変更を伴うので本稿では直していない。
 \end{enumerate}
 
 \section{結論と次の一歩}
@@ -922,6 +997,94 @@ s3（注釈なし）では「他の \texttt{reply} とここが食い違う」�
        actor Logger is reachable from outside this program, but log has no
        return type annotation; ...
 [OK] type check passed
+\end{lstlisting}
+
+\subsection{s11\_service.abcl --- 追加機能を一通り使う}
+
+戻り値型注釈、全パス被覆検査、双方向型付け、\texttt{select} の $\rho$ 帰属、
+そして注釈を省いたメソッドの推論を 1 本にまとめたもの。
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s11_service.abcl}
+
+型検査の結果。\texttt{serve} が \ty{unit} のままであること
+（case 本体の \texttt{reply} が \texttt{place} に帰属していること）、
+注釈の無い \texttt{twice} が \ty{int} に推論されていることに注目。
+
+\begin{lstlisting}[language={}]
+[OK] type check passed
+[method return types (inferred from reply)]
+  Order#place -> string
+  Order#serve -> unit
+  Order#twice -> int
+  Stock#init -> unit
+  Stock#note -> unit
+  Stock#peek -> int
+  Stock#take -> int
+[class_method_schemes]
+class Order
+  place : (int) -> string
+  serve : () -> unit
+  twice : (int) -> int
+class Stock
+  init : () -> unit
+  take : ('a) -> int
+  peek : () -> int
+  note : (string) -> unit
+\end{lstlisting}
+
+実際に処理系で走らせた結果（\S\ref{sec:runtime} の食い違いはここで見つけた）。
+
+\begin{lstlisting}[language={}]
+$ cat run_s11.repl
+load docs/samples/reply_inference/s11_service.abcl
+compile
+$ ./src/abclrepl_thread -q -f run_s11.repl
+[Defined class Stock]
+[Registered types for class Stock: init/0, take/1, peek/0, note/1]
+[Defined class Order]
+[Registered types for class Order: place/1, serve/0, twice/1]
+stock ready
+stock = 10
+ok, left=7.
+sold out
+twice = 42.
+[stock] done
+\end{lstlisting}
+
+\subsection{s12\_service\_exposed.abcl --- 同じものを外部公開する}
+
+s11 に \texttt{web\_listen} と \texttt{web\_expose} を足しただけ。
+ローカルなら推論で済んでいた \texttt{twice} が、公開した途端に
+宣言を要求される。
+
+\begin{lstlisting}[language=AIPL]
+web_listen(8080);
+web_expose("/order", "order");
+web_expose("/stock", "stock");
+\end{lstlisting}
+
+\begin{lstlisting}[language={}]
+[Type error] line 84, col 1: actor Order is reachable from outside this
+  program, but twice has no return type annotation; a remote caller cannot
+  see the body, so the reply type has to be declared (method twice(...) : T)
+\end{lstlisting}
+
+\texttt{twice} に \texttt{: int} を付けるだけで通る。
+これが\S\ref{sec:limits} で述べた「推論はソースが手元にある場合しか
+カバーできない」ということの具体形である。
+
+\subsection{s13\_runtime\_mismatch.abcl --- 型検査器と評価器の食い違い}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s13_runtime_mismatch.abcl}
+
+\begin{lstlisting}[language={}]
+$ ./tc docs/samples/reply_inference/s13_runtime_mismatch.abcl
+[OK] type check passed
+[method return types (inferred from reply)]
+  T#f -> int
+
+$ ./src/abclrepl_thread -q -f run_s13.repl
+3.
 \end{lstlisting}
 
 \section{型検査ドライバ \texttt{tc\_main.ml}}
