@@ -1,0 +1,28 @@
+// (1) reply から戻り値型が推論されること
+class Calc {
+  // reply が int
+  method twice(a) {
+    reply(a * 2);
+  }
+}
+
+class Greeter {
+  // reply が string
+  method greet(name) {
+    reply("hello, " + name);
+  }
+  // reply が無い = tell 型のメソッド。unit へ defaulting されるべき
+  method log(msg) {
+    print(msg);
+  }
+}
+
+var calc = new Calc();
+var g = new Greeter();
+
+var s = now calc.twice(21);
+print("twice = " + s);
+
+var f = future g.greet("AIPL");
+var msg = await f;
+print(msg);

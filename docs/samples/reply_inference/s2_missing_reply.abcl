@@ -1,0 +1,12 @@
+// (2) reply を書き忘れたメソッドの結果を now で使う
+//     従来: now の型が any なので素通り → 実行時に永久に返らない
+//     今回: bump の戻り値が unit に defaulting され、静的エラーになる
+class Counter {
+  method bump(n) {
+    print("bumped");
+  }
+}
+
+var c = new Counter();
+var x = now c.bump(1);
+print(x + 1);

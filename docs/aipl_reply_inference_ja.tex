@@ -1,0 +1,675 @@
+% AIPL / ABCL^c+ : reply からのメソッド戻り値型推論
+%   lualatex -interaction=nonstopmode aipl_reply_inference_ja.tex   （2回）
+\documentclass[11pt,a4paper]{ltjsarticle}
+\usepackage{amsmath,amssymb}
+\usepackage{amsthm}
+\usepackage{mathpartir}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage[hidelinks]{hyperref}
+\geometry{margin=24mm}
+
+\theoremstyle{definition}
+\newtheorem{definition}{定義}
+\theoremstyle{remark}
+\newtheorem{remark}{注意}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{gray},
+  breaklines=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  language=[Objective]Caml,
+  keywordstyle=\bfseries,
+  commentstyle=\itshape\color{gray!130},
+}
+\lstdefinelanguage{AIPL}{
+  morekeywords={class,method,var,new,now,future,await,reply,send,become,
+    if,else,while,do,select,case,timeout,print},
+  sensitive=true,
+  morecomment=[l]{//},
+  morestring=[b]",
+}
+
+\newcommand{\ty}[1]{\ensuremath{\mathtt{#1}}}
+\newcommand{\rulename}[1]{\textsc{#1}}
+
+\title{AIPL におけるメソッド戻り値型の推論\\
+{\large ---\ \texttt{reply} の引数から型は決まるか ---}}
+\author{ABCL$^{c}$+ / AIOS 処理系}
+\date{2026年7月29日}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+AIPL（ABCL$^{c}$+）の型健全性・型安全性の検討の中で、「メソッドの戻り値型を
+宣言すべきだ」という提案が出た。本稿はそれに対する
+「\texttt{reply} の引数から推論できないのか」という問いを出発点とし、
+(i) 推論は実際に可能であること、(ii) しかし推論だけでは決まらない場面が
+6 つあること、(iii) 型健全性の証明にとって本質的なのは推論アルゴリズムでは
+なく宣言という構文であること、を整理する。
+あわせて推論部分を OCaml 実装（\texttt{src/infer.ml}, \texttt{src/types.ml}）に
+実装し、実測した結果を報告する。実装により \texttt{now} / \texttt{future} の
+戻り値型が \ty{any} から具体型へ変わり、既存 63 本のコーパスでは
+62 本が判定不変、1 本は誤ったエラーが解消した。
+副次的に、オーバーロード解決 \texttt{pick\_overload} に潜んでいた
+2 つの欠陥（失敗候補の単一化が巻き戻らない／候補の優先順位が登録順の逆）を
+発見し、これも修正した。
+\end{abstract}
+
+\tableofcontents
+
+\section{問題設定}
+
+AIPL のメソッドは値を「返す」のではなく、\texttt{reply(v)} によって
+呼び出し側の future を解決する。
+
+\begin{lstlisting}[language=AIPL]
+class Calc {
+  method twice(a) {
+    reply(a * 2);
+  }
+}
+var c = new Calc();
+var s = now c.twice(21);
+\end{lstlisting}
+
+ここで \texttt{s} の型は \ty{int} であってほしい。
+しかし検討開始時点の型検査器はそう推論していなかった。
+
+\subsection{出発点：実装の現状}
+
+\texttt{src/typing\_env.ml} において \texttt{reply} は次のように、
+囲んでいるメソッドと一切結び付かない多相プリミティブとして
+グローバル環境に置かれていた。
+
+\begin{lstlisting}
+add_poly e "reply" (Forall ([(!a).id], TFun ([TVar a], TUnit)))
+(* reply : forall 'a. 'a -> unit *)
+\end{lstlisting}
+
+そしてメソッドの型は \texttt{src/infer.ml} の \texttt{preinfer\_all\_classes}
+において戻り値 \ty{unit} 固定で構築されていた
+（コメントにも「いまは戻り値を unit としておく」とある）。
+
+\begin{lstlisting}
+let tfun = Types.TFun (ps', Types.TUnit) in
+\end{lstlisting}
+
+その結果、送信地点は戻り値型を捨てていた。
+
+\begin{lstlisting}
+| FutureSend (target, mname, args) -> ...
+    (match repr (Types.instantiate sc) with
+     | TFun (param_tys, _ret_ty) ->        (* _ret_ty は使われない *)
+         List.iter2 (Types.unify ~loc:e.loc) param_tys arg_tys)
+    ...;
+    TFuture TAny
+| NowSend (target, mname, args) ->
+    ignore (infer_expr env { e with desc = FutureSend (...) });
+    TAny
+\end{lstlisting}
+
+規則として書けば次のとおりで、\ty{any} が
+「静的に内容を保証しない境界」として残っていた。
+
+\begin{mathpar}
+\inferrule*[right=\rulename{Now-old}]
+  {\Gamma(a) = \ty{actor}(C) \\ C.m : (\tau_1 \times \cdots \times \tau_n) \to \ty{unit} \\
+   \Gamma \vdash e_i : \tau_i}
+  {\Gamma \vdash \ty{now}\ a.m(\vec{e}) : \ty{any}}
+\end{mathpar}
+
+\section{推論できる部分}
+
+結論から言えば推論は可能で、機構としては単純である。
+メソッド $C.m$ ごとに戻り値型変数 $\rho_{C,m}$ を 1 つ確保し、
+
+\begin{itemize}
+\item 本体中のすべての \texttt{reply(v)} 地点で $\rho_{C,m}$ と $v$ の型を単一化する、
+\item すべての \texttt{now} / \texttt{future} 送信地点で $\rho_{C,m}$ を戻り値として返す、
+\end{itemize}
+
+とすればよい。$\rho$ は union-find の link を通じて伝播するので、
+本体と呼び出し側のどちらが先に検査されても制約は届く。
+
+\begin{mathpar}
+\inferrule*[right=\rulename{Reply}]
+  {\mathit{ret}(C,m) = \rho \\ \Gamma \vdash e : \rho}
+  {\Gamma \vdash_{C.m} \ty{reply}(e) : \ty{unit}}
+\and
+\inferrule*[right=\rulename{Future}]
+  {\Gamma(a) = \ty{actor}(C) \\ C.m : (\tau_1 \times \cdots \times \tau_n) \to \rho \\
+   \Gamma \vdash e_i : \tau_i \\ \mathit{ret}(C,m) = \rho}
+  {\Gamma \vdash \ty{future}\ a.m(\vec{e}) : \ty{future}\ \rho}
+\and
+\inferrule*[right=\rulename{Now}]
+  {\Gamma \vdash \ty{future}\ a.m(\vec{e}) : \ty{future}\ \rho}
+  {\Gamma \vdash \ty{now}\ a.m(\vec{e}) : \rho}
+\end{mathpar}
+
+実装上の要点は 1 つだけある。$\rho$ をメソッドの\emph{型スキームに埋めては
+いけない}。$\forall$ に $\rho$ が量化されると \texttt{instantiate} が
+呼び出しごとに $\rho$ を別の変数へ差し替えるため、\texttt{reply} 側で
+付いた制約が呼び出し側へ伝わらなくなる。$\rho$ は単相のまま別表に持つ。
+
+\section{推論では決まらないこと}
+\label{sec:limits}
+
+以下の 6 点は、$\rho$ を導入しても推論だけでは決着しない。
+これが「宣言せよ」という提案の実質的な中身である。
+
+\subsection{reply しないパスが黙って通る}
+
+どこにも \texttt{reply} が無い、あるいは一部の分岐でしか \texttt{reply}
+しない場合、$\rho$ は制約が付かないまま一般化され $\forall\rho.\,\rho$
+となる。呼び出し側は「どんな型の値でも返る」と見なすが、実行時にはその
+\texttt{now} は\emph{永久に返らない}。型が嘘をつく。
+
+宣言があれば「全パスがちょうど一度、宣言型で \texttt{reply} する」という
+被覆・線形性検査が書けるが、推論は照合先を持たないためこの義務を
+そもそも述べられない。
+
+\subsection{分岐ごとに異なる型を reply したときの blame}
+
+\texttt{if p reply(1) else reply("no")} は単一化の失敗にはなるが、
+エラーは「2 番目に検査された \texttt{reply} 地点」に出る。
+数百行離れた分岐のどちらが誤りかは決められない。宣言があれば各
+\texttt{reply} が独立に照合され、エラー位置が正しくなる。
+
+\subsection{アクター間の相互再帰}
+
+$A.m$ が \texttt{now b.n()} の結果を \texttt{reply} し、$B.n$ が
+\texttt{now a.m()} に依存すると、$\rho_{A,m}$ と $\rho_{B,n}$ が相互依存する。
+単相であれば単一化で回るが、多相にした瞬間に polymorphic recursion
+（決定不能）になる。現在の \texttt{preinfer\_all\_classes} による全プログラム
+事前走査が成立しているのは戻り値が \ty{unit} 固定だったからで、
+変数にすると呼び出しグラフ上の不動点計算になる。
+
+\subsection{リモートアクターと分離コンパイル}
+
+\texttt{RemoteTarget} は型検査を丸ごとスキップしている。本体が別ノードに
+あるため推論のしようがない。\texttt{web\_expose} も同様である。
+AIPL は分散言語であるから、\textbf{宣言は追加の負担ではなく、
+リモート境界を型付けする唯一の手段}である。推論はソースが手元にある場合しか
+カバーできず、それは最も安全な場合である。
+
+\subsection{\texttt{become} と複数実装}
+
+振る舞い置換や、同じメッセージに複数クラスが応答する構成では、
+メッセージの型は「一つの本体の性質」ではなく「複数本体にまたがる契約」である。
+独立に推論した型の最小上界は principal にならない。
+
+\subsection{session protocol への昇格}
+
+protocol string を型レベルの session environment へ昇格させるには、
+$!m(T).?R.\cdots$ の $R$ がインタフェースに書かれていることが前提となる。
+プロトコルの半分が本体を読まないと分からない状態では昇格できない。
+
+\section{型健全性の証明にとっての意味}
+
+これが提案の核心である。$\ty{now}\ a.m(v)$ が飛行中のとき、preservation は
+構成（configuration / store）の型付け不変条件として
+「pending future $f$ は型 $T$ を持つ」を述べる必要がある。
+
+$T$ が「callee の \texttt{reply} 群を単一化した結果」としてしか定義されて
+いないと、不変条件が callee の本体を参照してしまい、subject reduction が
+\emph{合成的でなくなる}。callee が一歩簡約するたびに $T$ の意味が変わりうる
+ので、「推論は簡約に対して安定である」という補題が別途必要になる。
+宣言された $T$ ならば不変条件は $T = \mathit{ret}(C,m)$ という、
+簡約で動かない構文片で済む。
+
+\begin{remark}
+推論はアルゴリズムの話、宣言はモデルに現れる構文の話である。
+証明が要求しているのは後者であり、両者は排他ではない。
+\end{remark}
+
+\section{既存言語はどうしているか}
+
+「推論を採用しているか」という観点で 4 つ（＋1）を調べた結果を表
+\ref{tab:langs} に示す。共通する不変条件は
+\textbf{推論の有無に関わらず、返信の型は必ずどこかに人手で書かれている}
+ことで、違うのは書く場所だけである。
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lp{3.4cm}p{3.5cm}p{4.0cm}@{}}
+\toprule
+ & 本体内の推論 & メソッド戻り値 & アクター境界 \\
+\midrule
+Akka Typed (Scala) & 局所推論あり & 本体から推論可（再帰は除く） & \texttt{ActorRef[R]} として宣言 \\
+Erlang & Dialyzer の success typing & 静的型なし & \texttt{term()}（＝ any） \\
+Pony & ローカル変数のみ & 省略時は推論せず \texttt{None} & behaviour は返信を持たない \\
+Encore & \texttt{let} のみ & 明示必須 & 宣言から \texttt{Fut[T]} \\
+Gleam & HM 系の完全推論 & 注釈不要 & \texttt{Subject(msg)} として宣言 \\
+\bottomrule
+\end{tabular}
+\caption{アクター言語における戻り値型の扱い}
+\label{tab:langs}
+\end{table}
+
+とくに 2 点が本稿に直結する。
+
+\begin{itemize}
+\item \textbf{Pony}：「戻り値型を省略した関数は \texttt{None} を返す」。
+  本体から推論するのではなく \ty{unit} へ defaulting する。
+  \S\ref{sec:limits} 第 1 項への対処として、本実装もこの方式を採った。
+\item \textbf{Gleam}：完全な HM 推論を持ちながら、アクターのメッセージ型だけは
+  宣言させる。「推論できる言語ですら境界は書かせる」という最も強い例である。
+\end{itemize}
+
+なお Erlang は \texttt{-spec} が強制されない任意注釈であり、
+\texttt{gen\_server:call/2} の戻り値は \texttt{term()} である。
+すなわち「宣言する側の前例」ではなく、AIPL の従来状態（\ty{any}）と
+同じ側に属する。
+
+\section{実装}
+
+\texttt{src/types.ml}（+41 行）と \texttt{src/infer.ml} に変更を加えた。
+
+\subsection{$\rho$ の表}
+
+\begin{lstlisting}
+(* "Class#method" -> rho.  Monomorphic on purpose: if rho were quantified
+   in the method scheme, instantiate would replace it at every call site
+   and the constraint collected at the reply sites would never reach the
+   caller. *)
+let method_ret_tys : (string, ty) Hashtbl.t = Hashtbl.create 97
+let method_ret_key cls m = cls ^ "#" ^ m
+let register_method_ret cls m t = Hashtbl.replace method_ret_tys (method_ret_key cls m) t
+let lookup_method_ret   cls m   = Hashtbl.find_opt method_ret_tys (method_ret_key cls m)
+let reset_method_rets   ()      = Hashtbl.reset method_ret_tys
+\end{lstlisting}
+
+\subsection{1 パス目：$\rho$ の確保と defaulting}
+
+\texttt{preinfer\_all\_classes} 内の \texttt{infer\_method} で $\rho$ を確保し、
+表に登録する。本体に \texttt{reply} が構文的に現れないメソッドは
+その場で \ty{unit} へ落とす。
+
+\begin{lstlisting}
+let rho = Types.TVar (Types.fresh_tvar ()) in
+Types.register_method_ret c.Ast.cname m.Ast.mname rho;
+if not (stmt_has_reply m.Ast.body) then
+  Types.unify ~loc:Location.dummy rho Types.TUnit;
+(* Keep rho free in the environment so that generalize does not quantify it *)
+set_var_scheme env_m "reply"
+  (Types.Forall ([], Types.TFun ([rho], Types.TUnit)));
+let tfun = Types.TFun (ps', rho) in
+\end{lstlisting}
+
+$\rho$ を \texttt{env\_m} の \texttt{reply} に置いているのは、
+\texttt{generalize (ftv\_env env\_m)} の自由変数集合に $\rho$ を含めて
+量化を防ぐためである。
+
+\subsection{2 パス目：\texttt{reply} の単相束縛}
+
+\texttt{check\_decl} のメソッド本体検査環境で、グローバルの
+$\forall\alpha.\ \alpha \to \ty{unit}$ を隠すように \texttt{reply} を
+単相で束縛する。
+
+\begin{lstlisting}
+let rho =
+  match Types.lookup_method_ret c.Ast.cname m.mname with
+  | Some t -> t
+  | None   -> TVar (Types.fresh_tvar ())
+in
+set env_m "reply" (Forall ([], TFun ([rho], TUnit)));
+check_stmt env_m m.body
+\end{lstlisting}
+
+\texttt{reply} 専用の型付け関数 \texttt{check\_reply} も設けた。
+\texttt{pick\_overload} 任せにすると
+\texttt{"no overload of reply matches (string)"} という、
+どの \texttt{reply} と衝突したのか分からない文言になるためである。
+現在は次のように出る。
+
+\begin{lstlisting}[language={}]
+line 5, col 37: reply type mismatch:
+  this method replies with int elsewhere, but with string here
+\end{lstlisting}
+
+\subsection{送信地点}
+
+\texttt{FutureSend} の戻り値を \texttt{TFuture TAny} から
+$\rho$ に変え、\texttt{NowSend} は future を剥がして同じ $\rho$ を返す。
+リモート宛先だけは \ty{any} のままとした
+（\S\ref{sec:limits} のとおり、ここは宣言でしか埋まらない）。
+
+\section{副産物：\texttt{pick\_overload} の 2 つの欠陥}
+
+$\rho$ を可視化した結果、\texttt{method add(a,b) \{ reply(a+b); \}} の
+推論結果が \texttt{(int * int) -> string} という自己矛盾したシグネチャに
+なることが判明した。原因は本変更ではなく、既存の
+\texttt{pick\_overload} にあった。
+
+\begin{description}
+\item[(1) 失敗候補の単一化が巻き戻らない]
+  \texttt{List.for\_all2} は途中で \texttt{false} になると打ち切るため、
+  それまでに結んだ束縛（例：第 1 引数 $:=$ \ty{string}）が残ったまま
+  次の候補へ進む。候補を試すたびに引数の型が汚染される。
+\item[(2) 候補の優先順位が登録順の逆]
+  \texttt{typing\_env} は overload を \texttt{sch :: prev} で積むので、
+  リストの先頭は\emph{最後に}登録されたものになる。\texttt{+} では
+  \texttt{('a * string) -> string} が先頭であり、引数が両方とも未束縛の
+  型変数のときは必ずこれが最初に一致する。
+  \texttt{a + b} が問答無用で \ty{string} に潰れていたのはこれが理由である。
+\end{description}
+
+修正は次の 3 点からなる。
+
+\begin{enumerate}
+\item 各トライアルの前後で型変数の link をスナップショット・復元し、
+  候補試行が副作用を残さないようにする。link は \texttt{repr} が
+  \texttt{cell := \{!cell with link\}}、\texttt{prune} が
+  \texttt{(!cell).link <- ...} と 2 通りの書き換えをするため、
+  レコードを共有したまま保存すると復元にならない。
+  link を\emph{値として}保存し、新しいレコードを作り直して差し替える。
+\item 候補を「引数型が具体的なもの優先 $\to$ 引数側の型変数を束縛しない
+  もの優先 $\to$ 登録順」で順位付けする。
+\item 最上位に戻り値型の異なる候補が複数残る場合は真に曖昧なので報告する。
+  既定では警告、\texttt{AIOS\_STRICT\_OVERLOAD=1} でエラーになる。
+\end{enumerate}
+
+\begin{lstlisting}[language={}]
+[warn] line 10, col 13: ambiguous overload of + for ('a, 'a):
+       candidate return types are float / int (picked float)
+\end{lstlisting}
+
+\begin{remark}
+$a + b$ において $a$, $b$ が未束縛のとき、この overload 集合のもとでは
+principal type が存在しない。\texttt{reply} の型が推論だけでは決まりきらない
+のと同じ現象であり、注釈を要求する動機はここでも共通している。
+\end{remark}
+
+\section{実験}
+
+\subsection{サンプル}
+
+6 本のサンプルで、パッチ前（\texttt{git HEAD}）と後の判定を比較した。
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}p{4.4cm}p{4.6cm}p{5.4cm}@{}}
+\toprule
+サンプル & パッチ前 & パッチ後 \\
+\midrule
+s1 基本 & OK & OK。\texttt{twice:(int)->int},
+  \texttt{greet:(string)->string}, \texttt{log:('a)->unit} \\
+s4 アクター跨ぎ & OK & OK。\texttt{Store\#get->int} が \texttt{Front} の
+  \texttt{now} を経て \texttt{Front\#fetch->string} へ伝播 \\
+\textbf{s6 now の結果を算術に使う} &
+  \texttt{no overload of + matches (any, int)} & \textbf{OK} \\
+\textbf{s3 分岐で異なる型を reply} & \textbf{OK（見逃し）} &
+  \texttt{reply type mismatch: ... int ... string} \\
+s2 reply 書き忘れ & \texttt{(any, int)} &
+  \texttt{(unit, int)}（原因が読める文言に） \\
+s5 overload の曖昧性 & \texttt{-> string}（黙って） &
+  \texttt{-> float} ＋ ambiguous 警告 \\
+\bottomrule
+\end{tabular}
+\caption{サンプルにおけるパッチ前後の判定}
+\end{table}
+
+s6 が「正しいプログラムが通るようになった」、s3 が「誤ったプログラムが
+落ちるようになった」であり、両方向に効いている。
+
+\subsection{退行試験}
+
+\texttt{abclc/*.abcl} 63 本について、\texttt{git HEAD} 版と修正版の
+型検査結果を比較した。
+
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+判定が一致 & 62 / 63 \\
+判定が変化 & 1 / 63 \\
+曖昧警告が出たファイル & 2 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+変化した 1 本 \texttt{RotateThreeLines.abcl} は、
+\begin{lstlisting}[language=AIPL]
+x1 = cx - dx + x;   // cx, dx : float, x : method parameter
+\end{lstlisting}
+において、旧実装が \texttt{('a * string) -> string} を先に選んで
+\texttt{x} を \ty{string} に固定してしまい、
+\texttt{line 19: type mismatch} という\emph{誤ったエラー}を出していた。
+修正後は具体的な \texttt{(float * float) -> float} が選ばれ、
+\texttt{x} は正しく \ty{float} に束縛されて型検査を通る。
+すなわち退行ではなく改善である。
+
+曖昧警告が出た 2 本（\texttt{now\_future.abcl}, \texttt{web\_calc.abcl}）は
+いずれも \texttt{method add(a,b) \{ reply(a+b); \}} の形であり、
+真に principal type を持たない箇所である。
+
+\section{残る限界}
+
+\begin{enumerate}
+\item \textbf{戻り値は単相である。}
+  $\rho$ を全呼び出し地点で共有するため、戻り値に多相性は持たせられない。
+  多相にすると \S\ref{sec:limits} の相互再帰が決定不能側へ落ちる。
+\item \textbf{本体と署名がなお別世界である。}
+  メソッド本体の仮引数は \texttt{check\_decl} が振る fresh 変数であり、
+  \texttt{preinfer} が作ったスキームの引数型変数とは繋がっていない。
+  そのため s5 のように \texttt{(int * int) -> float} という、
+  引数側が呼び出し地点由来・戻り値側が本体由来の混成シグネチャが表示されうる。
+  結線は素朴に行うとクラス本体が呼び出しより先に検査される順序のせいで
+  誤検出が増えるため、本変更では触っていない。
+\item \textbf{リモート境界は \ty{any} のままである。}
+  これは実装の手抜きではなく、宣言なしには原理的に埋まらない。
+\end{enumerate}
+
+\section{結論と次の一歩}
+
+\texttt{reply} の引数からメソッドの戻り値型を推論することは可能であり、
+実装も 200 行程度で済んだ。効果も実測できた。
+しかしそれは提案を否定するものではない。
+
+推論が届かないのは
+(i) \texttt{reply} を書き忘れたパス、(ii) 分岐間の blame、
+(iii) アクター間の相互再帰、(iv) リモート・分離コンパイル、
+(v) \texttt{become} と複数実装、(vi) session protocol への昇格
+であり、いずれも AIPL が分散アクター言語であることに由来する。
+そして型健全性の証明が要求しているのは、推論アルゴリズムではなく
+簡約で動かない構文としての宣言である。
+
+したがって次の一歩は、両者を排他ではなく役割分担として実装することである。
+
+\begin{enumerate}
+\item AST に省略可能な \texttt{method m(x) : T} を追加する。
+  \textbf{remote / expose するメソッドは必須}とする。
+\item 注釈がある場合：本体環境に $\texttt{reply} : T \to \ty{unit}$ を束縛し、
+  全パス被覆検査（ちょうど一度 \texttt{reply} する）を行い、
+  送信地点で $T$ を使う。
+\item 注釈が無い場合：本稿の推論を走らせる。ただし制約の付かない $\rho$ は
+  一般化せず \ty{unit} へ defaulting する（Pony 方式）。
+  ここだけは一般化してはならない。\texttt{send}（fire-and-forget）と
+  \texttt{now}（ask）の区別がこの一点に乗る。
+\item 推論結果のシグネチャを出力し、利用者が貼り付けられるようにする。
+\end{enumerate}
+
+いずれの設計でもクラスのメソッド表には結局インタフェースが生まれる。
+論点は\emph{存在するかどうか}ではなく\emph{誰が書くか}であり、
+リモートと証明の都合から「人間が書く」側に倒すのが妥当である。
+その先に、protocol string を型レベルの session environment へ昇格させる
+道が開ける。
+
+\appendix
+\section{サンプル全文と実行結果}
+\label{sec:samples}
+
+本節のサンプルは \texttt{docs/samples/reply\_inference/} に置いてある。
+型検査だけを走らせる小さなドライバ \texttt{tc\_main.ml}（\S\ref{sec:driver}）を
+用いて実行した。
+
+\begin{lstlisting}[language=bash]
+$ cd src && make thread_repl
+$ ocamlfind ocamlc -package unix -thread -linkpkg -w -a -I src -o tc \
+    src/location.cmo src/types.cmo src/ast.cmo src/typing_env.cmo \
+    src/infer.cmo src/typecheck.cmo src/parser.cmo src/lexer.cmo \
+    docs/samples/reply_inference/tc_main.ml
+$ ./tc docs/samples/reply_inference/s1_ok.abcl
+\end{lstlisting}
+
+\subsection{s1\_ok.abcl --- reply からの推論}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s1_ok.abcl}
+
+\begin{lstlisting}[language={}]
+[OK] type check passed
+[method return types (inferred from reply)]
+  Calc#twice -> int
+  Greeter#greet -> string
+  Greeter#log -> unit
+[class_method_schemes]
+class Greeter
+  greet : (string) -> string
+  log : ('a) -> unit
+class Calc
+  twice : (int) -> int
+\end{lstlisting}
+
+\texttt{twice} は \ty{int}、\texttt{greet} は \ty{string} と推論され、
+\texttt{reply} を持たない \texttt{log} は \ty{unit} へ defaulting されている。
+
+\subsection{s2\_missing\_reply.abcl --- reply の書き忘れ}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s2_missing_reply.abcl}
+
+\begin{lstlisting}[language={}]
+[Type error] line 12, col 9: no overload of + matches (unit, int)
+[method return types (inferred from reply)]
+  Counter#bump -> unit
+\end{lstlisting}
+
+パッチ前は \texttt{(any, int)} というエラーで、
+「そもそも \texttt{bump} が値を返さない」という原因が読み取れなかった。
+現在は \ty{unit} と出るので、\texttt{reply} の欠落が直ちに分かる。
+
+\subsection{s3\_conflict.abcl --- 分岐ごとに異なる型を reply}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s3_conflict.abcl}
+
+\begin{lstlisting}[language={}]
+[Type error] line 5, col 37: reply type mismatch:
+  this method replies with int elsewhere, but with string here
+[method return types (inferred from reply)]
+  Router#route -> int
+\end{lstlisting}
+
+パッチ前はこのプログラムが\emph{型検査を通っていた}。
+$\rho$ が 2 つの \texttt{reply} 地点を結ぶことで検出できるようになった。
+ただし \S\ref{sec:limits} のとおり、エラーが指すのは
+「2 番目に検査された \texttt{reply}」であって、どちらが誤りかは決められない。
+
+\subsection{s4\_chain.abcl --- アクターを跨いだ伝播}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s4_chain.abcl}
+
+\begin{lstlisting}[language={}]
+[OK] type check passed
+[method return types (inferred from reply)]
+  Front#fetch -> string
+  Store#get -> int
+[class_method_schemes]
+class Store
+  get : ('a) -> int
+class Front
+  fetch : (int) -> string
+\end{lstlisting}
+
+\texttt{Store.get} の \texttt{reply} から得た \ty{int} が、
+\texttt{Front.fetch} 内の \texttt{now} の型となり、
+さらに \texttt{Front.fetch} 自身の \texttt{reply} を経て \ty{string} に至る。
+$\rho$ が union-find 経由でアクター境界を越えて伝播していることが確認できる。
+
+\subsection{s5\_overload\_ambiguity.abcl --- principal type が無い例}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s5_overload_ambiguity.abcl}
+
+\begin{lstlisting}[language={}]
+[warn] line 10, col 13: ambiguous overload of + for ('a, 'a):
+       candidate return types are float / int (picked float)
+[OK] type check passed
+[method return types (inferred from reply)]
+  Calc#add -> float
+[class_method_schemes]
+class Calc
+  add : (int * int) -> float
+\end{lstlisting}
+
+\texttt{AIOS\_STRICT\_OVERLOAD=1} を与えると警告ではなくエラーになる。
+
+\begin{lstlisting}[language={}]
+TYPE_ERROR: line 10, col 13: ambiguous overload of + for ('a, 'a):
+  candidate return types are float / int
+\end{lstlisting}
+
+表示されている \texttt{(int * int) -> float} は、引数側が呼び出し地点由来、
+戻り値側が本体由来の混成である（\S 9 の限界 2）。
+
+\subsection{s6\_usable\_result.abcl --- 通るようになった正しいプログラム}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s6_usable_result.abcl}
+
+\begin{lstlisting}[language={}]
+[OK] type check passed
+[method return types (inferred from reply)]
+  Calc#twice -> int
+[class_method_schemes]
+class Calc
+  twice : (int) -> int
+\end{lstlisting}
+
+パッチ前は \texttt{line 13: no overload of + matches (any, int)} で落ちていた。
+\texttt{now} の結果が \ty{any} である限り、算術にも比較にも使えなかったためである。
+
+\section{型検査ドライバ \texttt{tc\_main.ml}}
+\label{sec:driver}
+
+REPL（SDL に依存する）を起動せずに型検査だけを走らせるための最小ドライバ。
+
+\lstinputlisting[language={[Objective]Caml}]{samples/reply_inference/tc_main.ml}
+
+\section{変更ファイル}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+ファイル & 変更 & 内容 \\
+\midrule
+\texttt{src/types.ml}  & +41 & $\rho$ 表、\texttt{debug\_print\_method\_rets} \\
+\texttt{src/infer.ml}  & +176 / -29 & $\rho$ の確保・伝播、\texttt{check\_reply}、
+  \texttt{pick\_overload} の修正 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{参照}
+
+\begin{itemize}
+\item Pony Tutorial, \emph{Methods}. \url{https://tutorial.ponylang.io/expressions/methods.html}
+\item ponylang/rfcs \#0010, \emph{Generic Type Inference}.
+  \url{https://github.com/ponylang/rfcs/blob/main/text/0010-generic-type-inference.md}
+\item Fernandez-Reyes et al., \emph{An Optimised Flow for Futures: From Theory to Practice}.
+  \url{https://arxiv.org/pdf/2107.07298}
+\item de Boer et al., \emph{Forward to a Promising Future}.
+  \url{https://link.springer.com/chapter/10.1007/978-3-319-92408-3_7}
+\item 本リポジトリ \texttt{docs/ABCLCP\_TYPE\_SOUNDNESS\_REPORT.md}（\S5, \S12）
+\end{itemize}
+
+\end{document}

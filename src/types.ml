@@ -97,6 +97,33 @@ let register_class_auto (name : string) (methods_arity : (string * int) list) : 
   in
     register_class name ms
 
+(* ================================================================= *)
+(*  メソッド戻り値型テーブル：reply から推論される ρ の置き場所        *)
+(* ================================================================= *)
+(* "クラス名#メソッド名" -> ρ。
+   ρ は単相の型変数で、そのメソッドの
+     - すべての reply(v) 地点
+     - すべての now / future 送信地点
+   がこの同じ ρ を共有する。union-find の link 経由で伝播するので、
+   どちらが先に検査されても制約は届く。
+
+   ρ をメソッドの型スキームに埋めずに別表で持つのは generalize 対策である。
+   Forall に ρ が量化されてしまうと instantiate が呼び出しごとに ρ を
+   別の変数へ差し替えるため、reply 側で付いた制約が呼び出し側へ伝わらない。 *)
+let method_ret_tys : (string, ty) Hashtbl.t = Hashtbl.create 97
+
+let method_ret_key (cls : string) (m : string) : string = cls ^ "#" ^ m
+
+let register_method_ret (cls : string) (m : string) (t : ty) : unit =
+  Hashtbl.replace method_ret_tys (method_ret_key cls m) t
+
+let lookup_method_ret (cls : string) (m : string) : ty option =
+  Hashtbl.find_opt method_ret_tys (method_ret_key cls m)
+
+(* REPL は同じプログラムを何度も型検査するので、
+   前回の実行で確定済みの ρ を持ち越さないよう毎回クリアする *)
+let reset_method_rets () : unit = Hashtbl.reset method_ret_tys
+
 let rec repr (t : ty) : ty =
   match t with
   | TVar vref ->
@@ -330,6 +357,20 @@ let debug_print_class_method_schemes () : unit =
          sigs;)
 (*       print_newline ()) *)
    class_method_schemes
+
+(* デバッグ：reply から推論した戻り値型を表示する。
+   'a のように未束縛のまま残っているものは
+   「reply はあるが、その値の型がどこからも決まっていない」メソッドで、
+   注釈を書くべき第一候補である。 *)
+let debug_print_method_rets () : unit =
+  print_endline "[method return types (inferred from reply)]";
+  let items =
+    Hashtbl.fold (fun k t acc -> (k, t) :: acc) method_ret_tys []
+    |> List.sort (fun (a,_) (b,_) -> compare a b)
+  in
+  List.iter
+    (fun (k, t) -> Printf.printf "  %s -> %s\n" k (string_of_ty_pretty (repr t)))
+    items
 
 (* 自由型変数: 量化された変数ID(qs)を t の自由変数集合から取り除く *)
 let ftv_scheme (Forall (qs, t) : scheme) : ISet.t =

@@ -47,6 +47,50 @@ let clone (e : (string, scheme list) Hashtbl.t) : (string, scheme list) Hashtbl.
   Hashtbl.iter (fun k v -> Hashtbl.replace e' k v) e;
   e'
 
+(* ---------------------------------------------------------------- *)
+(*  reply の構文スキャン                                              *)
+(* ---------------------------------------------------------------- *)
+(* 本体に reply(...) が1つでも現れるか。
+   現れないメソッドは戻り値 ρ を即座に unit へ落とす（Pony の
+   「戻り値型を省略した関数は None を返す」と同じ defaulting）。
+   これをやらないと reply を書き忘れたメソッドの ρ が未束縛のまま残り、
+   呼び出し側の now が「どんな型にも化ける値」を受け取ってしまう。
+   実行時にはその now は永久に返らないので、型が嘘をつくことになる。 *)
+let rec expr_has_reply (e : Ast.expr) : bool =
+  match e.desc with
+  | Ast.Call ("reply", _) -> true
+  | Ast.Call (_, args)
+  | Ast.New (_, args)
+  | Ast.Array (args, _)
+  | Ast.NowSend (_, _, args)
+  | Ast.FutureSend (_, _, args) -> List.exists expr_has_reply args
+  | Ast.Binop (_, a, b) -> expr_has_reply a || expr_has_reply b
+  | Ast.Expr e1 | Ast.Await e1 -> expr_has_reply e1
+  | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Var _ -> false
+
+let rec stmt_has_reply (s : Ast.stmt) : bool =
+  match s.sdesc with
+  | Ast.CallStmt ("reply", _) -> true
+  | Ast.CallStmt (_, args)
+  | Ast.Send (_, _, args)
+  | Ast.UnsafeSend (_, _, args)
+  | Ast.Become (_, args) -> List.exists expr_has_reply args
+  | Ast.Assign (_, e) | Ast.VarDecl (_, e) -> expr_has_reply e
+  | Ast.Seq ss -> List.exists stmt_has_reply ss
+  | Ast.If (c, a, b) ->
+      expr_has_reply c || stmt_has_reply a || stmt_has_reply b
+  | Ast.While (c, b) -> expr_has_reply c || stmt_has_reply b
+  | Ast.Select (cases, (_, to_body)) ->
+      List.exists (fun (c : Ast.select_case) -> stmt_has_reply c.body) cases
+      || (match to_body with Some b -> stmt_has_reply b | None -> false)
+
+(* 送信先メソッドの戻り値型 ρ を引く。
+   リモート先など静的に本体が見えないメソッドは any のまま（従来どおり）。 *)
+let method_ret_ty (cls : string) (mname : string) : ty =
+  match Types.lookup_method_ret cls mname with
+  | Some t -> t
+  | None   -> TAny
+
 (* loc 付きで unify を試して、成功なら true、失敗なら false を返すヘルパ *)
 let unify_try (loc : Location.t) (t1 : ty) (t2 : ty) : bool =
   try
@@ -54,29 +98,144 @@ let unify_try (loc : Location.t) (t1 : ty) (t2 : ty) : bool =
   with
   | Types.Type_error _ -> false
 
-(* loc 付きオーバーロード解決 *)
+(* ---------------------------------------------------------------- *)
+(*  オーバーロード解決                                                *)
+(* ---------------------------------------------------------------- *)
+
+(* AIOS_STRICT_OVERLOAD=1 で、曖昧な overload を警告ではなくエラーにする *)
+let strict_overload =
+  match Sys.getenv_opt "AIOS_STRICT_OVERLOAD" with
+  | Some "1" | Some "true" | Some "yes" -> ref true
+  | _ -> ref false
+
+(* 型に現れる型変数セルを、link 鎖もたどって集める。
+   トライアルで焼き付いた束縛を巻き戻すための対象リストになる。 *)
+let collect_tvar_cells (ts : ty list) : tvar ref list =
+  let seen : (int, unit) Hashtbl.t = Hashtbl.create 16 in
+  let acc = ref [] in
+  let rec go t =
+    match t with
+    | TVar cell ->
+        let id = (!cell).id in
+        if not (Hashtbl.mem seen id) then begin
+          Hashtbl.replace seen id ();
+          acc := cell :: !acc;
+          match (!cell).link with Some t' -> go t' | None -> ()
+        end
+    | TArray t1 | TFuture t1 -> go t1
+    | TRecord fs      -> List.iter (fun (_, t1) -> go t1) fs
+    | TActor (_, ms)  -> List.iter (fun (_, t1) -> go t1) ms
+    | TFun (ps, r)    -> List.iter go ps; go r
+    | _ -> ()
+  in
+  List.iter go ts;
+  !acc
+
+(* link を「値として」保存/復元する。
+   repr は `cell := {!cell with link}`、prune は `(!cell).link <- ...` と
+   2通りの書き換えをするので、レコードを共有したまま持つと復元にならない。
+   新しいレコードを作り直して差し替える。 *)
+let snapshot_links (cells : tvar ref list) : (tvar ref * ty option) list =
+  List.map (fun c -> (c, (!c).link)) cells
+
+let restore_links (snap : (tvar ref * ty option) list) : unit =
+  List.iter (fun (c, l) -> c := { !c with link = l }) snap
+
+(* 引数型が型変数を含まない（＝候補が「具体的」）か *)
+let is_ground (t : ty) : bool = ISet.is_empty (ftv_ty t)
+
+(* loc 付きオーバーロード解決
+
+   従来の実装には2つの欠陥があった。
+
+   (1) 失敗した候補の単一化が巻き戻らない。
+       List.for_all2 は途中で false になると打ち切るので、それまでに
+       結んだ束縛（例: 第1引数 := string）が残ったまま次の候補へ進む。
+       候補を1つ試すたびに引数の型が汚染されていく。
+
+   (2) 候補の優先順位が「登録順の逆」。
+       typing_env は overload を `sch :: prev` で積むので、リストの先頭は
+       最後に登録されたものになる。`+` なら ('a * string) -> string が先頭で、
+       引数が両方とも未束縛の型変数のときはこれが必ず最初に一致してしまう。
+       a + b が問答無用で string に潰れていたのはこれが理由。
+
+   ここでは
+     - 各トライアルの前後で link をスナップショット/復元し、副作用を出さない
+     - 候補を「具体的な引数型を持つもの優先 → 引数側の型変数を束縛しない
+       もの優先 → 登録順」で順位付けする
+     - 最上位が複数あって戻り値型が割れる場合は、真に曖昧なので報告する
+   の3点を行う。 *)
 let pick_overload (loc:Location.t) (name:string) (env:tenv) (arg_tys:ty list) : ty =
   let schemes =
     match Hashtbl.find_opt env name with
-    | Some ss -> ss
+    | Some ss -> List.rev ss     (* ★ 登録順に戻す *)
     | None    -> []
   in
-  let ok =
-    List.filter_map
-      (fun sch ->
-         match repr (instantiate sch) with
-         | TFun (ps, ret) when List.length ps = List.length arg_tys ->
-             if List.for_all2 (unify_try loc) ps arg_tys then
-               Some (repr ret)
-             else
-               None
-         | _ ->
-             None)
-      schemes
+  let arg_cells = collect_tvar_cells arg_tys in
+  let base = snapshot_links arg_cells in
+
+  (* 候補を1つ試す。副作用は必ず巻き戻す。 *)
+  let trial (idx : int) (sch : scheme) =
+    let inst = repr (instantiate sch) in
+    let snap = snapshot_links (collect_tvar_cells (inst :: arg_tys)) in
+    let res =
+      match inst with
+      | TFun (ps, ret) when List.length ps = List.length arg_tys ->
+          let ground = List.for_all is_ground ps in
+          if List.for_all2 (unify_try loc) ps arg_tys then begin
+            (* このトライアルで新たに束縛された引数側変数の個数。
+               少ないほど「引数の型を決め打ちしていない」＝素直な一致。 *)
+            let binds =
+              List.fold_left
+                (fun n (c, l0) ->
+                   if l0 = None && (!c).link <> None then n + 1 else n)
+                0 base
+            in
+            Some (ground, binds, idx, sch,
+                  Types.string_of_ty_pretty (prune ret))
+          end else None
+      | _ -> None
+    in
+    restore_links snap;
+    res
   in
-  match ok with
-  | [r] -> r
-  | r :: _ -> r
+
+  let cands =
+    schemes
+    |> List.mapi (fun i sch -> (i, sch))
+    |> List.filter_map (fun (i, sch) -> trial i sch)
+  in
+  restore_links base;   (* 念のため、全トライアル分をもう一度戻す *)
+
+  let rank (ground, binds, idx, _, _) = ((if ground then 0 else 1), binds, idx) in
+  let sorted = List.sort (fun a b -> compare (rank a) (rank b)) cands in
+
+  match sorted with
+  | (g0, b0, _, winner, _) :: _ ->
+      (* 同順位に戻り値型の異なる候補が残っていれば、この呼び出しは真に曖昧。
+         principal type が無いので、本来は型注釈で決めるしかない。 *)
+      let top =
+        List.filter (fun (g, b, _, _, _) -> g = g0 && b = b0) sorted in
+      let rets = List.sort_uniq compare (List.map (fun (_,_,_,_,r) -> r) top) in
+      if List.length rets > 1 then begin
+        let msg =
+          Printf.sprintf
+            "ambiguous overload of %s for (%s): candidate return types are %s"
+            name
+            (String.concat ", " (List.map Types.string_of_ty_pretty arg_tys))
+            (String.concat " / " rets)
+        in
+        if !strict_overload then Types.type_error ~loc msg
+        else
+          Printf.eprintf "[warn] %s: %s (picked %s)\n%!"
+            (Location.to_string loc) msg (List.hd rets)
+      end;
+      (* 勝った候補だけを、今度は本番として単一化する *)
+      (match repr (instantiate winner) with
+       | TFun (ps, ret) ->
+           List.iter2 (Types.unify ~loc) ps arg_tys;
+           repr ret
+       | t -> t)
   | [] ->
       let sigstr =
         "(" ^ String.concat ", " (List.map Types.string_of_ty_pretty arg_tys) ^ ")"
@@ -96,6 +255,35 @@ let lookup_method_type (tobj : ty) (mname : string) : ty option =
     end
   | _ -> None
 
+(* reply(v) の型付け。
+   検査中のメソッドの戻り値型 ρ は、env の "reply" に (ρ -> unit) として
+   単相で束縛されている（check_decl / preinfer が入れる）。
+   グローバルの reply : forall a. a -> unit はそれに隠される。
+
+   ここを pick_overload 任せにせず専用に書いているのは、失敗時のメッセージの
+   ためである。overload 解決に流すと「no overload of reply matches (string)」
+   という、どの reply と衝突したのか分からない文言になる。 *)
+let check_reply (env:env) (loc:Location.t) (arg_tys : ty list) : ty =
+  match Hashtbl.find_opt env "reply" with
+  | Some (Forall ([], TFun ([rho], _)) :: _) ->
+      (match arg_tys with
+       | [t] ->
+           let before = Types.string_of_ty_pretty (repr rho) in
+           (try Types.unify ~loc rho t
+            with Types.Type_error (_, _) ->
+              Types.type_error ~loc
+                (Printf.sprintf
+                   "reply type mismatch: this method replies with %s elsewhere, but with %s here"
+                   before (Types.string_of_ty_pretty (repr t))));
+           TUnit
+       | _ ->
+           Types.type_error ~loc
+             (Printf.sprintf "reply takes exactly 1 argument, got %d"
+                (List.length arg_tys)))
+  | _ ->
+      (* メソッド本体の外側にある reply（グローバル文など）は従来どおり *)
+      pick_overload loc "reply" env arg_tys
+
 let rec infer_expr (env:env) (e:expr) : ty =
   match e.desc with
   | Int _ -> TInt
@@ -109,6 +297,9 @@ let rec infer_expr (env:env) (e:expr) : ty =
      | "+", _, TString -> TString
      | _ ->
          pick_overload e.loc op env [t1; t2])
+  | Call ("reply", args) ->
+      let t_args = List.map (infer_expr env) args in
+      check_reply env e.loc t_args
   | Call (fname, arg1) ->
       let t_args = List.map (infer_expr env) arg1 in
       pick_overload e.loc fname env t_args
@@ -153,35 +344,44 @@ let rec infer_expr (env:env) (e:expr) : ty =
     let ms = Types.lookup_class_methods_inst cls in TActor (cls, ms)
   | FutureSend (target, mname, args) ->
       let arg_tys = List.map (infer_expr env) args in
-      begin match target with
-      | RemoteTarget (_hostport, _actor_name) -> ()
-      | LocalTarget vname when vname = "sender" -> ()
-      | LocalTarget vname ->
-          let t_actor = infer_expr env (mk_var vname) in
-          (match repr t_actor with
-           | TActor (cls, _) ->
-               (match Types.lookup_class_method_scheme cls mname with
-                | None ->
-                    Types.type_error ~loc:e.loc
-                      ("no method " ^ mname ^ " in actor(" ^ cls ^ ")")
-                | Some sc ->
-                    (match repr (Types.instantiate sc) with
-                     | TFun (param_tys, _ret_ty) ->
-                         if List.length param_tys <> List.length arg_tys then
-                           Types.type_error ~loc:e.loc "arity mismatch in future send";
-                         List.iter2 (Types.unify ~loc:e.loc) param_tys arg_tys
-                     | ty ->
-                         Types.type_error ~loc:e.loc
-                           ("method " ^ mname ^ " is not a function: "
-                            ^ string_of_ty ty)))
-           | t_non_actor ->
-               Types.type_error ~loc:e.loc
-                 ("future target is not actor: " ^ string_of_ty t_non_actor))
-      end;
-      TFuture TAny
+      let ret =
+        begin match target with
+        (* リモート宛先は本体が別ノードにあり推論できない。
+           ここは宣言（インタフェース）でしか埋まらない場所なので any のまま。 *)
+        | RemoteTarget (_hostport, _actor_name) -> TAny
+        | LocalTarget vname when vname = "sender" -> TAny
+        | LocalTarget vname ->
+            let t_actor = infer_expr env (mk_var vname) in
+            (match repr t_actor with
+             | TActor (cls, _) ->
+                 (match Types.lookup_class_method_scheme cls mname with
+                  | None ->
+                      Types.type_error ~loc:e.loc
+                        ("no method " ^ mname ^ " in actor(" ^ cls ^ ")")
+                  | Some sc ->
+                      (match repr (Types.instantiate sc) with
+                       | TFun (param_tys, _ret_ty) ->
+                           if List.length param_tys <> List.length arg_tys then
+                             Types.type_error ~loc:e.loc "arity mismatch in future send";
+                           List.iter2 (Types.unify ~loc:e.loc) param_tys arg_tys;
+                           (* ★ 戻り値はスキーム側（量化で切れている）ではなく
+                              ρ 表から取る。これが reply 地点と繋がっている唯一の経路。 *)
+                           method_ret_ty cls mname
+                       | ty ->
+                           Types.type_error ~loc:e.loc
+                             ("method " ^ mname ^ " is not a function: "
+                              ^ string_of_ty ty)))
+             | t_non_actor ->
+                 Types.type_error ~loc:e.loc
+                   ("future target is not actor: " ^ string_of_ty t_non_actor))
+        end
+      in
+      TFuture ret
   | NowSend (target, mname, args) ->
-      ignore (infer_expr env { e with desc = FutureSend (target, mname, args) });
-      TAny
+      (* now は future の即時 await。戻り値型も同じ ρ になる。 *)
+      (match repr (infer_expr env { e with desc = FutureSend (target, mname, args) }) with
+       | TFuture t -> t
+       | _         -> TAny)
   | Await e1 ->
       (match repr (infer_expr env e1) with
        | TFuture t -> t
@@ -230,6 +430,10 @@ let rec check_stmt (env:env) (s:stmt) : unit =
       let tc = infer_expr env cond in ignore(unify_at s.sloc tc TBool);
       check_stmt env body
   | Seq ss -> List.iter (check_stmt env) ss
+  | CallStmt ("reply", args) ->
+      let arg_tys = List.map (infer_expr env) args in
+      ignore (check_reply env s.sloc arg_tys);
+      ()
   | CallStmt (fname, args) ->
       let arg_tys = List.map (infer_expr env) args in
       ignore (pick_overload s.sloc fname env arg_tys);
@@ -383,6 +587,16 @@ let check_decl (env:env) = function
           set env_m p (Forall ([], TVar (Types.fresh_tvar ())))
         ) m.params;
 
+        (* ★ reply をこのメソッド専用に単相で束縛し、
+           グローバルの reply : forall a. a -> unit を隠す。
+           これで body 中の reply(v) が ρ を単一化するようになる。 *)
+        let rho =
+          match Types.lookup_method_ret c.Ast.cname m.mname with
+          | Some t -> t
+          | None   -> TVar (Types.fresh_tvar ())   (* preinfer 未通過は従来どおり *)
+        in
+        set env_m "reply" (Forall ([], TFun ([rho], TUnit)));
+
         check_stmt env_m m.body
 	) c.methods
   | Global s ->                         
@@ -466,9 +680,26 @@ let preinfer_all_classes (p : Ast.program) (g0 : Types.tenv) : unit =
       (* ★ 1パス目ではメソッド本体は見ない設計なので、check_stmt は呼ばない ★ *)
       (* check_stmt env_m m.Ast.body; *)
 
+      (* ★ 戻り値型 ρ を1つ確保して表に登録する。
+         2パス目で本体の reply がこの ρ を単一化し、
+         送信地点は method_ret_ty 経由で同じ ρ を読む。 *)
+      let rho = Types.TVar (Types.fresh_tvar ()) in
+      Types.register_method_ret c.Ast.cname m.Ast.mname rho;
+
+      (* ★ 本体に reply が無ければ即 unit へ defaulting（Pony 方式）。
+         未束縛のまま残すと ∀ρ.ρ 相当になり、返らない now が型検査を通る。 *)
+      if not (stmt_has_reply m.Ast.body) then
+        Types.unify ~loc:Location.dummy rho Types.TUnit;
+
+      (* ρ を env に置いて generalize から守る。
+         ρ が量化されると instantiate が呼び出しごとに別変数へ差し替えてしまい、
+         reply 側の制約が呼び出し側に届かなくなる。 *)
+      set_var_scheme env_m "reply"
+        (Types.Forall ([], Types.TFun ([rho], Types.TUnit)));
+
       (* ps の repr だけを見て関数型を作る *)
       let ps' = List.map Types.repr ps in
-      let tfun = Types.TFun (ps', Types.TUnit) in
+      let tfun = Types.TFun (ps', rho) in
       let sch  = generalize (ftv_env env_m) tfun in
         (m.Ast.mname, sch)
 (*
@@ -497,12 +728,14 @@ let infer_method (m : Ast.method_decl) =
 let check_program (p: Ast.program) : (Types.tenv, string) result =
   let env0 = Typing_env.prelude () in
   try
+    Types.reset_method_rets ();             (* ★ 前回検査の ρ を持ち越さない *)
     prebind_global_actors p env0;
     in_preinfer := true;
     preinfer_all_classes p env0;           (* ★ 先に全クラスのメソッド型を登録 *)
     in_preinfer := false;
     if !verbose then Types.debug_print_class_method_schemes ();
     List.iter (check_decl env0) p;          (* それから通常どおりトップレベルを検査 *)
+    if !verbose then Types.debug_print_method_rets ();
     Ok env0
   with
   | Types.Type_error (loc, msg) ->

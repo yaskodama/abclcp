@@ -1,0 +1,20 @@
+// (4) アクターをまたいで ρ が伝播すること
+//     Store.get の reply -> Front の now の型 -> Front.fetch の reply
+class Store {
+  method get(k) {
+    reply(k * 100);
+  }
+}
+
+class Front {
+  method fetch(k) {
+    var v = now store.get(k);
+    reply("value=" + v);
+  }
+}
+
+var store = new Store();
+var front = new Front();
+
+var out = now front.fetch(3);
+print(out);

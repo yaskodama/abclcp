@@ -1,0 +1,15 @@
+// (5) 本パッチが顕在化させた、pick_overload の既存の問題
+//     a も b も未束縛の型変数なので、+ の4つの overload すべてが「一致」する。
+//     pick_overload は先頭の候補を採るが、typing_env は overload を
+//     prepend で積むため、先頭は最後に登録された ('a * string) -> string。
+//     結果、a + b は string に解決され、b は string に固定されてしまう。
+//     （パッチ以前からこの束縛は起きていたが、戻り値が unit 固定だったので
+//       シグネチャに現れず、見えていなかった）
+class Calc {
+  method add(a, b) {
+    reply(a + b);
+  }
+}
+
+var calc = new Calc();
+var s = now calc.add(1, 2);

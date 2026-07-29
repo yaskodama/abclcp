@@ -1,0 +1,14 @@
+// (6) 正しいプログラムが通るようになる例
+//     パッチ前: now の結果は any なので、算術に使った時点で
+//               "no overload of + matches (any, int)" で落ちていた。
+//     パッチ後: reply(a * 2) から int と分かるので通る。
+class Calc {
+  method twice(a) {
+    reply(a * 2);
+  }
+}
+
+var c = new Calc();
+var s = now c.twice(21);
+var t = s + 1;
+print("t = " + t);
