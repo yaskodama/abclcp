@@ -15,24 +15,24 @@ class MemoryService {
 
 class GeminiModelService {
   method generate(prompt) {
-    aios_emit("gemini.prompt:" + prompt);
+    aios_emit("gemini.prompt:" ++ prompt);
     var answer = gemini_generate(prompt);
-    aios_emit("gemini.answer:" + answer);
+    aios_emit("gemini.answer:" ++ answer);
     reply(answer);
   }
 }
 
 class GeminiAgentService {
   method solve(problem) {
-    aios_emit("agent.observe:" + problem);
+    aios_emit("agent.observe:" ++ problem);
     aios_now("memory", "put", "problem", problem);
 
-    var prompt = "You are an AIOS agent. Solve the problem in Japanese. Keep the answer concise. Problem: " + problem;
+    var prompt = "You are an AIOS agent. Solve the problem in Japanese. Keep the answer concise. Problem: " ++ problem;
     var answer_future = aios_future("model", "generate", prompt);
     var answer = await answer_future;
 
     aios_now("memory", "put", "answer", answer);
-    aios_emit("agent.answer:" + answer);
+    aios_emit("agent.answer:" ++ answer);
     reply(answer);
   }
 }
@@ -52,6 +52,6 @@ print(aios_service_info("agent"));
 var result = aios_now("agent", "solve", "箱が3つあり、それぞれにリンゴが4個あります。リンゴは全部で何個ですか。");
 var saved = aios_now("memory", "get", "answer");
 
-print("agent result = " + result);
-print("memory answer = " + saved);
+print("agent result = " ++ result);
+print("memory answer = " ++ saved);
 print(aios_events());

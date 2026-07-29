@@ -27,8 +27,8 @@ print(aios_service_info("memory"));
 aios_now("memory", "put", "problem", "3 boxes with 4 apples");
 aios_now("memory", "put", "answer", "12");
 
-print("memory keys = " + aios_now("memory", "keys"));
-print("memory problem = " + aios_now("memory", "get", "problem"));
-print("memory answer = " + aios_now("memory", "get", "answer"));
-print("memory has answer = " + aios_now("memory", "has", "answer"));
+print("memory keys = " ++ aios_now("memory", "keys"));
+print("memory problem = " ++ aios_now("memory", "get", "problem"));
+print("memory answer = " ++ aios_now("memory", "get", "answer"));
+print("memory has answer = " ++ aios_now("memory", "has", "answer"));
 print(aios_events());

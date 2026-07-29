@@ -53,6 +53,7 @@ rule token = parse
 | ">"          { GT }
 | "<"          { LT }
 | "="          { ASSIGN }
+| "++"         { PLUSPLUS }
 | "+"          { PLUS }
 | "-"          { MINUS }
 | "*"          { TIMES }

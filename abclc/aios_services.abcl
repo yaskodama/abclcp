@@ -21,8 +21,8 @@ print(aios_service_info("memory"));
 print(aios_service_actor("memory"));
 
 var ok = now memory.put(1., 42.);
-print("memory put = " + ok);
+print("memory put = " ++ ok);
 
 var f = future memory.get(1.);
 var value = await f;
-print("memory get = " + value);
+print("memory get = " ++ value);

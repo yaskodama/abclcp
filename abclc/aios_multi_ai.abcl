@@ -1,40 +1,40 @@
 class PlannerAI {
   method plan(problem) {
-    aios_emit("planner.observe:" + problem);
+    aios_emit("planner.observe:" ++ problem);
     reply("steps: identify facts -> solve -> review");
   }
 }
 
 class SolverAI {
   method solve(problem, plan) {
-    aios_emit("solver.using:" + plan);
+    aios_emit("solver.using:" ++ plan);
     reply("answer: 12 because 3 groups of 4 make 12");
   }
 }
 
 class ReviewerAI {
   method review(problem, answer) {
-    aios_emit("reviewer.check:" + answer);
-    reply("review: accepted for " + problem);
+    aios_emit("reviewer.check:" ++ answer);
+    reply("review: accepted for " ++ problem);
   }
 }
 
 class CoordinatorAI {
   method solve(problem) {
-    aios_emit("coordinator.problem:" + problem);
+    aios_emit("coordinator.problem:" ++ problem);
 
     var plan_future = aios_future("planner", "plan", problem);
     var plan = await plan_future;
-    aios_emit("coordinator.plan:" + plan);
+    aios_emit("coordinator.plan:" ++ plan);
 
     var answer_future = aios_future("solver", "solve", problem, plan);
     var answer = await answer_future;
-    aios_emit("coordinator.answer:" + answer);
+    aios_emit("coordinator.answer:" ++ answer);
 
     var review = aios_now("reviewer", "review", problem, answer);
-    aios_emit("coordinator.review:" + review);
+    aios_emit("coordinator.review:" ++ review);
 
-    reply(answer + " | " + review);
+    reply(answer ++ " | " ++ review);
   }
 }
 
@@ -57,7 +57,7 @@ print(protocol_state(sid));
 
 var result = aios_now("coordinator", "solve", "If there are 3 boxes with 4 apples each, how many apples are there?");
 
-print("final result = " + result);
+print("final result = " ++ result);
 print(protocol_state(sid));
 protocol_end(sid);
 print(protocol_state(sid));

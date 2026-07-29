@@ -1,6 +1,6 @@
 class EchoService {
   method ping(message) {
-    reply("echo: " + message);
+    reply("echo: " ++ message);
   }
 }
 
@@ -15,8 +15,8 @@ print(aios_actor_methods("echo"));
 print(aios_mailbox_len("echo"));
 
 var answer = now echo.ping("ready");
-print("kernel now = " + answer);
+print("kernel now = " ++ answer);
 
 var pending = future echo.ping("future-ready");
 var resolved = await pending;
-print("kernel future = " + resolved);
+print("kernel future = " ++ resolved);

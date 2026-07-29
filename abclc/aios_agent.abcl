@@ -15,27 +15,27 @@ class MemoryService {
 
 class ModelService {
   method generate(prompt) {
-    reply("plan: " + prompt);
+    reply("plan: " ++ prompt);
   }
 }
 
 class ToolService {
   method run(name, input) {
-    reply("tool " + name + " -> " + input);
+    reply("tool " ++ name ++ " -> " ++ input);
   }
 }
 
 class AgentService {
   method handle(input) {
-    aios_emit("agent.observe " + input);
+    aios_emit("agent.observe " ++ input);
     aios_now("memory", "put", "last_input", input);
 
     var plan_future = aios_future("model", "generate", input);
     var plan = await plan_future;
-    aios_emit("agent.plan " + plan);
+    aios_emit("agent.plan " ++ plan);
 
     var result = aios_now("tool", "run", "echo", plan);
-    aios_emit("agent.act " + result);
+    aios_emit("agent.act " ++ result);
     reply(result);
   }
 }
@@ -51,5 +51,5 @@ aios_register_service("tool", "tool");
 aios_register_service("agent", "agent");
 
 var output = aios_now("agent", "handle", "build");
-print("agent output = " + output);
+print("agent output = " ++ output);
 print(aios_events());

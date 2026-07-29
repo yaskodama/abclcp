@@ -38,24 +38,24 @@ var question = "What is 12 * 11? Show only the number.";
 
 protocol_define("UserThreeRoleAI", "planner.plan -> solver.solve -> reviewer.brief -> reviewer.review");
 var sid = protocol_start("UserThreeRoleAI");
-print("[protocol] " + protocol_state(sid));
+print("[protocol] " ++ protocol_state(sid));
 
 var plan = now planner.plan(question);
-print("[plan] " + plan);
+print("[plan] " ++ plan);
 
 var fut_ans   = future solver.solve(plan);
 var fut_brief = future reviewer.brief();
 
 var answer = await fut_ans;
-print("[answer] " + answer);
+print("[answer] " ++ answer);
 
 var brief = await fut_brief;
-print("[reviewer brief] " + brief);
+print("[reviewer brief] " ++ brief);
 
 var verdict = now reviewer.review(answer);
-print("[verdict] " + verdict);
+print("[verdict] " ++ verdict);
 
-print("[protocol] " + protocol_state(sid));
+print("[protocol] " ++ protocol_state(sid));
 protocol_end(sid);
-print("[protocol] " + protocol_state(sid));
-print("[protocol events] " + protocol_events());
+print("[protocol] " ++ protocol_state(sid));
+print("[protocol events] " ++ protocol_events());

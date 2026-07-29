@@ -1,0 +1,33 @@
+// (16) 文字列連結 ++ と数値 +
+//
+//      かつて + は数値2種と文字列連結2種の計4候補を持っていた。
+//      両辺が未束縛だと4つとも一致してしまい、しかも候補列が登録順の逆
+//      だったため ('a * string) -> string が必ず先頭に来て、
+//      a + b が問答無用で string に潰れていた。
+//
+//      文字列連結を ++ に分けたので、
+//        + は数値専用（候補2つ、int と float）
+//        ++ は両辺を文字列化して連結（候補1つ、曖昧さなし）
+//      になった。++ の型は forall a b. (a * b) -> string である。
+class C {
+  // ++ は左右どちらが文字列でなくてもよい
+  method label(n) : string {
+    reply("n=" ++ n);
+  }
+  method both() : string {
+    reply(1 ++ 2);          // "12"
+  }
+  method plain() : string {
+    reply("a" ++ "b");      // "ab"
+  }
+  // + は数値のまま。文字列を渡せば型エラーになる
+  method sum() : int {
+    reply(1 + 2);           // 3
+  }
+}
+
+var c = new C();
+print(now c.label(42));
+print(now c.both());
+print(now c.plain());
+print(now c.sum());

@@ -26,7 +26,7 @@ class Stock {
 
   // reply を持たない tell 型。unit を宣言しておけば被覆検査は課されない
   method note(msg) : unit {
-    print("[stock] " + msg);
+    print("[stock] " ++ msg);
   }
 }
 
@@ -35,7 +35,7 @@ class Order {
   method place(k) : string {
     var left = now stock.take(k);
     if (left > 0) {
-      reply("ok, left=" + left);
+      reply("ok, left=" ++ left);
     } else {
       reply("sold out");
     }
@@ -49,7 +49,7 @@ class Order {
     select {
       case place(k) -> {
         var left = now stock.take(k);
-        reply("served, left=" + left);
+        reply("served, left=" ++ left);
       }
       timeout 3000 -> {
         print("[order] idle");
@@ -67,7 +67,7 @@ var stock = new Stock();
 var order = new Order();
 
 var s0 = now stock.peek();
-print("stock = " + s0);
+print("stock = " ++ s0);
 
 var r1 = now order.place(3);
 print(r1);
@@ -76,7 +76,7 @@ var r2 = now order.place(99);
 print(r2);
 
 var t = now order.twice(21);
-print("twice = " + t);
+print("twice = " ++ t);
 
 send stock.note("done");
 

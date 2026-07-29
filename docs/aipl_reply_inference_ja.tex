@@ -83,7 +83,10 @@ preservation の破れが見つかった。型を精密にしたことで初め�
 1 件だけであることが機械的に確認できた。
 副次的に、オーバーロード解決 \texttt{pick\_overload} に潜んでいた
 2 つの欠陥（失敗候補の単一化が巻き戻らない／候補の優先順位が登録順の逆）を
-発見し、これも修正した。
+発見し、これも修正した。最後に、曖昧性の元であった
+「\texttt{+} が数値演算と文字列連結を兼ねる」構造を解消するため、
+文字列連結を \texttt{++} へ分離し、既存コード 38 ファイル・255 箇所を
+型検査器のエラー位置に従って機械的に移行した。
 \end{abstract}
 
 \tableofcontents
@@ -832,6 +835,90 @@ case ごとに独立に検査する。
 
 と書いておくと既知として数え、終了コードを 1 にしない。
 
+\section{文字列連結を \texttt{++} に分離する}
+\label{sec:concat}
+
+\S\ref{sec:overload} の曖昧性の元は、\texttt{+} が数値演算と文字列連結を
+兼ねていたことである。\texttt{typing\_env} には 4 つの候補があった。
+
+\begin{lstlisting}[language={}]
+(float * float) -> float
+(int   * int)   -> int
+(string * 'a)   -> string
+('a * string)   -> string
+\end{lstlisting}
+
+両辺が未束縛の \texttt{a + b} ではこの 4 つが\emph{どれも一致する}。
+しかも候補列は登録順の逆なので先頭は \texttt{('a * string) -> string} で、
+これが必ず選ばれて引数まで \ty{string} に焼き付いていた。
+
+\subsection{変更}
+
+文字列連結を \texttt{++} という別の演算子に分けた。
+
+\begin{itemize}
+\item \texttt{lexer.mll}：\texttt{"++"} $\to$ \texttt{PLUSPLUS}。
+  ocamllex は最長一致なので \texttt{"+"} と衝突しない。
+\item \texttt{parser.mly}：\texttt{\%left PLUSPLUS} を \texttt{PLUS MINUS}
+  より\emph{前}に置き、最も弱い結合とした。
+  \texttt{"x=" ++ a + b} が \texttt{"x=" ++ (a + b)} と読まれる。
+\item \texttt{typing\_env.ml}：\texttt{+} から文字列 2 候補を外し、
+  $\texttt{++} : \forall \alpha\beta.\ (\alpha \times \beta) \to \ty{string}$
+  を 1 つだけ登録。候補が 1 つなので曖昧になりようがない。
+\item \texttt{infer.ml}：\texttt{Binop} にあった
+  「\texttt{+} の片側が \ty{string} なら \ty{string}」という特例を削除。
+  \texttt{+} は純粋な数値演算になった。
+\item \texttt{eval\_thread.ml}：\texttt{apply\_binop} の \texttt{+} の
+  文字列ケースを削除し、\texttt{++} は両辺を文字列化して連結する。
+\end{itemize}
+
+\begin{lstlisting}[language={}]
+"n=" ++ 42   ->  "n=42"       1 ++ 2  ->  "12"
+"a"  ++ "b"  ->  "ab"         1 +  2  ->  3
+"a"  +  "b"  ->  no overload of + matches (string, string)
+\end{lstlisting}
+
+\subsection{既存コードの移行}
+
+コーパスとサンプルで文字列連結に \texttt{+} を使っている箇所は多い。
+テキストの見た目で数値の \texttt{+} と区別するのは危ういので、
+\textbf{型検査器のエラー位置に従って機械的に置き換えた}。
+\texttt{Binop} の位置は \texttt{mk\_expr1 2}、すなわち演算子トークンそのものを
+指すので、\texttt{no overload of + matches} が出た \texttt{(line, col)} の
+1 文字を \texttt{++} にして再検査、を繰り返せばよい。純粋な数値の
+\texttt{+} はそもそもエラーにならないので触られない。
+
+結果は\textbf{38 ファイル / 255 箇所}である。移行前後で型検査の判定は
+コーパス 63 本すべて一致した。
+
+\begin{remark}
+この移行で 2 つ踏んだ。
+ひとつは\textbf{列がバイトオフセット}であること
+（\texttt{pos\_cnum - pos\_bol + 1}）。日本語を含む行では文字インデックスと
+ずれるので、置換はバイト列で行う必要がある。
+もうひとつは、この方法が\textbf{文字列連結以外の理由で失敗している
+\texttt{+} も書き換えてしまう}こと。実際サンプル
+\texttt{s2\_missing\_reply.abcl} の \texttt{print(x + 1)} は
+「\texttt{x} が \ty{unit} だから」失敗する意図的な負例なのに
+\texttt{++} にされてしまった。意図的にエラーになるコードは手で確認が要る。
+\end{remark}
+
+\subsection{どこまで消えたか}
+
+\texttt{string} 由来の曖昧性は完全に消えた。引数が \ty{string} に
+焼き付く事故も起きない。一方、\textbf{数値の \ty{int} / \ty{float} の
+曖昧性は残っている}。
+
+\begin{lstlisting}[language={}]
+[warn] ambiguous overload of + for ('a, 'a):
+       candidate return types are float / int (picked float)
+\end{lstlisting}
+
+候補が 4 つから 2 つに減り、警告が出るのはコーパス 63 本では 0 本、
+サンプルでは意図的な負例 2 本だけになった。完全に消すには
+\texttt{+} と \texttt{+.} のように数値側も分ける必要があり、これは
+\ty{int} と \ty{float} をどう扱うかという別の設計判断になる。
+
 \section{実験}
 \label{sec:experiment}
 
@@ -1318,6 +1405,25 @@ method m(k) : int { while k > 0 do { reply(k); } }
 method m(k) : int { if (k > 0) { reply(1); } else { reply(2); } }
 \end{lstlisting}
 
+\subsection{s16\_concat.abcl --- 文字列連結 \texttt{++} と数値 \texttt{+}}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s16_concat.abcl}
+
+\begin{lstlisting}[language={}]
+[OK] type check passed
+[method return types (inferred from reply)]
+  C#both  -> string
+  C#label -> string
+  C#plain -> string
+  C#sum   -> int
+
+$ ./src/abclrepl_thread -q -f run_s16.repl
+n=42
+12
+ab
+3
+\end{lstlisting}
+
 \section{型検査ドライバ \texttt{tc\_main.ml}}
 \label{sec:driver}
 
@@ -1352,6 +1458,11 @@ REPL（SDL に依存する）を起動せずに型検査だけを走らせるた
   $(\ty{int} \times \ty{int}) \to \ty{float}$ に型付け。
 \item \texttt{scripts/type\_runtime\_diff.py}（新規）--- 型と実行値の
   差分テストハーネス（\S\ref{sec:difftest}）。
+\item 文字列連結の \texttt{++} への分離（\S\ref{sec:concat}）---
+  \texttt{lexer.mll}、\texttt{parser.mly}、\texttt{typing\_env.ml}、
+  \texttt{infer.ml}、\texttt{eval\_thread.ml}。
+\item \texttt{abclc/*.abcl} ほか 38 ファイル / 255 箇所 --- \texttt{+} を
+  \texttt{++} へ移行。
 \item \texttt{abclc/web\_calc.abcl}, \texttt{src/web\_calc.abcl},
   \texttt{src/web\_calc1.abcl} --- 公開アクターに戻り値型注釈を付けて移行。
 \end{itemize}

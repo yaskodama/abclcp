@@ -9,7 +9,7 @@ class Store {
 class Front {
   method fetch(k) {
     var v = now store.get(k);
-    reply("value=" + v);
+    reply("value=" ++ v);
   }
 }
 

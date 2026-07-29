@@ -15,13 +15,13 @@ class MemoryService {
 
 class ModelService {
   method generate(prompt) {
-    reply("model: " + prompt);
+    reply("model: " ++ prompt);
   }
 }
 
 class ToolService {
   method run(name, input) {
-    reply("tool " + name + ": " + input);
+    reply("tool " ++ name ++ ": " ++ input);
   }
 }
 
@@ -37,14 +37,14 @@ print(aios_services());
 print(capability_prims("AIOS.Service"));
 
 var put_ok = aios_now("memory", "put", "topic", "AIOS");
-print("memory.put = " + put_ok);
+print("memory.put = " ++ put_ok);
 
 var memory_value = aios_now("memory", "get", "topic");
-print("memory.get = " + memory_value);
+print("memory.get = " ++ memory_value);
 
 var model_future = aios_future("model", "generate", "hello");
 var model_text = await model_future;
-print("model.generate = " + model_text);
+print("model.generate = " ++ model_text);
 
 var tool_text = aios_now("tool", "run", "echo", "done");
-print("tool.run = " + tool_text);
+print("tool.run = " ++ tool_text);

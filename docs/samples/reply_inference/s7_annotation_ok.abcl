@@ -9,7 +9,7 @@ class Calc {
 
 class Greeter {
   method greet(name) : string {
-    reply("hello, " + name);
+    reply("hello, " ++ name);
   }
   // unit を宣言したメソッドは reply しなくてよい
   method log(msg) : unit {
@@ -22,7 +22,7 @@ var g = new Greeter();
 
 var s = now calc.add(1, 2);
 var t = s + 1;
-print("t = " + t);
+print("t = " ++ t);
 
 var msg = now g.greet("AIPL");
 print(msg);

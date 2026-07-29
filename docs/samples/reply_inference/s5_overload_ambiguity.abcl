@@ -1,14 +1,23 @@
-// (5) 本パッチが顕在化させた、pick_overload の既存の問題
-//     a も b も未束縛の型変数なので、+ の4つの overload すべてが「一致」する。
-//     pick_overload は先頭の候補を採るが、typing_env は overload を
-//     prepend で積むため、先頭は最後に登録された ('a * string) -> string。
-//     結果、a + b は string に解決され、b は string に固定されてしまう。
-//     （パッチ以前からこの束縛は起きていたが、戻り値が unit 固定だったので
-//       シグネチャに現れず、見えていなかった）
+// (5) principal type が無い式
+//
+//     a も b も未束縛の型変数なので、+ の候補がどれも同じ資格で一致する。
+//
+//     かつては + が数値2種に加えて文字列連結2種
+//       (string * 'a) -> string / ('a * string) -> string
+//     も持っていた。typing_env は overload を prepend で積むためリストの
+//     先頭が最後に登録されたものになり、a + b は問答無用で string に
+//     潰され、b も string に焼き付いていた。
+//     RotateThreeLines.abcl が誤ってエラーになっていたのもこれが原因。
+//
+//     文字列連結を ++ に分けたので string の候補は消えた。残るのは
+//     (float * float) -> float と (int * int) -> int の2つで、
+//     principal type はやはり無い。型検査器は ambiguous と警告して
+//     float を選ぶ。注釈を書けば期待型が overload 解決へ流れて確定する
+//     （s7 を参照）。
 //
 // TYPE_RUNTIME_DIFF: expect-mismatch
 //   静的には float、実行時は int が返る。principal type が無いので当然で、
-//   注釈を書けば解消する（s7 を参照）。
+//   注釈を書けば解消する。
 class Calc {
   method add(a, b) {
     reply(a + b);

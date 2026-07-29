@@ -133,11 +133,14 @@ let prelude () : env =
   let add_f5 f = add_mono e f (TFun ([TInt; TInt], TBool)) in
   List.iter add_f5 [ ">"; "<"; "<="; ">=" ];
 
-  (* 2.6) 文字列連結: 片側が string なら string *)
+  (* 2.6) 文字列連結は ++ （+ からは外した）。
+     + に string の overload を混ぜていたせいで、両辺が未束縛の a + b に
+     principal type が無くなり、('a * string) -> string が既定で選ばれていた。
+     ++ は両辺を文字列化するので候補は1つだけ、曖昧さは生じない。 *)
   let a = fresh_tvar () in
-  add_poly e "+" (Forall ([(!a).id], TFun ([TString; TVar a], TString)));
-  let a = fresh_tvar () in
-  add_poly e "+" (Forall ([(!a).id], TFun ([TVar a; TString], TString)));
+  let b = fresh_tvar () in
+  add_poly e "++"
+    (Forall ([(!a).id; (!b).id], TFun ([TVar a; TVar b], TString)));
 
   (* reply : 'a -> unit  （まずは多相でもOK。型が厳しいなら int/float/string の overload に） *)
   let a = fresh_tvar () in

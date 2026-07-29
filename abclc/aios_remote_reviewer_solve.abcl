@@ -1,8 +1,8 @@
 class SolverActor {
   method solve(problem) {
-    aios_emit("solver.problem:" + problem);
+    aios_emit("solver.problem:" ++ problem);
     var answer = "12 because 3 boxes times 4 apples is 12";
-    aios_emit("solver.answer:" + answer);
+    aios_emit("solver.answer:" ++ answer);
     reply(answer);
   }
 }
@@ -11,18 +11,18 @@ class PlannerActor {
   var reviewer_host = "";
 
   method solve(problem) {
-    aios_emit("planner.problem:" + problem);
+    aios_emit("planner.problem:" ++ problem);
     reviewer_host = remote_reviewer_host();
-    aios_emit("planner.remote_host:" + reviewer_host);
+    aios_emit("planner.remote_host:" ++ reviewer_host);
 
     var answer_future = aios_future("solver", "solve", problem);
     var answer = await answer_future;
-    aios_emit("planner.answer:" + answer);
+    aios_emit("planner.answer:" ++ answer);
 
     var review = remote_review(reviewer_host, problem, answer);
-    aios_emit("planner.remote_review:" + review);
+    aios_emit("planner.remote_review:" ++ review);
 
-    reply("answer: " + answer + " | review: " + review);
+    reply("answer: " ++ answer ++ " | review: " ++ review);
   }
 }
 
@@ -37,6 +37,6 @@ print(aios_services());
 
 var result = aios_now("planner", "solve", "If there are 3 boxes with 4 apples each, how many apples are there?");
 
-print("final result = " + result);
+print("final result = " ++ result);
 print("== coordination events ==");
 print(aios_events());

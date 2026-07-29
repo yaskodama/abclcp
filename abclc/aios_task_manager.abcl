@@ -33,8 +33,8 @@ aios_now("task", "set", tid, "problem", "3 boxes with 4 apples");
 aios_now("task", "set", tid, "answer", "12");
 aios_now("task", "set", tid, "status", "done");
 
-print("task id = " + tid);
-print("task answer = " + aios_now("task", "get", tid, "answer"));
+print("task id = " ++ tid);
+print("task answer = " ++ aios_now("task", "get", tid, "answer"));
 print(aios_now("task", "info", tid));
 print(aios_now("task", "list"));
 print(aios_events());

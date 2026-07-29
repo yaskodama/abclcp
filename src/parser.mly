@@ -41,6 +41,8 @@ let ty_of_name (loc : Location.t) (s : string) : Types.ty =
 %token EOF NEW
 %token VAR EQ DOT BECOME
 %token COLON /* : ... 戻り値型注釈 */
+%token PLUSPLUS /* ++ ... 文字列連結 */
+%left PLUSPLUS
 %left PLUS MINUS
 %left TIMES DIV
 %start program
@@ -173,6 +175,7 @@ expr:
   | STRINGLIT { mk_expr1 1 (String $1) }
   | INTLIT { mk_expr1 1 (Int $1) }
   | ID { mk_expr1 1 (Var $1) }
+  | expr PLUSPLUS expr { mk_expr1 2 (Binop ("++", $1, $3)) }
   | expr PLUS expr { mk_expr1 2 (Binop ("+", $1, $3)) }
   | expr MINUS expr { mk_expr1 2 (Binop ("-", $1, $3)) }
   | expr TIMES expr { mk_expr1 2 (Binop ("*", $1, $3)) }

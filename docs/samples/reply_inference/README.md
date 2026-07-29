@@ -29,7 +29,7 @@ for f in docs/samples/reply_inference/s*.abcl; do ./tc "$f"; done
 | `s2_missing_reply.abcl` | reply を書き忘れたメソッドの結果を now で使う | 型エラー `(unit, int)`。パッチ前は `(any, int)` で原因が読めなかった |
 | `s3_conflict.abcl` | 分岐ごとに異なる型を reply する | 型エラー `reply type mismatch`。**パッチ前は素通りしていた** |
 | `s4_chain.abcl` | ρ がアクター境界を越えて伝播すること | OK。`Store#get->int` → `Front#fetch->string` |
-| `s5_overload_ambiguity.abcl` | `a + b` に principal type が無いこと | OK ＋ ambiguous 警告。strict なら型エラー |
+| `s5_overload_ambiguity.abcl` | `a + b` に principal type が無いこと | OK ＋ ambiguous 警告（`float`/`int`）。strict なら型エラー |
 | `s6_usable_result.abcl` | now の結果を算術に使う | OK。**パッチ前は `no overload of + matches (any, int)` で落ちていた** |
 | `s7_annotation_ok.abcl` | 戻り値型注釈 `method m(x) : T`。期待型が overload 解決へ流れること | OK。`add : (int * int) -> int`。**s5 の曖昧性が注釈だけで解消する** |
 | `s8_annotation_conflict.abcl` | 宣言型と食い違う reply | 型エラー `declared to reply with int, but replies with string here` |
@@ -40,6 +40,7 @@ for f in docs/samples/reply_inference/s*.abcl; do ./tc "$f"; done
 | `s13_runtime_mismatch.abcl` | **型検査器と評価器の食い違い**（修正済の回帰テスト） | 型検査 `T#f -> int`、実行 `3`。修正前は `3.` |
 | `s14_select_pattern.abcl` | select パターンをメソッド署名に照合 | 型エラー `case m binds 1 variable(s) but method m takes 2` |
 | `s15_double_reply.abcl` | reply の線形性（高々一度） | 型エラー `may reply more than once on some path` |
+| `s16_concat.abcl` | 文字列連結 `++` と数値 `+` の分離 | OK。`label/both/plain -> string`, `sum -> int` |
 
 ## 実際に処理系で走らせる
 
@@ -122,3 +123,31 @@ python3 scripts/type_runtime_diff.py abclc/*.abcl docs/samples/reply_inference/s
   既知として数え、終了コードを 1 にしない
 
 この仕組みで、整数演算が `VFloat` を返していた preservation の破れが見つかった。
+
+
+## 文字列連結は `++`（`+` は数値専用）
+
+かつて `+` は数値2種と文字列連結2種の計4候補を持ち、両辺が未束縛の `a + b` では
+4つとも一致してしまっていた。しかも候補列が登録順の逆だったため
+`('a * string) -> string` が必ず先頭に来て、引数まで string に焼き付いていた。
+
+```
+"n=" ++ 42   ->  "n=42"       1 ++ 2  ->  "12"
+"a"  ++ "b"  ->  "ab"         1 +  2  ->  3
+"a"  +  "b"  ->  no overload of + matches (string, string)
+```
+
+- `++ : forall a b. (a * b) -> string`（候補1つ。両辺を文字列化して連結）
+- `+` は数値専用。結合は `++` のほうが弱いので `"x=" ++ a + b` は `"x=" ++ (a + b)`
+
+既存コードは型検査器のエラー位置に従って機械的に移行した（38ファイル / 255箇所）。
+`Binop` の位置は演算子トークンそのものを指すので、`no overload of + matches` が
+出た (line, col) の1文字を `++` にして再検査、を繰り返せばよい。
+
+**注意2点**: 列は**バイトオフセット**なので日本語を含む行では文字インデックスと
+ずれる（置換はバイト列で行う）。また、この方法は**文字列連結以外の理由で失敗している
+`+` も書き換えてしまう** — `s2_missing_reply.abcl` の `print(x + 1)` は
+`x` が `unit` だから失敗する意図的な負例なので、手で戻した。
+
+string 由来の曖昧性は消えたが、`int`/`float` の曖昧性は残る。
+完全に消すには `+` と `+.` のように数値側も分ける必要がある。

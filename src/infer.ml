@@ -390,11 +390,9 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
   | Binop (op, e1, e2) ->
     let t1 = infer_expr env e1 in
     let t2 = infer_expr env e2 in
-    (match op, repr t1, repr t2 with
-     | "+", TString, _ -> TString
-     | "+", _, TString -> TString
-     | _ ->
-         pick_overload ?expected e.loc op env [t1; t2])
+    (* かつてここに "+" の片側が string なら string、という特例があった。
+       文字列連結を ++ に分けたので不要になり、+ は純粋に数値演算になった。 *)
+    pick_overload ?expected e.loc op env [t1; t2]
   | Call ("reply", args) ->
       check_reply env e.loc args
   | Call (fname, arg1) ->

@@ -756,10 +756,9 @@ let apply_binop op v1 v2 =
         | "==" -> a = b | "!=" -> a <> b
         | _ -> assert false)
 
-  (* --- 文字列連結（片側が string ならもう片側を文字列化して連結） --- *)
-  | "+", VString s1, VString s2 -> VString (s1 ^ s2)
-  | "+", VString s1, v2         -> VString (s1 ^ to_string_plain v2)
-  | "+", v1,         VString s2 -> VString (to_string_plain v1 ^ s2)
+  (* --- 文字列連結は ++。両辺を文字列化して連結する。
+         + は数値専用になったので、文字列を渡すと下の failwith に落ちる --- *)
+  | "++", v1, v2 -> VString (to_string_plain v1 ^ to_string_plain v2)
   | _ ->
     failwith ("unsupported binop/operands: " ^ op)
 

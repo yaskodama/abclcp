@@ -130,6 +130,7 @@ let pp_token = function
   | REMOTE     -> "REMOTE"
   | BECOME     -> "BECOME"
   | COLON      -> "COLON"
+  | PLUSPLUS   -> "PLUSPLUS"
   | EOF       -> "EOF"
 
 let dump_tokens_of_string (src:string) =

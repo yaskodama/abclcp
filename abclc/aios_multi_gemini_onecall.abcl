@@ -1,9 +1,9 @@
 class GeminiTeamAI {
   method solve(problem) {
-    aios_emit("team.problem:" + problem);
-    var prompt = "You are an AIOS team. Simulate three cooperating agents in Japanese: Planner creates a short plan, Solver solves, Reviewer checks. Return concise sections Planner:, Solver:, Reviewer:, Final:. Problem: " + problem;
+    aios_emit("team.problem:" ++ problem);
+    var prompt = "You are an AIOS team. Simulate three cooperating agents in Japanese: Planner creates a short plan, Solver solves, Reviewer checks. Return concise sections Planner:, Solver:, Reviewer:, Final:. Problem: " ++ problem;
     var result = gemini_generate(prompt);
-    aios_emit("team.result:" + result);
+    aios_emit("team.result:" ++ result);
     reply(result);
   }
 }
@@ -18,6 +18,6 @@ print(aios_service_info("team"));
 
 var result = aios_now("team", "solve", "箱が3つあり、それぞれにリンゴが4個あります。リンゴは全部で何個ですか。");
 
-print("final result = " + result);
+print("final result = " ++ result);
 print("== coordination events ==");
 print(aios_events());

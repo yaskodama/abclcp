@@ -11,4 +11,4 @@ class Calc {
 var c = new Calc();
 var s = now c.twice(21);
 var t = s + 1;
-print("t = " + t);
+print("t = " ++ t);
