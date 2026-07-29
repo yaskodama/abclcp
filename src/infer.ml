@@ -107,6 +107,47 @@ let rec replies_on_all_paths (s : Ast.stmt) : bool =
   | Ast.Become (_, args) -> List.exists expr_has_reply args
   | Ast.While (_, _) -> false
 
+(* reply の回数の構文的な上界。2 は「2 回以上ありうる」を表す（それ以上は数えない）。
+   ちょうど一度 reply することを検査するために使う。二重 reply は
+   resolve_future が 2 度呼ばれることになり、後から来た値は
+   すでに待ち手が受け取ったあとなので黙って捨てられる。 *)
+let cap2 n = if n > 2 then 2 else n
+
+let rec max_replies_expr (e : Ast.expr) : int =
+  match e.desc with
+  | Ast.Call ("reply", args) ->
+      cap2 (1 + List.fold_left (fun n a -> n + max_replies_expr a) 0 args)
+  | Ast.Call (_, args)
+  | Ast.New (_, args)
+  | Ast.Array (args, _)
+  | Ast.NowSend (_, _, args)
+  | Ast.FutureSend (_, _, args) ->
+      cap2 (List.fold_left (fun n a -> n + max_replies_expr a) 0 args)
+  | Ast.Binop (_, a, b) -> cap2 (max_replies_expr a + max_replies_expr b)
+  | Ast.Expr e1 | Ast.Await e1 -> max_replies_expr e1
+  | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Var _ -> 0
+
+(* 囲むメソッドから見た reply 回数の上界。
+   select の case 本体は別メッセージ宛なので数えない（timeout 本体だけ数える）。 *)
+let rec max_replies (s : Ast.stmt) : int =
+  match s.sdesc with
+  | Ast.CallStmt ("reply", args) ->
+      cap2 (1 + List.fold_left (fun n a -> n + max_replies_expr a) 0 args)
+  | Ast.CallStmt (_, args)
+  | Ast.Send (_, _, args)
+  | Ast.UnsafeSend (_, _, args)
+  | Ast.Become (_, args) ->
+      cap2 (List.fold_left (fun n a -> n + max_replies_expr a) 0 args)
+  | Ast.Assign (_, e) | Ast.VarDecl (_, e) -> max_replies_expr e
+  | Ast.Seq ss -> cap2 (List.fold_left (fun n st -> n + max_replies st) 0 ss)
+  | Ast.If (c, a, b) ->
+      cap2 (max_replies_expr c + max (max_replies a) (max_replies b))
+  (* 本体が 1 回でも reply するなら、ループなので 2 回以上ありうる *)
+  | Ast.While (c, b) ->
+      cap2 (max_replies_expr c + (if max_replies b > 0 then 2 else 0))
+  | Ast.Select (_, (_, to_body)) ->
+      (match to_body with Some b -> max_replies b | None -> 0)
+
 (* 検査中のメソッドが戻り値型を宣言しているか（エラー文言の出し分け用） *)
 let current_ret_declared = ref false
 
@@ -605,16 +646,44 @@ let rec check_stmt (env:env) (s:stmt) : unit =
            | _ -> None)
       | _ -> None
     in
-    (* each case introduces fresh types for bound variables *)
     List.iter
       (fun (c:Ast.select_case) ->
         let env' : Typing_env.env = Hashtbl.copy env in
-        List.iter
-          (fun x ->
-            let tv = Types.fresh_tvar () in
-            Typing_env.add_mono env' x (TVar tv)
-          )
-          c.pat.vars;
+        (* ★ case パターンを、受け取るメッセージ（= 同じクラスのメソッド）の
+           シグネチャに照合する。arity と引数型をここで検査しないと、
+           case m(x) が method m(a,b) を受けても素通りしてしまう。 *)
+        let param_tys =
+          match self_cls with
+          | None -> None
+          | Some cls ->
+              (match Types.lookup_class_method_scheme cls c.pat.meth with
+               | None ->
+                   Types.type_error ~loc:c.body.Ast.sloc
+                     ("select: no method " ^ c.pat.meth ^ " in actor(" ^ cls ^ ")")
+               | Some sc ->
+                   (match repr (Types.instantiate sc) with
+                    | TFun (ps, _) ->
+                        if List.length ps <> List.length c.pat.vars then
+                          Types.type_error ~loc:c.body.Ast.sloc
+                            (Printf.sprintf
+                               "select: case %s binds %d variable(s) but method %s takes %d"
+                               c.pat.meth (List.length c.pat.vars)
+                               c.pat.meth (List.length ps));
+                        Some ps
+                    | _ -> None))
+        in
+        (match param_tys with
+         | Some ps ->
+             (* パターン変数はメッセージの引数そのものなので、署名の型を持つ *)
+             List.iter2
+               (fun x t -> set_var_scheme env' x (Forall ([], t)))
+               c.pat.vars ps
+         | None ->
+             List.iter
+               (fun x ->
+                 let tv = Types.fresh_tvar () in
+                 Typing_env.add_mono env' x (TVar tv))
+               c.pat.vars);
         (* ★ case 本体の reply は「選択されたメッセージ」に返る。
            eval_thread が case 実行の前に set_current_msg_id を差し替えるので、
            reply の型は囲むメソッドではなく c.pat.meth の rho に属する。 *)
@@ -625,6 +694,13 @@ let rec check_stmt (env:env) (s:stmt) : unit =
                   set_var_scheme env' "reply" (Forall ([], TFun ([rho], TUnit)))
               | None -> ())
          | None -> ());
+        (* case 本体も「ちょうど一度 reply」の対象。二重 reply は
+           後から来た値が捨てられるだけなので静かに壊れる。 *)
+        if max_replies c.body > 1 then
+          Types.type_error ~loc:c.body.Ast.sloc
+            (Printf.sprintf
+               "select: case %s may reply more than once on some path"
+               c.pat.meth);
         check_stmt env' c.body
       )
       cases
@@ -675,9 +751,19 @@ let check_decl (env:env) = function
         check_stmt env_m m.body;
         current_ret_declared := false;
 
-        (* ★ 注釈があるメソッドにだけ課せる検査：
+        (* ★ reply の線形性（上界）。注釈の有無によらず、二重 reply は常に誤り。
+           2 度目の resolve_future は、待ち手がすでに 1 度目の値を受け取った
+           あとに来るので黙って捨てられる。型は付くが動かない典型。 *)
+        if max_replies m.body > 1 then
+          Types.type_error ~loc:m.body.Ast.sloc
+            (Printf.sprintf
+               "method %s may reply more than once on some path; a method must reply at most once"
+               m.mname);
+
+        (* ★ 注釈があるメソッドにだけ課せる検査（下界）：
            unit 以外を宣言したなら、全実行パスで reply しなければならない。
-           推論だけではこれを述べられない（照合先が無いため）。 *)
+           推論だけではこれを述べられない（照合先が無いため）。
+           上の上界と合わせて「ちょうど一度」になる。 *)
         (match m.ret with
          | Some t ->
              (match repr t with

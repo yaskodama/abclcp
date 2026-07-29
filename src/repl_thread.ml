@@ -213,6 +213,13 @@ let split_args (s : string) : string list =
 let parse_args_list (inside_paren : string) : Ast.expr list =
   split_args inside_paren |> List.map parse_arg_token
 
+(* AIOS_TYPE_TRACE=1: reply のたびに [rtype] Class#method = tag を出す。
+   型検査が付けた戻り値型と実行時の値を突き合わせるための出力。 *)
+let type_trace_enabled () =
+  match Sys.getenv_opt "AIOS_TYPE_TRACE" with
+  | Some "1" | Some "true" | Some "yes" -> true
+  | _ -> false
+
 let script_file = ref None
 let quiet =
   match Sys.getenv_opt "AIOS_QUIET" with
@@ -832,6 +839,25 @@ let () =
   add_prim ~capability:"Console" ~psig:"any -> unit" ~description:"emit a correlated reply event" "reply" (function
   | [v] ->
       let s = string_of_value v in
+      (* AIOS_TYPE_TRACE=1 のとき、どのメソッドが何型で reply したかを出す。
+         型検査が付けた戻り値型と突き合わせる差分テスト用（scripts/type_runtime_diff.py）。 *)
+      (if type_trace_enabled () then begin
+         let cls =
+           match Eval_thread.get_current_actor_name () with
+           | Some an ->
+               (match Hashtbl.find_opt Eval_thread.actor_table an with
+                | Some a -> a.Eval_thread.cls
+                | None   -> "?")
+           | None -> "?"
+         in
+         let meth =
+           match Eval_thread.get_current_method_name () with
+           | Some m -> m
+           | None   -> "?"
+         in
+         Printf.printf "[rtype] %s#%s = %s\n%!" cls meth
+           (Eval_thread.type_name_of_value v)
+       end);
       (match get_current_msg_id () with
        | Some id ->
            resolve_future id v;

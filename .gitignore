@@ -1,3 +1,6 @@
 
 # paper/ は非公開リポジトリ yaskodama/abclcp-papers で管理する
 /paper/
+
+# 型検査ドライバ（scripts/type_runtime_diff.py が生成する）
+/tc

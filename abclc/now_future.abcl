@@ -1,5 +1,5 @@
 class Calc {
-  method add(a, b) {
+  method add(a, b) : int {
     reply(a + b);
   }
 }

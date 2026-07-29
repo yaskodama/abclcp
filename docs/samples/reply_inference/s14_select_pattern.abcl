@@ -1,0 +1,23 @@
+// (14) select パターンをメソッド署名に照合する
+//
+//      case m(x) は method m(a, b) 宛のメッセージを受けるつもりで書かれているが、
+//      束縛する変数が1つしかない。実行時には match_callstmt が
+//      arity 不一致で「一致しない」と判断するので、この case は永久に選ばれず、
+//      timeout に落ち続ける。静かに壊れる典型。
+//
+//      これまではパターン変数に fresh な型変数を振るだけで署名を見ていなかった
+//      ため素通りしていた。いまは arity と引数型を照合する。
+class C {
+  method m(a, b) : int {
+    reply(a + b);
+  }
+
+  method loop() : unit {
+    select {
+      case m(x) -> { reply(x); }
+      timeout 100 -> { print("timeout"); }
+    }
+  }
+}
+
+var c = new C();

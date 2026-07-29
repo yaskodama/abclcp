@@ -76,6 +76,11 @@ $\vdash e : \ty{int}$ なのに $e \Downarrow \ty{VFloat}$ となる
 preservation の破れが見つかった。型を精密にしたことで初めて観測できた
 ずれであり、整数どうしの \texttt{+ - *} を整数のまま返すよう評価器を修正し、
 除算は型も値も \ty{float} に揃えた。
+さらに型安全性を上げるため、select パターンのメソッド署名への照合、
+\texttt{reply} の線形性（高々一度）の検査、そして型検査結果と実行時の値を
+突き合わせる差分テストハーネスを追加した。ハーネスをコーパス 78 本に
+掛けた結果、残る食い違いは「型検査器自身が曖昧と警告しているもの」
+1 件だけであることが機械的に確認できた。
 副次的に、オーバーロード解決 \texttt{pick\_overload} に潜んでいた
 2 つの欠陥（失敗候補の単一化が巻き戻らない／候補の優先順位が登録順の逆）を
 発見し、これも修正した。
@@ -727,6 +732,106 @@ principal type が存在しない。\texttt{reply} の型が推論だけでは�
 のと同じ現象であり、注釈を要求する動機はここでも共通している。
 \end{remark}
 
+\section{型安全性をさらに上げる：3 つの追加}
+\label{sec:harden}
+
+ここまでで戻り値については型が付くようになった。では他はどうか、を
+実測した。小さなプログラムを型検査器に通して、通ってはいけないものが
+通らないかを確かめた結果が表 \ref{tab:holes} である。
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}clll@{}}
+\toprule
+\# & 穴 & 確認に使ったプログラム & 結果 \\
+\midrule
+1 & 仮引数が署名と繋がっていない
+  & \texttt{m(a) : string \{ reply(a + "x"); \}} に \texttt{now c.m(1)}
+  & 通る \\
+2 & select パターンが署名と照合されない
+  & \texttt{method m(a,b)} に対し \texttt{case m(x)}
+  & 通る \\
+3 & \texttt{reply} の線形性がない
+  & \texttt{m() : int \{ reply(1); reply(2); \}}
+  & 通る \\
+4 & \texttt{sender} 宛の送信が無検査
+  & \texttt{send sender.no\_such\_method(1);}
+  & 通る \\
+5 & actor 型が単一化で区別されない
+  & \texttt{unify} に \texttt{TActor(\_,\_), TActor(\_,\_) -> ()}
+  & 潜在 \\
+\bottomrule
+\end{tabular}
+\caption{型検査を通ってしまうもの（実測）}
+\label{tab:holes}
+\end{table}
+
+1 が最も深刻である。型検査器は引数に精密な型を\emph{付けて}いるが、
+本体とは\emph{照合していない}。\texttt{preinfer} が作ったスキームの引数型変数と、
+\texttt{check\_decl} が本体用に振る fresh 変数が別物だからで、
+\S\ref{sec:limitations} の限界 2 に挙げた「本体と署名が別世界」の実害である。
+ただしこれを直すとクラス本体が呼び出しより先に検査される順序のせいで
+既存コードが大量に落ちるため、\S\ref{sec:overload} の overload の曖昧性を
+先に解消しておく必要がある。本節では影響範囲の小さい 2, 3 と、
+そもそもこの種のずれを自動で見つける仕組みを入れた。
+
+\subsection{select パターンをメソッド署名に照合する}
+
+select の case は、同じアクター宛の同名メッセージを受け取る。
+これを同名メソッドの署名に照合し、arity と引数型を
+単一化するようにした。パターン変数には
+fresh な型変数ではなく\emph{署名の引数型}を束縛する。
+
+arity が合わない case は、実行時には \texttt{match\_callstmt} が
+「一致しない」と判断するので\textbf{永久に選ばれず timeout に落ち続ける}。
+エラーにならないので書いた側は気づかない。付録 A.14 参照。
+
+\subsection{\texttt{reply} の線形性}
+
+\texttt{resolve\_future} は 2 度目の呼び出しでも黙って \texttt{fresult} を
+上書きするだけで、待ち手はすでに 1 度目の値を受け取っている。
+つまり 2 度目の \texttt{reply} は捨てられるが、エラーにはならない。
+
+そこで reply 回数の構文的な上界 \texttt{max\_replies} を定義し、
+2 以上になる本体を拒否するようにした。分岐は両側の \texttt{max}、
+逐次は和、\textbf{ループ本体に \texttt{reply} があれば 2 回以上}とみなす。
+\texttt{select} の case 本体は別メッセージ宛なので囲むメソッドには数えず、
+case ごとに独立に検査する。
+
+注釈のあるメソッドには既に「全パスで少なくとも一度」（下界）を課しているので、
+上界と合わせて\textbf{ちょうど一度}になる。付録 A.15 参照。
+
+\subsection{型と実行値の差分テスト}
+\label{sec:difftest}
+
+\S\ref{sec:runtime} の食い違いは、型検査の結果と実行結果を突き合わせる
+仕組みがあれば即座に出ていた。そこでこれを常設した。
+
+処理系側は \texttt{AIOS\_TYPE\_TRACE=1} のとき、\texttt{reply} のたびに
+「どのメソッドが何型の値で返したか」を出す。
+
+\begin{lstlisting}[language={}]
+[rtype] Stock#take = int
+[rtype] Order#place = string
+\end{lstlisting}
+
+メソッド名は実行文脈から取る。\texttt{exec\_context} に
+\texttt{ctx\_method\_name} を足し、\texttt{actor\_loop} のディスパッチと
+\texttt{select} の case 実行の両方で設定する（後者は \S\ref{sec:select} の
+とおり帰属先が変わるため）。
+
+\texttt{scripts/type\_runtime\_diff.py} が、型検査器の出す
+\texttt{Class\#method -> 型} と、この \texttt{[rtype]} 行を突き合わせる。
+型変数のまま（\texttt{'a}）や \ty{any} は「型システムが何も約束していない」
+ので判定しない。わざと食い違う例には
+
+\begin{lstlisting}[language={}]
+// TYPE_RUNTIME_DIFF: expect-mismatch
+\end{lstlisting}
+
+と書いておくと既知として数え、終了コードを 1 にしない。
+
 \section{実験}
 \label{sec:experiment}
 
@@ -775,6 +880,34 @@ s6 が「正しいプログラムが通るようになった」、s3 が「誤�
 \bottomrule
 \end{tabular}
 \end{center}
+
+\subsection{型と実行値の差分テスト}
+
+\S\ref{sec:difftest} のハーネスを、コーパスとサンプルの計 78 本に掛けた。
+
+\begin{lstlisting}[language={}]
+$ python3 scripts/type_runtime_diff.py --timeout 12 \
+    abclc/*.abcl docs/samples/reply_inference/s*.abcl
+対象 78 本 / 突き合わせできた 32 本 / 照合したペア 90 件
+  (型変数・any のため判定せず 6 件)
+
+既知の食い違い 1 件（expect-mismatch 宣言あり）:
+  s5_overload_ambiguity.abcl: Calc#add は型検査では float だが、
+                              実行時は int を reply した
+想定外の食い違いなし
+\end{lstlisting}
+
+突き合わせできたのが 32 本にとどまるのは、残りが API キーや
+ネットワーク、SDL を必要とするか、待ち受けに入って \texttt{reply} を
+一度も実行しないためである。判定できないものは失敗にしていない。
+
+唯一の食い違いは \texttt{s5}、すなわち principal type が無いことを
+示すために置いてある負例だけである。\texttt{abclc/now\_future.abcl} も
+同じ形だったので、\texttt{: int} を注釈して静的・動的を揃えた。
+\textbf{残る食い違いが「型検査器自身が曖昧と警告しているもの」に
+一致している}ことが、機械的に確認できた形になる。
+
+\subsection{型検査の退行}
 
 変化した 1 本 \texttt{RotateThreeLines.abcl} は、
 \begin{lstlisting}[language=AIPL]
@@ -1151,6 +1284,40 @@ $ ./src/abclrepl_thread -q -f run_s13.repl
 
 修正前はここが \texttt{3.} だった（\S\ref{sec:runtime}）。
 
+\subsection{s14\_select\_pattern.abcl --- select パターンの照合}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s14_select_pattern.abcl}
+
+\begin{lstlisting}[language={}]
+[Type error] line 17, col 22: select: case m binds 1 variable(s)
+  but method m takes 2
+\end{lstlisting}
+
+\subsection{s15\_double\_reply.abcl --- reply の線形性}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s15_double_reply.abcl}
+
+\begin{lstlisting}[language={}]
+[Type error] line 11, col 10: method m may reply more than once on some path;
+  a method must reply at most once
+\end{lstlisting}
+
+ループ本体の \texttt{reply} も同じく拒否される。
+
+\begin{lstlisting}[language=AIPL]
+method m(k) : int { while k > 0 do { reply(k); } }
+\end{lstlisting}
+
+\begin{lstlisting}[language={}]
+[Type error] method m may reply more than once on some path; ...
+\end{lstlisting}
+
+一方、分岐ごとに一度ずつ返す正しい形は通る。
+
+\begin{lstlisting}[language=AIPL]
+method m(k) : int { if (k > 0) { reply(1); } else { reply(2); } }
+\end{lstlisting}
+
 \section{型検査ドライバ \texttt{tc\_main.ml}}
 \label{sec:driver}
 
@@ -1183,6 +1350,8 @@ REPL（SDL に依存する）を起動せずに型検査だけを走らせるた
   \texttt{+ - *} を \texttt{VInt} で返す（\S\ref{sec:runtime}）。
 \item \texttt{src/typing\_env.ml}（+4 / -1）--- \texttt{/} を
   $(\ty{int} \times \ty{int}) \to \ty{float}$ に型付け。
+\item \texttt{scripts/type\_runtime\_diff.py}（新規）--- 型と実行値の
+  差分テストハーネス（\S\ref{sec:difftest}）。
 \item \texttt{abclc/web\_calc.abcl}, \texttt{src/web\_calc.abcl},
   \texttt{src/web\_calc1.abcl} --- 公開アクターに戻り値型注釈を付けて移行。
 \end{itemize}

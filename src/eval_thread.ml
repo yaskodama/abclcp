@@ -53,6 +53,9 @@ type exec_context = {
   mutable ctx_msg_id : string option;
   mutable ctx_actor_name : string option;
   mutable ctx_session_id : string option;
+  (* いま処理しているメッセージのメソッド名。型と実行値の差分テストで
+     「どのメソッドが何型で reply したか」を出すために使う。 *)
+  mutable ctx_method_name : string option;
 }
 
 let exec_context_mu = Mutex.create ()
@@ -67,7 +70,8 @@ let current_exec_context () : exec_context =
     match Hashtbl.find_opt exec_contexts tid with
     | Some ctx -> ctx
     | None ->
-        let ctx = { ctx_msg_id = None; ctx_actor_name = None; ctx_session_id = None } in
+        let ctx = { ctx_msg_id = None; ctx_actor_name = None; ctx_session_id = None;
+                    ctx_method_name = None } in
         Hashtbl.replace exec_contexts tid ctx;
         ctx
   in
@@ -145,6 +149,13 @@ let set_current_actor_name (nm:string option) =
 
 let get_current_actor_name () =
   (current_exec_context ()).ctx_actor_name
+
+(* current method name while executing a message (for the type/runtime diff) *)
+let set_current_method_name (nm:string option) =
+  (current_exec_context ()).ctx_method_name <- nm
+
+let get_current_method_name () =
+  (current_exec_context ()).ctx_method_name
 
 let set_current_session_id (sid:string option) =
   (current_exec_context ()).ctx_session_id <- sid
@@ -1995,9 +2006,14 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
           let prev_actor_name = get_current_actor_name () in
           let prev_msg_id = get_current_msg_id () in
           let prev_session_id = get_current_session_id () in
+          let prev_method_name = get_current_method_name () in
           set_current_actor_name (Some actor.name);
           set_current_msg_id m.msg_id;
           set_current_session_id m.session_id;
+          (* case 本体の reply は選択されたメッセージへの返信なので、
+             帰属先メソッドもそちらに切り替える *)
+          set_current_method_name
+            (match m.stmt.sdesc with CallStmt (mn, _) -> Some mn | _ -> None);
 
           (* bind variables into actor.env *)
           List.iter (fun (x,v) -> Hashtbl.replace actor.env x v) binds;
@@ -2005,7 +2021,8 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
           (try eval_stmt actor body_stmt with _ -> ());
           set_current_msg_id prev_msg_id;
           set_current_session_id prev_session_id;
-          set_current_actor_name prev_actor_name
+          set_current_actor_name prev_actor_name;
+          set_current_method_name prev_method_name
       | None ->
           (* no match *)
           (match to_ms_opt, to_body_opt with
@@ -2038,6 +2055,8 @@ and actor_loop actor = (
     set_current_actor_name (Some actor.name);
     set_current_msg_id msg.msg_id;
     set_current_session_id msg.session_id;
+    set_current_method_name
+      (match msg.stmt.sdesc with CallStmt (mn, _) -> Some mn | _ -> None);
     (try
       eval_stmt actor msg.stmt
       with exn ->
@@ -2056,6 +2075,7 @@ and actor_loop actor = (
     set_current_msg_id prev_msg_id;
     set_current_session_id prev_session_id;
     set_current_actor_name prev_actor_name;
+    set_current_method_name None;
     done)
 and resolve_actor_from_term env recv_term =
   match recv_term with

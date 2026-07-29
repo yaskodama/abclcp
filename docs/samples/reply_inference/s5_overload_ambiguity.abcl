@@ -5,6 +5,10 @@
 //     結果、a + b は string に解決され、b は string に固定されてしまう。
 //     （パッチ以前からこの束縛は起きていたが、戻り値が unit 固定だったので
 //       シグネチャに現れず、見えていなかった）
+//
+// TYPE_RUNTIME_DIFF: expect-mismatch
+//   静的には float、実行時は int が返る。principal type が無いので当然で、
+//   注釈を書けば解消する（s7 を参照）。
 class Calc {
   method add(a, b) {
     reply(a + b);

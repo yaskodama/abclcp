@@ -37,7 +37,9 @@ for f in docs/samples/reply_inference/s*.abcl; do ./tc "$f"; done
 | `s10_expose_unannotated.abcl` | リモート境界での注釈必須 | `web_expose` した Adder は型エラー、`web_listen` だけで届く Logger は警告 |
 | `s11_service.abcl` | **追加機能を一通り使う統合サンプル** | OK。`serve -> unit`（case の reply は place へ帰属）、注釈の無い `twice -> int` |
 | `s12_service_exposed.abcl` | s11 を外部公開した版 | 型エラー。ローカルなら推論で済む `twice` が公開すると宣言必須になる |
-| `s13_runtime_mismatch.abcl` | **型検査器と評価器の食い違い** | 型検査 OK (`T#f -> int`) だが実行すると `3.`（VFloat） |
+| `s13_runtime_mismatch.abcl` | **型検査器と評価器の食い違い**（修正済の回帰テスト） | 型検査 `T#f -> int`、実行 `3`。修正前は `3.` |
+| `s14_select_pattern.abcl` | select パターンをメソッド署名に照合 | 型エラー `case m binds 1 variable(s) but method m takes 2` |
+| `s15_double_reply.abcl` | reply の線形性（高々一度） | 型エラー `may reply more than once on some path` |
 
 ## 実際に処理系で走らせる
 
@@ -101,3 +103,22 @@ method main() : unit {
 の `reply` は `main` ではなく **`add` への返信**である。型検査器も
 case 本体では `reply` を `add` の ρ に束縛する。`timeout` 本体は
 囲むメソッドの msg_id のまま走るので、そちらは囲むメソッドに属する。
+
+
+## 型と実行値の差分テスト
+
+型検査が付けた戻り値型と、実行時に実際に reply された値の型を突き合わせる。
+
+```sh
+python3 scripts/type_runtime_diff.py abclc/*.abcl docs/samples/reply_inference/s*.abcl
+```
+
+処理系側は `AIOS_TYPE_TRACE=1` のとき reply のたびに
+`[rtype] Class#method = tag` を出す。ハーネスはこれと型検査結果を照合する。
+
+- 型変数のまま（`'a`）や `any` は「型システムが何も約束していない」ので判定しない
+- 実行中に一度も reply されなかったメソッドは観測なしで skip
+- わざと食い違う負例には `// TYPE_RUNTIME_DIFF: expect-mismatch` と書いておくと
+  既知として数え、終了コードを 1 にしない
+
+この仕組みで、整数演算が `VFloat` を返していた preservation の破れが見つかった。
