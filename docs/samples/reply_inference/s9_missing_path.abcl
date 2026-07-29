@@ -1,0 +1,11 @@
+// (9) 全パス被覆検査 — 注釈がなければ書けない検査
+//     else 側で reply しないので、k <= 0 のとき now は永久に返らない。
+//     推論だけではこれを「誤り」と言えない（照合先が無いため）。
+class Guard {
+  method check(k) : int {
+    if (k > 0) { reply(k); }
+  }
+}
+
+var g = new Guard();
+var v = now g.check(5);

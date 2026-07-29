@@ -62,6 +62,7 @@ rule token = parse
 | "{"          { LBRACE }
 | "}"          { RBRACE }
 | ";"          { SEMICOLON }
+| ":"          { COLON }
 | ","          { COMMA }
 | "."          { DOT }
 | "var"        { VAR }

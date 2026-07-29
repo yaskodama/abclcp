@@ -37,7 +37,7 @@ thread_repl: location.ml parser.ml parser.mli lexer.ml ast.ml eval_thread.ml web
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c lexer.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c compiler.ml
 	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -c repl_thread.ml
-	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -o abclrepl_thread location.cmo sdl_helper.cmo ast.cmo types.cmo typing_env.cmo infer.cmo typecheck.cmo remote_client.cmo eval_thread.cmo web_gateway.cmo parser.cmo lexer.cmo compiler.cmo repl_thread.cmo
+	$(OCAMLC) $(PKGS) $(THREAD_FLAGS) -linkpkg -g -o abclrepl_thread location.cmo sdl_helper.cmo types.cmo ast.cmo typing_env.cmo infer.cmo typecheck.cmo remote_client.cmo eval_thread.cmo web_gateway.cmo parser.cmo lexer.cmo compiler.cmo repl_thread.cmo
 
 clean:
 	rm -f *.cmo *.cmi *.cma *.cmx *.o *.out parser.ml parser.mli lexer.ml abclrepl_thread

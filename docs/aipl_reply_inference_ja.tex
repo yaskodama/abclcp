@@ -58,10 +58,13 @@ AIPL（ABCL$^{c}$+）の型健全性・型安全性の検討の中で、「メ�
 (i) 推論は実際に可能であること、(ii) しかし推論だけでは決まらない場面が
 6 つあること、(iii) 型健全性の証明にとって本質的なのは推論アルゴリズムでは
 なく宣言という構文であること、を整理する。
-あわせて推論部分を OCaml 実装（\texttt{src/infer.ml}, \texttt{src/types.ml}）に
-実装し、実測した結果を報告する。実装により \texttt{now} / \texttt{future} の
-戻り値型が \ty{any} から具体型へ変わり、既存 63 本のコーパスでは
-62 本が判定不変、1 本は誤ったエラーが解消した。
+そのうえで、推論と省略可能な戻り値型注釈 \texttt{method m(x) : T} の
+両方を OCaml 実装に実装し、実測した結果を報告する。
+推論により \texttt{now} / \texttt{future} の戻り値型が \ty{any} から
+具体型へ変わり、既存 63 本のコーパスでは 62 本が判定不変、
+1 本は誤ったエラーが解消した。注釈は、全実行パスでの \texttt{reply} 被覆検査
+という推論には書けない検査を可能にし、さらに期待型として式の推論へ流れることで
+\emph{推論そのものを助ける}ことも分かった。
 副次的に、オーバーロード解決 \texttt{pick\_overload} に潜んでいた
 2 つの欠陥（失敗候補の単一化が巻き戻らない／候補の優先順位が登録順の逆）を
 発見し、これも修正した。
@@ -347,7 +350,100 @@ $\rho$ に変え、\texttt{NowSend} は future を剥がして同じ $\rho$ を�
 リモート宛先だけは \ty{any} のままとした
 （\S\ref{sec:limits} のとおり、ここは宣言でしか埋まらない）。
 
+\section{戻り値型注釈 \texttt{method m(x) : T}}
+\label{sec:annotation}
+
+推論を入れたうえで、\S\ref{sec:limits} が届かない部分を埋めるために
+省略可能な戻り値型注釈を実装した。
+
+\begin{lstlisting}[language=AIPL]
+method add(a, b) : int { reply(a + b); }
+method log(msg) : unit { print(msg); }
+\end{lstlisting}
+
+書ける型は \texttt{int} / \texttt{float} / \texttt{string} / \texttt{bool} /
+\texttt{unit} / \texttt{any}、および大文字始まりのクラス名（actor 型）である。
+
+\subsection{字句・構文・AST}
+
+\begin{itemize}
+\item \texttt{lexer.mll}：\texttt{":"} $\to$ \texttt{COLON} を追加。
+  この記号は他で使われていない。
+\item \texttt{parser.mly}：\texttt{method\_decl} に注釈つきの規則を追加し、
+  型名を \texttt{Types.ty} へ写す \texttt{ty\_of\_name} を置いた。
+  \texttt{float} だけは既存の予約語 \texttt{FLOAT} なので別扱いになる。
+\item \texttt{ast.ml}：\texttt{method\_decl} に \texttt{ret : Types.ty option}
+  を追加。構築箇所は \texttt{parser.mly} の 1 箇所だけだった。
+\end{itemize}
+
+\begin{remark}
+\texttt{ast.ml} が \texttt{Types} の\emph{値}（\texttt{string\_of\_ty\_pretty}）を
+参照するようになったため、\texttt{src/Makefile} のリンク順が
+\texttt{Wrong link order: Ast depends on Types} で落ちるようになった。
+リンク行で \texttt{types.cmo} を \texttt{ast.cmo} より前に移して解消している。
+コンパイル順は元から正しかったが、リンク行だけが逆だった。
+\end{remark}
+
+\subsection{型検査への反映}
+
+注釈があれば $\rho$ をその型に単一化する。注釈が無い場合のみ推論に任せ、
+\texttt{reply} が本体に無ければ \ty{unit} へ defaulting する。
+
+\begin{lstlisting}
+(match m.Ast.ret with
+ | Some t -> Types.unify ~loc:Location.dummy rho t
+ | None   -> if not (stmt_has_reply m.Ast.body) then
+               Types.unify ~loc:Location.dummy rho Types.TUnit);
+\end{lstlisting}
+
+\subsection{全パス被覆検査}
+
+\ty{unit} 以外を宣言したメソッドには、\textbf{すべての実行パスで
+\texttt{reply} すること}を課す。これは \S\ref{sec:limits} 第 1 項で
+「推論には書けない」とした検査そのもので、宣言型という照合先が
+あって初めて成立する。
+
+\begin{lstlisting}
+let rec replies_on_all_paths (s : Ast.stmt) : bool =
+  match s.sdesc with
+  | Ast.CallStmt ("reply", _) -> true
+  | Ast.Seq ss       -> List.exists replies_on_all_paths ss
+  | Ast.If (_, a, b) -> replies_on_all_paths a && replies_on_all_paths b
+  | Ast.While (_, _) -> false     (* the body may run zero times *)
+  ...
+\end{lstlisting}
+
+\texttt{while} の本体は 0 回実行されうるので \texttt{false}（保守的）とする。
+式は無条件に評価されるので、式中の \texttt{reply} は「必ず起きる」とみなす。
+
+\subsection{双方向型付け：宣言型を式へ流す}
+\label{sec:bidir}
+
+注釈を入れただけでは \texttt{reply(a + b)} は通らなかった。
+\texttt{a + b} の overload 解決が \texttt{reply} より\emph{先に}、
+しかも \texttt{a}, \texttt{b} が未束縛のまま行われるため、
+\S\ref{sec:overload} の順位付けで \ty{float} が選ばれ、
+そのあと宣言型 \ty{int} と衝突していた。
+
+そこで \texttt{check\_reply} が $\rho$ を\emph{期待型}として引数の推論へ
+流すようにした（局所的な双方向型付け）。
+
+\begin{lstlisting}
+let t = infer_expr ?expected:(expected_of rho) env a in
+\end{lstlisting}
+
+\texttt{pick\_overload} は期待型が与えられていれば
+「戻り値がそれと合う候補」を最優先する。
+下へ流してよいのは\emph{自身に未確定の型変数を含まない型}だけである
+（未束縛の $\rho$ をそのまま流すと、候補との照合で $\rho$ 自身が
+最初の候補の戻り値型に焼き付いてしまう）。
+
+これにより \texttt{add} は
+\texttt{(int * int) -> int} と、引数側・戻り値側が整合した形で解決する。
+すなわち\textbf{注釈は検査を厳しくするだけでなく、推論を助ける}。
+
 \section{副産物：\texttt{pick\_overload} の 2 つの欠陥}
+\label{sec:overload}
 
 $\rho$ を可視化した結果、\texttt{method add(a,b) \{ reply(a+b); \}} の
 推論結果が \texttt{(int * int) -> string} という自己矛盾したシグネチャに
@@ -381,6 +477,10 @@ $\rho$ を可視化した結果、\texttt{method add(a,b) \{ reply(a+b); \}} の
 \item 最上位に戻り値型の異なる候補が複数残る場合は真に曖昧なので報告する。
   既定では警告、\texttt{AIOS\_STRICT\_OVERLOAD=1} でエラーになる。
 \end{enumerate}
+
+順位付けの最優先キーは \S\ref{sec:bidir} の期待型との照合であり、
+その次が「引数型が具体的」、次が「引数側変数を束縛しない」、
+最後が登録順である。
 
 \begin{lstlisting}[language={}]
 [warn] line 10, col 13: ambiguous overload of + for ('a, 'a):
@@ -457,6 +557,7 @@ x1 = cx - dx + x;   // cx, dx : float, x : method parameter
 真に principal type を持たない箇所である。
 
 \section{残る限界}
+\label{sec:limitations}
 
 \begin{enumerate}
 \item \textbf{戻り値は単相である。}
@@ -487,20 +588,28 @@ x1 = cx - dx + x;   // cx, dx : float, x : method parameter
 そして型健全性の証明が要求しているのは、推論アルゴリズムではなく
 簡約で動かない構文としての宣言である。
 
-したがって次の一歩は、両者を排他ではなく役割分担として実装することである。
+したがって両者は排他ではなく役割分担である。本稿ではこれを実装した。
 
 \begin{enumerate}
-\item AST に省略可能な \texttt{method m(x) : T} を追加する。
-  \textbf{remote / expose するメソッドは必須}とする。
-\item 注釈がある場合：本体環境に $\texttt{reply} : T \to \ty{unit}$ を束縛し、
-  全パス被覆検査（ちょうど一度 \texttt{reply} する）を行い、
-  送信地点で $T$ を使う。
-\item 注釈が無い場合：本稿の推論を走らせる。ただし制約の付かない $\rho$ は
+\item[(済)] AST に省略可能な \texttt{method m(x) : T} を追加した（\S\ref{sec:annotation}）。
+\item[(済)] 注釈がある場合：本体環境に $\texttt{reply} : T \to \ty{unit}$ を束縛し、
+  全パス被覆検査を行い、送信地点で $T$ を使う。
+  さらに $T$ を期待型として式の推論へ流す（\S\ref{sec:bidir}）。
+\item[(済)] 注釈が無い場合：推論を走らせる。ただし制約の付かない $\rho$ は
   一般化せず \ty{unit} へ defaulting する（Pony 方式）。
   ここだけは一般化してはならない。\texttt{send}（fire-and-forget）と
   \texttt{now}（ask）の区別がこの一点に乗る。
-\item 推論結果のシグネチャを出力し、利用者が貼り付けられるようにする。
+\item[(未)] \textbf{remote / expose するメソッドで注釈を必須にする}。
+  \texttt{web\_expose} の引数が文字列リテラルとは限らないため、
+  どのメソッドが公開されるかを静的に確定させる仕組みが先に要る。
+\item[(未)] 推論結果のシグネチャを出力し、利用者が貼り付けられるようにする。
 \end{enumerate}
+
+実装して分かった副次的な帰結として、\textbf{注釈は検査を厳しくするだけでなく
+推論を助ける}。\texttt{reply(a + b)} は注釈が無ければ principal type を持たず
+\ty{float} へ既定されるが、\texttt{: int} と書くだけで期待型が
+overload 解決へ流れ、\texttt{(int * int) -> int} と整合した形に決まる
+（\S\ref{sec:bidir}、付録 A.7）。宣言は制約であると同時に情報でもある。
 
 いずれの設計でもクラスのメソッド表には結局インタフェースが生まれる。
 論点は\emph{存在するかどうか}ではなく\emph{誰が書くか}であり、
@@ -620,7 +729,7 @@ TYPE_ERROR: line 10, col 13: ambiguous overload of + for ('a, 'a):
 \end{lstlisting}
 
 表示されている \texttt{(int * int) -> float} は、引数側が呼び出し地点由来、
-戻り値側が本体由来の混成である（\S 9 の限界 2）。
+戻り値側が本体由来の混成である（\S\ref{sec:limitations} の限界 2）。
 
 \subsection{s6\_usable\_result.abcl --- 通るようになった正しいプログラム}
 
@@ -638,6 +747,55 @@ class Calc
 パッチ前は \texttt{line 13: no overload of + matches (any, int)} で落ちていた。
 \texttt{now} の結果が \ty{any} である限り、算術にも比較にも使えなかったためである。
 
+\subsection{s7\_annotation\_ok.abcl --- 注釈が推論を助ける}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s7_annotation_ok.abcl}
+
+\begin{lstlisting}[language={}]
+[OK] type check passed
+[method return types (inferred from reply)]
+  Calc#add -> int
+  Greeter#greet -> string
+  Greeter#log -> unit
+[class_method_schemes]
+class Greeter
+  greet : (string) -> string
+  log : ('a) -> unit
+class Calc
+  add : (int * int) -> int
+\end{lstlisting}
+
+s5 と同じ \texttt{reply(a + b)} でありながら、曖昧警告は出ず
+\texttt{(int * int) -> int} に決まっている。
+宣言型が期待型として overload 解決へ流れた結果であり（\S\ref{sec:bidir}）、
+引数側・戻り値側の食い違い（\S\ref{sec:limitations} の限界 2）も同時に解消している。
+
+\subsection{s8\_annotation\_conflict.abcl --- 宣言と食い違う reply}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s8_annotation_conflict.abcl}
+
+\begin{lstlisting}[language={}]
+[Type error] line 6, col 37: reply type mismatch:
+  this method is declared to reply with int, but replies with string here
+\end{lstlisting}
+
+s3（注釈なし）では「他の \texttt{reply} とここが食い違う」としか言えず、
+どちらの分岐が誤りかを決められなかった。注釈があると
+「\emph{宣言}と食い違う」と言えるので、blame が正しい位置に出る。
+
+\subsection{s9\_missing\_path.abcl --- 全パス被覆検査}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s9_missing_path.abcl}
+
+\begin{lstlisting}[language={}]
+[Type error] line 5, col 10: method check is declared to reply with int,
+  but some execution path does not reply
+\end{lstlisting}
+
+\texttt{k <= 0} のとき \texttt{now g.check(...)} は永久に返らない。
+推論だけではこれを誤りと言えない（照合先が無い）。
+注釈を入れる最大の利得がこの検査である。
+
 \section{型検査ドライバ \texttt{tc\_main.ml}}
 \label{sec:driver}
 
@@ -647,17 +805,24 @@ REPL（SDL に依存する）を起動せずに型検査だけを走らせるた
 
 \section{変更ファイル}
 
-\begin{center}
-\begin{tabular}{@{}lll@{}}
-\toprule
-ファイル & 変更 & 内容 \\
-\midrule
-\texttt{src/types.ml}  & +41 & $\rho$ 表、\texttt{debug\_print\_method\_rets} \\
-\texttt{src/infer.ml}  & +176 / -29 & $\rho$ の確保・伝播、\texttt{check\_reply}、
-  \texttt{pick\_overload} の修正 \\
-\bottomrule
-\end{tabular}
-\end{center}
+\begin{itemize}
+\item \texttt{src/types.ml}（+41）---
+  $\rho$ 表（\texttt{method\_ret\_tys} と register / lookup / reset）、
+  \texttt{debug\_print\_method\_rets}。
+\item \texttt{src/infer.ml}（+237 / -60）---
+  $\rho$ の確保と伝播、\texttt{check\_reply}、全パス被覆検査
+  \texttt{replies\_on\_all\_paths}、期待型の伝播（\texttt{expected\_of} と
+  \texttt{infer\_expr ?expected}）、\texttt{pick\_overload} の修正。
+\item \texttt{src/ast.ml}（+13 / -3）---
+  \texttt{method\_decl} に \texttt{ret : Types.ty option} を追加。
+\item \texttt{src/parser.mly}（+26 / -1）---
+  注釈つき \texttt{method\_decl} 規則と \texttt{ret\_ann}、
+  型名を写す \texttt{ty\_of\_name}。
+\item \texttt{src/lexer.mll}（+1）--- \texttt{":"} $\to$ \texttt{COLON}。
+\item \texttt{src/Makefile}（1 行）---
+  リンク順を修正（\texttt{types.cmo} を \texttt{ast.cmo} より前へ）。
+\item \texttt{src/repl\_thread.ml}（+1）--- トークン表示に \texttt{COLON} を追加。
+\end{itemize}
 
 \section{参照}
 

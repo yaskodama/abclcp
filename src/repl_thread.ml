@@ -129,6 +129,7 @@ let pp_token = function
   | ARROW      -> "ARROW"
   | REMOTE     -> "REMOTE"
   | BECOME     -> "BECOME"
+  | COLON      -> "COLON"
   | EOF       -> "EOF"
 
 let dump_tokens_of_string (src:string) =

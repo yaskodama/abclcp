@@ -1,0 +1,28 @@
+// (7) 戻り値型注釈 method m(x) : T
+//     注釈があれば、a も b も未束縛でも + の overload が一意に決まる。
+//     s5 で principal type が無かった add が、注釈だけで解決する。
+class Calc {
+  method add(a, b) : int {
+    reply(a + b);
+  }
+}
+
+class Greeter {
+  method greet(name) : string {
+    reply("hello, " + name);
+  }
+  // unit を宣言したメソッドは reply しなくてよい
+  method log(msg) : unit {
+    print(msg);
+  }
+}
+
+var calc = new Calc();
+var g = new Greeter();
+
+var s = now calc.add(1, 2);
+var t = s + 1;
+print("t = " + t);
+
+var msg = now g.greet("AIPL");
+print(msg);

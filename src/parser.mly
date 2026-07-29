@@ -9,6 +9,24 @@ let loc_of_rhs i =
   { line = p.Lexing.pos_lnum; col  = p.Lexing.pos_cnum - p.Lexing.pos_bol + 1 }
 let mk_expr1 i d : Ast.expr = { loc = loc_of_rhs i; desc = d }
 let mk_stmt1 i d : Ast.stmt = { sloc = loc_of_rhs i; sdesc = d }
+
+(* 戻り値型注釈で書ける型名。
+   基底型のほかに、大文字始まりの名前は actor 型として受ける。 *)
+let ty_of_name (loc : Location.t) (s : string) : Types.ty =
+  match s with
+  | "int"    -> Types.TInt
+  | "float"  -> Types.TFloat
+  | "string" -> Types.TString
+  | "bool"   -> Types.TBool
+  | "unit"   -> Types.TUnit
+  | "any"    -> Types.TAny
+  | _ ->
+      if String.length s > 0 && s.[0] >= 'A' && s.[0] <= 'Z' then
+        Types.TActor (s, [])
+      else
+        raise (Syntax_error (loc,
+          "unknown type name in return annotation: " ^ s
+          ^ " (expected int/float/string/bool/unit/any or a class name)"))
 %}
 %token <string> ID
 %token <float> FLOATLIT
@@ -22,6 +40,7 @@ let mk_stmt1 i d : Ast.stmt = { sloc = loc_of_rhs i; sdesc = d }
 %token ARROW /* -> */
 %token EOF NEW
 %token VAR EQ DOT BECOME
+%token COLON /* : ... 戻り値型注釈 */
 %left PLUS MINUS
 %left TIMES DIV
 %start program
@@ -67,7 +86,13 @@ methods:
 
 method_decl:
   | METHOD ID LPAREN param_list RPAREN LBRACE stmts RBRACE
-    { { mname = $2; params = $4; body = mk_stmt1 2 (Seq $7) } }
+    { { mname = $2; params = $4; ret = None; body = mk_stmt1 2 (Seq $7) } }
+  | METHOD ID LPAREN param_list RPAREN COLON ret_ann LBRACE stmts RBRACE
+    { { mname = $2; params = $4; ret = Some $7; body = mk_stmt1 2 (Seq $9) } }
+
+ret_ann:
+  | FLOAT { Types.TFloat }              /* float は予約語なので別扱い */
+  | ID    { ty_of_name (loc_of_rhs 1) $1 }
 
 param_list:
   |    { [] }

@@ -1,0 +1,11 @@
+// (8) 宣言した型と食い違う reply
+//     推論のときは「他の reply とここが食い違う」としか言えなかったが、
+//     注釈があると「宣言と食い違う」と言えるので blame が正しい位置に出る。
+class Router {
+  method route(k) : int {
+    if (k > 0) { reply(1); } else { reply("negative"); }
+  }
+}
+
+var r = new Router();
+var v = now r.route(5);
