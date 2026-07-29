@@ -1,0 +1,681 @@
+% AIPL / ABCL^c+ 言語ガイド
+%   lualatex -interaction=nonstopmode aipl_guide_ja.tex   （2回）
+\documentclass[11pt,a4paper]{ltjsarticle}
+\usepackage{amsmath,amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+\geometry{margin=22mm}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{gray},
+  breaklines=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  keywordstyle=\bfseries,
+  commentstyle=\itshape\color{gray!130},
+}
+\lstdefinelanguage{AIPL}{
+  morekeywords={class,method,var,float,new,now,future,await,reply,send,become,
+    call,if,else,while,do,select,case,timeout,self,sender,remote,print,
+    int,string,bool,unit,any},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+}
+\lstset{language=AIPL}
+
+\newcommand{\ty}[1]{\ensuremath{\mathtt{#1}}}
+
+\title{AIPL / ABCL$^{c}$+ 言語ガイド\\
+{\large ---\ 型システムの改修を反映した現状の仕様と使い方 ---}}
+\author{ABCL$^{c}$+ / AIOS 処理系（\texttt{yaskodama/abclcp}, branch \texttt{make-src-base}）}
+\date{2026年07月30日 07:22 JST 版\\{\small 対象コミット: \texttt{04892cf}（branch \texttt{make-src-base}）}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+本書は AIPL（ABCL$^{c}$+）の\textbf{現状の}言語ガイドである。
+第 \ref{part:change} 部で今回の改修による変更点と移行方法をまとめ、
+第 \ref{part:lang} 部で言語仕様、第 \ref{part:sample} 部でサンプルプログラムを
+ソースコードと実行結果つきで説明し、第 \ref{part:tool} 部でビルドと実行の手順を示す。
+
+今回の改修の中心は、メソッドの戻り値型を \texttt{reply} から推論できるようにし、
+さらに省略可能な戻り値型注釈 \texttt{method m(x) : T} を導入したことである。
+これにより \texttt{now} / \texttt{future} の結果が \ty{any} ではなく
+具体的な型を持つようになった。あわせて文字列連結を \texttt{+} から
+\texttt{++} へ分離し、曖昧なオーバーロードをエラーに格上げし、
+メソッド本体の仮引数をシグネチャに結線した。
+設計の根拠と測定結果は \texttt{docs/aipl\_reply\_inference\_ja.pdf} にある。
+\end{abstract}
+
+\tableofcontents
+
+\part{今回の変更点}
+\label{part:change}
+
+\section{変更の要約}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{7.6cm}l@{}}
+\toprule
+ & 内容 & 影響 \\
+\midrule
+戻り値型の推論 & \texttt{reply(v)} から各メソッドの戻り値型を推論する。
+  \texttt{now} / \texttt{future} の結果が \ty{any} でなくなった & 追加のみ \\
+戻り値型注釈 & \texttt{method m(x) : T} を書けるようになった（省略可） & 追加のみ \\
+被覆検査 & \ty{unit} 以外を宣言したメソッドは全実行パスで \texttt{reply}
+  しなければならない & 注釈時のみ \\
+\texttt{reply} の線形性 & \texttt{reply} は高々一度。二重 \texttt{reply} は型エラー & \textbf{要確認} \\
+select の照合 & \texttt{case m(...)} を \texttt{m} の署名に照合する（arity と型） & \textbf{要確認} \\
+select の \texttt{reply} & case 本体の \texttt{reply} は\emph{選択されたメッセージ}への返信
+  として型付けされる & 意味の明確化 \\
+公開時の注釈必須 & \texttt{web\_expose} したアクターのメソッドは注釈が必須 & \textbf{要移行} \\
+文字列連結 & \texttt{+} から \texttt{++} へ分離。\texttt{+} は数値専用 & \textbf{要移行} \\
+整数演算 & \texttt{7 + 2} が \texttt{9.} ではなく \texttt{9} を返す。
+  \texttt{/} は \ty{float} & 値が変わる \\
+曖昧な overload & エラーに格上げ（従来は警告して既定候補を選択） & \textbf{要移行} \\
+仮引数の結線 & 本体の仮引数がシグネチャの引数型と繋がった。
+  引数の型検査が実際に効くようになった & \textbf{要確認} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{移行が必要な点}
+
+\subsection{文字列連結は \texttt{++} に書き換える}
+
+\texttt{+} は数値専用になった。文字列を混ぜると型エラーになる。
+
+\begin{lstlisting}
+print("count = " + n);      // 変更前
+print("count = " ++ n);     // 変更後
+\end{lstlisting}
+
+\texttt{++} は両辺を文字列化して連結するので、どちらが文字列でなくてもよい。
+結合は \texttt{+} より\emph{弱い}ので、\texttt{"x=" ++ a + b} は
+\texttt{"x=" ++ (a + b)} と読まれる。
+
+機械的に移行するには、型検査器のエラー位置に従うのが安全である。
+\texttt{no overload of + matches} が出た \texttt{(line, col)} は
+演算子トークンそのものを指すので、その 1 文字を \texttt{++} にして
+再検査すればよい。ただし列は\textbf{バイトオフセット}なので、
+日本語を含む行ではバイト単位で置換する必要がある。
+
+\subsection{公開するアクターのメソッドに注釈を付ける}
+
+\texttt{web\_expose} で名指ししたアクターのメソッド（\texttt{init} を除く）は
+戻り値型の注釈が必須になった。相手からは本体が見えないので、
+返信の型は宣言でしか伝わらないためである。
+
+\begin{lstlisting}
+method say(msg) : string { reply("echo: " ++ msg); }
+\end{lstlisting}
+
+\texttt{web\_listen} だけを呼んでいて \texttt{web\_expose} していないアクターは
+警告にとどまる（\texttt{POST /api/send} でアクター名を指定すれば到達できるが、
+公開の意図があるとは限らないため）。
+\texttt{AIOS\_LAX\_EXPOSE=1} でエラーを警告に落とせる。
+
+\subsection{曖昧な式に注釈を付ける}
+
+両辺が未束縛の \texttt{a + b} は、\ty{int} と \ty{float} のどちらとも
+解釈できて principal type を持たない。従来は警告して \ty{float} を選んでいたが、
+それは静的な型と実行結果が食い違う原因になっていたのでエラーにした。
+
+\begin{lstlisting}
+method add(a, b) { reply(a + b); }          // エラー: ambiguous overload
+method add(a, b) : int { reply(a + b); }     // 注釈で確定する
+\end{lstlisting}
+
+宣言した型は\emph{期待型}として式の推論へ流れるので、注釈を書くだけで
+オーバーロードが一意に決まる。\texttt{AIOS\_LAX\_OVERLOAD=1} で
+従来の警告動作に戻せる。
+
+\subsection{\ty{int} と \ty{float} の混在を直す}
+
+仮引数の結線により、本体が要求する型と呼び出し側が渡す型が照合される
+ようになった。そのため次のような不整合が表に出る。
+
+\begin{lstlisting}
+class Hello {
+  float count = 0.;
+  method init(n) { count = n; }   // 本体は n : float を要求する
+}
+var h = new Hello(5);             // int を渡している -> 型エラー
+var h = new Hello(5.);            // 正しい
+\end{lstlisting}
+
+\subsection{二重 \texttt{reply} を直す}
+
+\texttt{reply} は高々一度でなければならない。2 度目の \texttt{reply} は
+待ち手がすでに 1 度目の値を受け取ったあとに来るので黙って捨てられていた。
+
+\begin{lstlisting}
+method m(k) : int { reply(k); reply(k + 1); }   // 型エラー
+method m(k) : int { if (k > 0) { reply(1); } else { reply(2); } }  // OK
+\end{lstlisting}
+
+ループ本体の \texttt{reply} も「2 回以上ありうる」と判定される。
+
+\part{言語ガイド}
+\label{part:lang}
+
+\section{プログラムの構成}
+
+プログラムはクラス宣言とグローバル文の並びである。
+
+\begin{lstlisting}
+class Counter {
+  var n = 0;                    // フィールド
+  method init(start) {          // new のときに自動で呼ばれる
+    n = start;
+  }
+  method bump() : int {
+    n = n + 1;
+    reply(n);
+  }
+}
+
+var c = new Counter(10);        // グローバル文
+print(now c.bump());
+\end{lstlisting}
+
+フィールドは \texttt{var x = e;} または \texttt{float x = e;} で宣言する。
+メソッドは \texttt{method m(p1, ..., pn) \{ ... \}}、
+戻り値型を書く場合は \texttt{method m(p1, ..., pn) : T \{ ... \}} である。
+
+\texttt{init} という名前のメソッドは \texttt{new C(args)} のときに
+自動で呼ばれる。引数の個数が合わないと生成が飛ばされる。
+
+\section{型}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+型 & 説明 \\
+\midrule
+\ty{int}, \ty{float}, \ty{string}, \ty{bool}, \ty{unit} & 基底型 \\
+\ty{T[]}          & 配列 \\
+\ty{future\ T}    & \texttt{future} 送信の結果。\texttt{await} で \ty{T} を取り出す \\
+\ty{actor(C)}     & クラス \texttt{C} のアクター。\texttt{new C(...)} の型 \\
+\ty{any}          & 静的に内容を保証しない境界（\texttt{sender}、リモート送信先） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+戻り値型注釈に書けるのは
+\texttt{int} / \texttt{float} / \texttt{string} / \texttt{bool} /
+\texttt{unit} / \texttt{any} と、大文字で始まるクラス名（アクター型）である。
+
+\begin{quote}
+\small
+メソッドの引数は\textbf{単相}である。シグネチャの引数型変数は全呼び出し地点で
+共有されるので、同じメソッドを \ty{int} と \ty{string} で呼ぶと衝突する。
+\end{quote}
+
+\section{式}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+式 & 意味 \\
+\midrule
+\texttt{123}, \texttt{1.5}, \texttt{"abc"} & リテラル \\
+\texttt{x} & 変数・フィールド・仮引数 \\
+\texttt{a ++ b} & 文字列連結（両辺を文字列化）。結合は最も弱い \\
+\texttt{a + b}, \texttt{a - b}, \texttt{a * b} & 数値演算。\ty{int} 同士は \ty{int}、
+  \ty{float} 同士は \ty{float} \\
+\texttt{a / b} & 除算。\ty{int} 同士でも \ty{float}（整数除算はしない） \\
+\texttt{a > b}, \texttt{a < b}, \texttt{a >= b}, \texttt{a <= b} & 比較。結果は \ty{bool} \\
+\texttt{new C(args)} & アクターの生成 \\
+\texttt{now t.m(args)} & 同期送信。返信が来るまで待ち、その値になる \\
+\texttt{future t.m(args)} & 非同期送信。\ty{future\ T} を返す \\
+\texttt{await e} & future の解決を待つ \\
+\texttt{f(args)} & 組込み関数の呼び出し \\
+\texttt{( e )} & 括弧 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+送信先 \texttt{t} は変数名か \texttt{remote("host:port", "actorName")} である。
+
+\begin{quote}
+\small
+\textbf{既知の欠落}：\texttt{==} と \texttt{!=} は字句解析器と評価器には
+あるが、\emph{式の文法規則が無い}ため書けない。等値比較が必要な場合は
+現状 \texttt{>=} と \texttt{<=} を組み合わせるしかない。
+\end{quote}
+
+\section{文}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+文 & 意味 \\
+\midrule
+\texttt{var x = e;} & 変数宣言 \\
+\texttt{var x = new C(args);} & アクター生成つき宣言 \\
+\texttt{x = e;} & 代入 \\
+\texttt{f(args);} \quad \texttt{call f(args);} & 組込み関数の呼び出し \\
+\texttt{send t.m(args);} & 非同期送信。返信を待たない \\
+\texttt{send self.m(args);} & 自分自身への非同期送信 \\
+\texttt{send sender.m(args);} & 送信元への非同期送信 \\
+\texttt{send! t.m(args);} & 検査を緩めた送信 \\
+\texttt{if (e) s} \quad \texttt{if (e) s else s} & 条件分岐 \\
+\texttt{while e do s} & 繰り返し（括弧は不要） \\
+\texttt{\{ s ... \}} & ブロック \\
+\texttt{become C(args);} & 振る舞いの置換 \\
+\texttt{select \{ ... \}} & メッセージの選択受信 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{quote}
+\small
+\texttt{now self.m()} と \texttt{now sender.m()} は\emph{文法上書けない}。
+自分への \texttt{now} は必ず自己デッドロックになるので、書けないことが
+そのまま安全側に働いている。
+\end{quote}
+
+\section{アクターと通信}
+
+\subsection{三つの送信}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & 待つか & 式か文か \\
+\midrule
+\texttt{send a.m(x);}      & 待たない & 文 \\
+\texttt{now a.m(x)}        & 返信まで待つ & 式（結果は宣言／推論された型） \\
+\texttt{future a.m(x)}     & 待たない & 式（\ty{future\ T}。\texttt{await} で取る） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{\texttt{reply}}
+
+メソッドは値を「返す」のではなく \texttt{reply(v)} で呼び出し側の future を
+解決する。型システムはメソッドごとに戻り値型を持ち、本体のすべての
+\texttt{reply} と、すべての \texttt{now} / \texttt{future} 送信地点が
+この型を共有する。
+
+\begin{itemize}
+\item \texttt{reply} は\textbf{高々一度}。
+\item 戻り値型を \ty{unit} 以外で\emph{宣言}した場合は、
+  \textbf{全実行パスでちょうど一度}になる。
+\item \texttt{reply} がまったく無いメソッドは戻り値 \ty{unit} と扱われる。
+  \texttt{send} で呼ぶ「通知」型のメソッドがこれにあたる。
+\end{itemize}
+
+\subsection{\texttt{select}}
+
+\begin{lstlisting}
+select {
+  case job(k) -> { reply("done:" ++ k); }
+  timeout 500 -> { print("timed out"); }
+}
+\end{lstlisting}
+
+\texttt{case m(x1, ..., xn)} は同名メソッドの署名に照合される。
+引数の個数と型が合わないと型エラーになる。
+
+\textbf{case 本体の \texttt{reply} は、囲むメソッドではなく
+「選択されたメッセージ」への返信である。}
+処理系が case 実行の前に返信先を選択されたメッセージへ切り替えるためで、
+上の例の \texttt{reply} は \texttt{job} への返信になる。したがって
+\texttt{select} を含むメソッド自身は \ty{unit} でよい。
+一方 \texttt{timeout} 本体は囲むメソッドの返信先のまま実行される。
+
+\begin{quote}
+\small
+\texttt{select} は\emph{まだ処理されていない}メッセージを mailbox から探す。
+通常のメソッド dispatch が先に同名メッセージを取ってしまうと
+case には残らないので、\texttt{select} で待つ名前は直接呼ばせない設計に
+するのが安全である（第 \ref{part:sample} 部 g4 の実行結果を参照）。
+\end{quote}
+
+\section{型検査が見るもの}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.0cm}@{}}
+\toprule
+検査 & 内容 \\
+\midrule
+メソッドの存在   & ローカル送信先に、その名前のメソッドがあるか \\
+引数の個数と型   & 呼び出し側の実引数と、\emph{本体が要求する型}が一致するか \\
+\texttt{reply} の型 & すべての \texttt{reply} が同じ（宣言された）型か \\
+\texttt{reply} の回数 & 高々一度か。注釈があれば全パスでちょうど一度か \\
+select の照合    & \texttt{case} の arity と引数型が署名と一致するか \\
+公開時の注釈     & \texttt{web\_expose} したアクターのメソッドに注釈があるか \\
+オーバーロード   & 候補が一意に決まるか（曖昧ならエラー） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+代表的なエラーメッセージを挙げる。
+
+\begin{lstlisting}[language={}]
+no method foo in actor(C)
+type mismatch                                  <- 引数や代入の型が合わない
+no overload of + matches (string, int)         <- + は数値専用
+ambiguous overload of + for ('a, 'a): candidate return types are float / int
+reply type mismatch: this method is declared to reply with int,
+  but replies with string here
+method m is declared to reply with int, but some execution path does not reply
+method m may reply more than once on some path
+select: case m binds 1 variable(s) but method m takes 2
+actor C is reachable from outside this program, but m has no return type
+  annotation; ...
+\end{lstlisting}
+
+\section{外部公開}
+
+\texttt{web\_listen(port)} で HTTP ゲートウェイが起動し、
+\texttt{web\_expose(path, actorName)} で公開エンドポイントに別名が付く。
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+エンドポイント & 内容 \\
+\midrule
+\texttt{GET /}                & 簡易 UI \\
+\texttt{POST /api/send}       & \texttt{to=<actor>\&method=<m>\&args=<a,b>} で任意のアクターへ \\
+\texttt{POST /api/x/<key>}    & \texttt{web\_expose} した別名へ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{POST /api/send} は\textbf{任意のアクターに名前で到達できる}。
+すなわち境界を開いているのは \texttt{web\_listen} であって、
+\texttt{web\_expose} は別名を付けるだけである。型検査はこれを踏まえ、
+名指しされたアクターはエラー、それ以外は警告としている。
+
+HTTP から渡される引数は文字列を \ty{int} $\to$ \ty{float} $\to$ \ty{string}
+の順に解釈して作られる。境界が動的であること自体は注釈では消せないが、
+\emph{どの型を約束しているか}は宣言できる。
+
+\section{組込み関数（抜粋）}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+分類 & 名前 \\
+\midrule
+基本         & \texttt{print}, \texttt{typeof}, \texttt{wait}, \texttt{reply}, \texttt{spawn} \\
+数学         & \texttt{sin}, \texttt{cos}, \texttt{tan}, \texttt{asin}, \texttt{acos}, \texttt{atan},
+               \texttt{sqrt}, \texttt{exp}, \texttt{log10}, \texttt{abs},
+               \texttt{floor}, \texttt{ceil}, \texttt{round} \\
+配列         & \texttt{array\_empty}, \texttt{array\_push}, \texttt{array\_get},
+               \texttt{array\_set}, \texttt{array\_len} \\
+Web          & \texttt{web\_listen}, \texttt{web\_expose} \\
+描画 (SDL)   & \texttt{sdl\_init}, \texttt{sdl\_line}, \texttt{sdl\_erase\_line},
+               \texttt{sdl\_clear}, \texttt{sdl\_present} \\
+AI 呼び出し  & \texttt{ai\_call}, \texttt{ai\_call\_with\_system},
+               \texttt{model\_generate}, \texttt{gemini\_generate}, \texttt{openai\_generate} \\
+AIOS 内省    & \texttt{capabilities}, \texttt{aios\_kernel}, \texttt{aios\_actors},
+               \texttt{aios\_actor\_info}, \texttt{aios\_mailbox\_len} \\
+AIOS 通信    & \texttt{aios\_now}, \texttt{aios\_future}, \texttt{aios\_emit},
+               \texttt{aios\_events} \\
+記憶・タスク & \texttt{aios\_memory\_put}, \texttt{aios\_memory\_get},
+               \texttt{aios\_task\_create}, \texttt{aios\_task\_set}, \texttt{aios\_tasks} \\
+プロトコル   & \texttt{protocol\_define}, \texttt{protocol\_start},
+               \texttt{protocol\_use}, \texttt{protocol\_state}, \texttt{protocol\_end} \\
+リモート査読 & \texttt{remote\_review}, \texttt{remote\_review\_ja},
+               \texttt{remote\_reviewer\_host} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\part{サンプルプログラム}
+\label{part:sample}
+
+本節のサンプルは \texttt{docs/samples/guide/} にある。
+すべて型検査を通り、実行結果も掲載のとおりである。
+
+\section{g1: クラス・フィールド・\texttt{send}・文字列連結}
+
+\lstinputlisting{samples/guide/g1_hello.abcl}
+
+\begin{lstlisting}[language={}]
+hello, AIPL
+tick 1
+tick 2
+\end{lstlisting}
+
+\texttt{init} は \texttt{new Greeter("AIPL")} のときに自動で呼ばれる。
+\texttt{tick} は \texttt{reply} しないので \ty{unit} を宣言してあり、
+被覆検査は課されない。\texttt{send} は返信を待たないので、
+2 つの \texttt{tick} は順に処理される。
+\texttt{count + 1} は \ty{int} 同士なので \ty{int} のままで、
+表示も \texttt{1}, \texttt{2} と整数になる。
+
+\section{g2: \texttt{now} / \texttt{future} / \texttt{await} と注釈}
+
+\lstinputlisting{samples/guide/g2_now_future.abcl}
+
+\begin{lstlisting}[language={}]
+twice = 43
+awaited = 20
+v=7
+\end{lstlisting}
+
+\texttt{twice} は \ty{int} を宣言しているので \texttt{now c.twice(21)} は
+\ty{int} になり、\texttt{s + 1} という算術に使える。
+これは改修前にはできなかった（\texttt{now} の結果が \ty{any} だったため
+\texttt{no overload of + matches (any, int)} で落ちていた）。
+
+\texttt{label} は注釈を省いているが、\texttt{reply("v=" ++ a)} から
+戻り値 \ty{string} が推論される。
+
+\section{g3: 複数アクターと、アクターを跨いだ \texttt{now}}
+
+\lstinputlisting{samples/guide/g3_actors.abcl}
+
+\begin{lstlisting}[language={}]
+ok, left=7
+sold out
+\end{lstlisting}
+
+\texttt{Stock.take} が \ty{int} を返し、それが \texttt{Front.place} の中の
+\texttt{now} の型になり、さらに \texttt{place} 自身の \ty{string} へ繋がる。
+型はアクター境界を越えて伝播する。
+
+\texttt{place} は \ty{string} を宣言しているので、
+\texttt{if} の両方の枝で \texttt{reply} していることが検査される。
+片方を消すと
+\texttt{some execution path does not reply} になる。
+
+なお \texttt{n = n - k} で \texttt{n} が \ty{int} なので \texttt{k} も
+\ty{int} に決まり、呼び出し側の \texttt{place(3)} と整合する。
+ここで \texttt{place("x")} と書けば\emph{引数の}型エラーになる
+（改修前は素通りしていた）。
+
+\section{g4: \texttt{select} と \texttt{reply} の帰属}
+
+\lstinputlisting{samples/guide/g4_select.abcl}
+
+\begin{lstlisting}[language={}]
+direct:1
+waiting
+timed out
+\end{lstlisting}
+
+\texttt{case job(k)} の本体にある \texttt{reply} は \texttt{serve} ではなく
+\texttt{job} への返信なので、\texttt{serve} は \ty{unit} のままでよい。
+型検査器も case 本体では \texttt{reply} を \texttt{job} の戻り値型に
+照合する。
+
+実行結果は\textbf{この例が抱える設計上の注意}を示している。
+\texttt{now w.job(1)} が通常のメソッド dispatch で先に処理されたため、
+\texttt{serve} の \texttt{select} が動いたときには mailbox に
+\texttt{job} が残っておらず、\texttt{timeout} に落ちた。
+\texttt{select} で待つメッセージ名は、直接呼ばせない設計にするのが安全である。
+
+\section{g5: 外部公開と注釈の必須化}
+
+\lstinputlisting{samples/guide/g5_web.abcl}
+
+このプログラムは型検査を通る。\texttt{say} の注釈を外すと次のようになる。
+
+\begin{lstlisting}[language={}]
+[Type error] line 16, col 1: actor Echo is reachable from outside this
+  program, but say has no return type annotation; a remote caller cannot
+  see the body, so the reply type has to be declared (method say(...) : T)
+\end{lstlisting}
+
+\texttt{web\_listen(8080)} を実行するとゲートウェイが起動して待ち受けに
+入るので、確認は次のようにする。
+
+\begin{lstlisting}[language={}]
+$ curl -s -X POST http://localhost:8080/api/x/echo \
+       -d 'method=say&args=hi'
+\end{lstlisting}
+
+\section{負例の一覧}
+
+\texttt{docs/samples/reply\_inference/} には、\emph{通らないこと}を
+確認するためのサンプルが揃っている。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+ファイル & 何が起きるか \\
+\midrule
+\texttt{s2\_missing\_reply}      & \texttt{reply} 忘れの結果を算術に使う \\
+\texttt{s3\_conflict}            & 分岐ごとに異なる型を \texttt{reply} \\
+\texttt{s5\_overload\_ambiguity} & principal type が無い \texttt{a + b} \\
+\texttt{s8\_annotation\_conflict}& 宣言と食い違う \texttt{reply} \\
+\texttt{s9\_missing\_path}       & 一部のパスで \texttt{reply} しない \\
+\texttt{s10\_expose\_unannotated}& 公開アクターに注釈が無い \\
+\texttt{s12\_service\_exposed}   & 同上（統合サンプルの公開版） \\
+\texttt{s14\_select\_pattern}    & \texttt{case} の arity が署名と違う \\
+\texttt{s15\_double\_reply}      & 二重 \texttt{reply} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\part{ビルドと実行}
+\label{part:tool}
+
+\section{処理系のビルド}
+
+\begin{lstlisting}[language={}]
+cd src && make thread_repl
+\end{lstlisting}
+
+\texttt{dune} でのビルドは \texttt{src/lexer.ml} の二重生成で失敗するため、
+\texttt{src/Makefile} を使う。
+
+\section{プログラムの実行}
+
+REPL コマンドを書いたファイルを \texttt{-f} に渡す。
+
+\begin{lstlisting}[language={}]
+cat > run.repl <<'EOF'
+load docs/samples/guide/g2_now_future.abcl
+compile
+EOF
+./src/abclrepl_thread -q -f run.repl < /dev/null
+\end{lstlisting}
+
+\texttt{-f} に \texttt{.abcl} を直接渡すと REPL コマンドとして 1 行ずつ
+解釈されてクラス定義が読まれないので、\texttt{load} と \texttt{compile} を
+使うこと。REPL の主なコマンドは
+\texttt{load} / \texttt{compile} / \texttt{list} / \texttt{send} /
+\texttt{ast} / \texttt{pprint} / \texttt{script} / \texttt{exit} である。
+
+\section{型検査だけを走らせる}
+
+REPL は SDL に依存するので、型検査専用の小さなドライバを用意している。
+
+\begin{lstlisting}[language={}]
+ocamlfind ocamlc -package unix -thread -linkpkg -w -a -I src -o tc \
+  src/location.cmo src/types.cmo src/ast.cmo src/typing_env.cmo \
+  src/infer.cmo src/typecheck.cmo src/parser.cmo src/lexer.cmo \
+  docs/samples/reply_inference/tc_main.ml
+
+./tc docs/samples/guide/g3_actors.abcl
+\end{lstlisting}
+
+推論・宣言された戻り値型の表とクラスごとのシグネチャが表示される。
+
+\section{型と実行値の差分テスト}
+
+型検査が付けた戻り値型と、実行時に実際に \texttt{reply} された値の型を
+突き合わせるハーネスがある。
+
+\begin{lstlisting}[language={}]
+python3 scripts/type_runtime_diff.py abclc/*.abcl docs/samples/guide/*.abcl
+\end{lstlisting}
+
+処理系側は \texttt{AIOS\_TYPE\_TRACE=1} のとき \texttt{reply} のたびに
+\texttt{[rtype] Class\#method = tag} を出す。この仕組みで、整数演算が
+\ty{float} を返していた不整合が実際に見つかった。
+わざと食い違う負例には
+\texttt{// TYPE\_RUNTIME\_DIFF: expect-mismatch} と書いておけば既知として扱われる。
+
+\section{環境変数}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+変数 & 効果 \\
+\midrule
+\texttt{AIOS\_QUIET=1}          & 型スキーマ等のデバッグ出力を抑制 \\
+\texttt{AIOS\_LAX\_OVERLOAD=1}  & 曖昧なオーバーロードをエラーではなく警告にする \\
+\texttt{AIOS\_LAX\_EXPOSE=1}    & 公開アクターの注釈漏れをエラーではなく警告にする \\
+\texttt{AIOS\_TYPE\_TRACE=1}    & \texttt{reply} のたびに \texttt{[rtype]} 行を出す \\
+\texttt{AIOS\_MODEL\_PROVIDER}  & AI 呼び出しのプロバイダ選択 \\
+\texttt{ABCL\_AI\_PROVIDER}     & 同上（旧名） \\
+\texttt{REMOTE\_REVIEWER\_HOSTPORT} & \texttt{remote\_review} の宛先 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{関連文書}
+
+\begin{itemize}
+\item \texttt{docs/aipl\_reply\_inference\_ja.pdf} ---
+  今回の改修の設計根拠と測定結果。推論だけでは決まらない 6 点、
+  既存アクター言語との比較、実装の詳細、退行試験の数値。
+\item \texttt{docs/ABCLCP\_TYPE\_SOUNDNESS\_REPORT.md} --- 型健全性の整理。
+\item \texttt{docs/samples/reply\_inference/README.md} --- 負例サンプルの一覧と意図。
+\item \texttt{docs/AIOS\_LANGUAGE\_DESIGN.md}, \texttt{docs/CAPABILITIES.md} ---
+  AIOS としての設計。
+\end{itemize}
+
+\section{現状の限界}
+
+\begin{itemize}
+\item \texttt{==} と \texttt{!=} が式として書けない（文法規則が無い）。
+\item \texttt{sender} は \ty{any} で、\texttt{send sender.m(...)} は
+  メソッドの存在も型も検査されない。
+\item リモート送信先（\texttt{remote(...)}）の戻り値は \ty{any} のまま。
+  対向ノードのインタフェース記述を読み込む仕組みが無い。
+\item アクター型どちらも単一化で区別されない
+  （\texttt{actor(A)} と \texttt{actor(B)} が単一化に成功する）。
+\item \texttt{become C(...)} はコンストラクタの引数しか検査せず、
+  置換後のインタフェースが元と一致するかを見ていない。
+\item メソッドの引数は単相で、多相なメソッドは書けない。
+\item \ty{int} と \ty{float} の間に暗黙変換が無く、
+  両辺が未束縛の \texttt{a + b} は注釈が必要。
+\end{itemize}
+
+\end{document}

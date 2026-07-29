@@ -1,0 +1,23 @@
+// g2: now / future / await と戻り値型注釈
+class Calc {
+  // 注釈があると reply はこの型に照合され、全パスで reply することも検査される
+  method twice(a) : int {
+    reply(a * 2);
+  }
+
+  // 注釈を省くと reply から推論される（-> string）
+  method label(a) {
+    reply("v=" ++ a);
+  }
+}
+
+var c = new Calc();
+
+var s = now c.twice(21);      // now は式。結果は int
+print("twice = " ++ (s + 1)); // int として算術に使える
+
+var f = future c.twice(10);   // future は future int
+var v = await f;              // await で取り出す
+print("awaited = " ++ v);
+
+print(now c.label(7));        // 推論された string
