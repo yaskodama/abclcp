@@ -4,13 +4,13 @@ class Calc {
     send self.main();
   }
 
-  method add(a, b) {
+  method add(a, b) : int {
     print("add received");
 //        reply(a + b);
     reply(999);
   }
 
-  method main() {
+  method main() : unit {
     print("waiting...");
     select {
       case add(a, b) -> {

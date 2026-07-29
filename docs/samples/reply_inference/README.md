@@ -34,6 +34,7 @@ for f in docs/samples/reply_inference/s*.abcl; do ./tc "$f"; done
 | `s7_annotation_ok.abcl` | 戻り値型注釈 `method m(x) : T`。期待型が overload 解決へ流れること | OK。`add : (int * int) -> int`。**s5 の曖昧性が注釈だけで解消する** |
 | `s8_annotation_conflict.abcl` | 宣言型と食い違う reply | 型エラー `declared to reply with int, but replies with string here` |
 | `s9_missing_path.abcl` | 全パス被覆検査 | 型エラー `some execution path does not reply`。**注釈が無ければ書けない検査** |
+| `s10_expose_unannotated.abcl` | リモート境界での注釈必須 | `web_expose` した Adder は型エラー、`web_listen` だけで届く Logger は警告 |
 
 ## 戻り値型注釈の構文
 
@@ -52,3 +53,33 @@ method m(x) : int { reply(x * 2); }
 3. 宣言型が**期待型として式の推論へ流れる**（双方向型付け）。
    これにより `reply(a + b)` のように引数だけでは principal type が
    決まらない式も一意に解決する
+
+## リモート境界では注釈が必須
+
+境界を開くのは `web_listen` である。gateway の `POST /api/send` は
+`to=<アクター名>` で**任意のアクター**に到達するので、`web_expose` は
+公開エンドポイントに別名を付けるだけで到達可能性を絞っていない。
+そこで2段階で報告する。
+
+| | 判定 |
+|---|---|
+| `web_expose` で名指しされたアクターのメソッド（`init` を除く） | **型エラー**（`AIOS_LAX_EXPOSE=1` で警告） |
+| `web_listen` があるとき、それ以外のアクター | 警告 |
+
+リモート送信 `now remote(host, actor).m()` の相手は別ノードにあり、
+本体がこのプログラムに無いので検査できない。
+
+## select の case 本体の reply は「別のメッセージ」に返る
+
+`eval_thread` は case 実行の前に `set_current_msg_id` を選択された
+メッセージの id に差し替える。したがって
+
+```
+method main() : unit {
+  select { case add(a, b) -> { reply(a + b); } ... }
+}
+```
+
+の `reply` は `main` ではなく **`add` への返信**である。型検査器も
+case 本体では `reply` を `add` の ρ に束縛する。`timeout` 本体は
+囲むメソッドの msg_id のまま走るので、そちらは囲むメソッドに属する。

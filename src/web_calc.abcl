@@ -3,7 +3,7 @@ class Calculator {
     print("Calculator ready");
   }
 
-  method add(a, b) {
+  method add(a, b) : float {
 //    print("add called: " + a + " + " + b);
 //    print(a);
 //    print(b);

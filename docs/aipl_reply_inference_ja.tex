@@ -65,6 +65,11 @@ AIPL（ABCL$^{c}$+）の型健全性・型安全性の検討の中で、「メ�
 1 本は誤ったエラーが解消した。注釈は、全実行パスでの \texttt{reply} 被覆検査
 という推論には書けない検査を可能にし、さらに期待型として式の推論へ流れることで
 \emph{推論そのものを助ける}ことも分かった。
+さらに、公開アクターのメソッドで注釈を必須とする境界検査を入れた。
+その過程で、境界を開いているのは \texttt{web\_expose} ではなく
+\texttt{web\_listen} であること、および \texttt{select} の case 本体の
+\texttt{reply} は囲むメソッドではなく選択されたメッセージに返ることが分かり、
+後者は $\rho$ の帰属の誤りとして修正した。
 副次的に、オーバーロード解決 \texttt{pick\_overload} に潜んでいた
 2 つの欠陥（失敗候補の単一化が巻き戻らない／候補の優先順位が登録順の逆）を
 発見し、これも修正した。
@@ -442,6 +447,106 @@ let t = infer_expr ?expected:(expected_of rho) env a in
 \texttt{(int * int) -> int} と、引数側・戻り値側が整合した形で解決する。
 すなわち\textbf{注釈は検査を厳しくするだけでなく、推論を助ける}。
 
+\section{リモート境界での注釈必須化}
+\label{sec:boundary}
+
+\S\ref{sec:limits} で「宣言でしか埋まらない」とした境界に、実際に
+注釈を要求する検査を入れた。
+
+\subsection{境界を開いているのは \texttt{web\_expose} ではない}
+
+当初は \texttt{web\_expose("/calc", "calc")} で公開されたアクターだけを
+対象にすればよいと考えていたが、\texttt{web\_gateway.ml} を読むと
+そうではなかった。
+
+\begin{lstlisting}[language={}]
+POST /api/send      -> send to actor by name
+    form fields: to=<actorName>&method=<m>&args=<a,b,c>&from=<who>
+POST /api/x/<key>   -> send to exposed endpoint
+\end{lstlisting}
+
+この \texttt{/api/send} は、\texttt{to=} で指定された名前のアクターへ
+そのまま \texttt{Eval\_thread.send\_message} する
+（\texttt{handle\_send\_direct}）。
+つまり\textbf{境界を開いているのは \texttt{web\_listen} であって、
+\texttt{web\_expose} は公開エンドポイントに別名を付けるだけ}であり、
+到達可能性を絞ってはいない。
+
+そこで 2 段階で報告することにした。
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+対象 & 判定 \\
+\midrule
+\texttt{web\_expose} で名指しされたアクターのメソッド & 型エラー \\
+\texttt{web\_listen} があるとき、それ以外のアクター & 警告 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+前者はプログラムが自ら「これが公開インタフェースだ」と宣言しているので
+エラーとする（\texttt{AIOS\_LAX\_EXPOSE=1} で警告に落とせる）。
+後者は到達可能ではあるが公開の意図があるとは限らないので警告にとどめる。
+\texttt{init} は生成時にしか呼ばれないので対象外とした。
+
+リモート送信 \texttt{now remote(host, actor).m()} の相手は別ノードにあり、
+本体がこのプログラムに無いので、ここでは検査できない。
+
+\subsection{既存コードの移行}
+
+コーパスで境界を開いているのは \texttt{web\_calc.abcl} 1 本だけだった。
+\texttt{add} に注釈を付けて移行した。型は、注釈が無いときに推論が選んでいた
+\ty{float} をそのまま明示して、既存の型付けを変えないようにした。
+
+\begin{lstlisting}[language=AIPL]
+method add(a, b) : float { reply(a + b); }
+\end{lstlisting}
+
+なお実行時の引数は HTTP の文字列を \texttt{int} $\to$ \texttt{float} $\to$
+\texttt{string} の順に解釈して作られる。境界が動的であること自体は
+注釈では消せないが、\emph{どの型を約束しているか}は宣言できる。
+
+\subsection{発見：\texttt{select} の case 本体の \texttt{reply} は別のメッセージに返る}
+\label{sec:select}
+
+移行作業中に、$\rho$ の帰属に誤りがあることが分かった。
+\texttt{eval\_thread.ml} は \texttt{select} の case 本体を実行する前に
+\texttt{set\_current\_msg\_id m.msg\_id} で\emph{選択されたメッセージ}の
+id に差し替える。
+
+\begin{lstlisting}
+| Some (m, binds, body_stmt) ->
+    set_current_msg_id m.msg_id;          (* <-- the selected message *)
+    List.iter (fun (x,v) -> Hashtbl.replace actor.env x v) binds;
+    (try eval_stmt actor body_stmt with _ -> ());
+    set_current_msg_id prev_msg_id;
+\end{lstlisting}
+
+したがって
+
+\begin{lstlisting}[language=AIPL]
+method main() : unit {
+  select { case add(a, b) -> { reply(a + b); } ... }
+}
+\end{lstlisting}
+
+の \texttt{reply} は \texttt{main} ではなく \textbf{\texttt{add} への返信}である。
+当初の実装はこれを \texttt{main} の $\rho$ に単一化していたので誤りだった。
+修正として
+
+\begin{itemize}
+\item case 本体の検査では \texttt{reply} を \texttt{c.pat.meth} の $\rho$ に
+  束縛し直す（クラスは \texttt{self} の型から取る）、
+\item \texttt{stmt\_has\_reply} は case 本体を数えない
+  （数えると「reply の無いメソッド」の \ty{unit} defaulting が効かなくなる）、
+\item \texttt{replies\_on\_all\_paths} で \texttt{select} は \texttt{false} を返す
+  （case が選ばれた実行では囲むメソッドは reply しないまま終わる）
+\end{itemize}
+
+を行った。\texttt{timeout} 本体は囲むメソッドの \texttt{msg\_id} のまま走るので、
+そちらは従来どおり囲むメソッドに属する。
+
 \section{副産物：\texttt{pick\_overload} の 2 つの欠陥}
 \label{sec:overload}
 
@@ -599,9 +704,11 @@ x1 = cx - dx + x;   // cx, dx : float, x : method parameter
   一般化せず \ty{unit} へ defaulting する（Pony 方式）。
   ここだけは一般化してはならない。\texttt{send}（fire-and-forget）と
   \texttt{now}（ask）の区別がこの一点に乗る。
-\item[(未)] \textbf{remote / expose するメソッドで注釈を必須にする}。
-  \texttt{web\_expose} の引数が文字列リテラルとは限らないため、
-  どのメソッドが公開されるかを静的に確定させる仕組みが先に要る。
+\item[(済)] \textbf{公開するメソッドで注釈を必須にする}（\S\ref{sec:boundary}）。
+  境界を開いているのは \texttt{web\_expose} ではなく \texttt{web\_listen} で
+  あることが実装を読んで分かったので、名指しされたアクターはエラー、
+  それ以外は警告の 2 段階とした。引数が文字列リテラルでない
+  \texttt{web\_expose} は「静的に確認できない」と報告する。
 \item[(未)] 推論結果のシグネチャを出力し、利用者が貼り付けられるようにする。
 \end{enumerate}
 
@@ -796,6 +903,27 @@ s3（注釈なし）では「他の \texttt{reply} とここが食い違う」�
 推論だけではこれを誤りと言えない（照合先が無い）。
 注釈を入れる最大の利得がこの検査である。
 
+\subsection{s10\_expose\_unannotated.abcl --- リモート境界での注釈必須}
+
+\lstinputlisting[language=AIPL]{samples/reply_inference/s10_expose_unannotated.abcl}
+
+\begin{lstlisting}[language={}]
+[Type error] line 24, col 1: actor Adder is reachable from outside this
+  program, but add has no return type annotation; a remote caller cannot
+  see the body, so the reply type has to be declared (method add(...) : T)
+\end{lstlisting}
+
+\texttt{AIOS\_LAX\_EXPOSE=1} を与えるとエラーが警告に落ち、
+\texttt{web\_expose} していない \texttt{Logger} についての警告も見える。
+
+\begin{lstlisting}[language={}]
+[warn] line 24, col 1: actor Adder is reachable from outside this program, ...
+[warn] web_listen is called, so POST /api/send can reach any actor by name:
+       actor Logger is reachable from outside this program, but log has no
+       return type annotation; ...
+[OK] type check passed
+\end{lstlisting}
+
 \section{型検査ドライバ \texttt{tc\_main.ml}}
 \label{sec:driver}
 
@@ -809,10 +937,12 @@ REPL（SDL に依存する）を起動せずに型検査だけを走らせるた
 \item \texttt{src/types.ml}（+41）---
   $\rho$ 表（\texttt{method\_ret\_tys} と register / lookup / reset）、
   \texttt{debug\_print\_method\_rets}。
-\item \texttt{src/infer.ml}（+237 / -60）---
+\item \texttt{src/infer.ml}（+409 / -67）---
   $\rho$ の確保と伝播、\texttt{check\_reply}、全パス被覆検査
   \texttt{replies\_on\_all\_paths}、期待型の伝播（\texttt{expected\_of} と
-  \texttt{infer\_expr ?expected}）、\texttt{pick\_overload} の修正。
+  \texttt{infer\_expr ?expected}）、\texttt{pick\_overload} の修正、
+  リモート境界の検査 \texttt{check\_boundary\_annotations}、
+  \texttt{select} の case における $\rho$ の帰属修正。
 \item \texttt{src/ast.ml}（+13 / -3）---
   \texttt{method\_decl} に \texttt{ret : Types.ty option} を追加。
 \item \texttt{src/parser.mly}（+26 / -1）---
@@ -822,6 +952,8 @@ REPL（SDL に依存する）を起動せずに型検査だけを走らせるた
 \item \texttt{src/Makefile}（1 行）---
   リンク順を修正（\texttt{types.cmo} を \texttt{ast.cmo} より前へ）。
 \item \texttt{src/repl\_thread.ml}（+1）--- トークン表示に \texttt{COLON} を追加。
+\item \texttt{abclc/web\_calc.abcl}, \texttt{src/web\_calc.abcl},
+  \texttt{src/web\_calc1.abcl} --- 公開アクターに戻り値型注釈を付けて移行。
 \end{itemize}
 
 \section{参照}

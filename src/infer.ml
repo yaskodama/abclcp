@@ -80,9 +80,12 @@ let rec stmt_has_reply (s : Ast.stmt) : bool =
   | Ast.If (c, a, b) ->
       expr_has_reply c || stmt_has_reply a || stmt_has_reply b
   | Ast.While (c, b) -> expr_has_reply c || stmt_has_reply b
-  | Ast.Select (cases, (_, to_body)) ->
-      List.exists (fun (c : Ast.select_case) -> stmt_has_reply c.body) cases
-      || (match to_body with Some b -> stmt_has_reply b | None -> false)
+  (* ★ select の case 本体にある reply は、囲むメソッドではなく
+     「選択されたメッセージ」に返る。eval_thread が case 実行の前に
+     set_current_msg_id を差し替えるためである。よってここでは数えない。
+     timeout 本体は囲むメソッドの msg_id のまま走るので数える。 *)
+  | Ast.Select (_cases, (_, to_body)) ->
+      (match to_body with Some b -> stmt_has_reply b | None -> false)
 
 (* 「すべての実行パスで必ず reply する」か。
    戻り値型を宣言したメソッドにだけ課す検査で、推論側には書けない。
@@ -93,10 +96,9 @@ let rec replies_on_all_paths (s : Ast.stmt) : bool =
   | Ast.CallStmt ("reply", _) -> true
   | Ast.Seq ss -> List.exists replies_on_all_paths ss
   | Ast.If (_, a, b) -> replies_on_all_paths a && replies_on_all_paths b
-  | Ast.Select (cases, (_, to_body)) ->
-      cases <> []
-      && List.for_all (fun (c : Ast.select_case) -> replies_on_all_paths c.body) cases
-      && (match to_body with Some b -> replies_on_all_paths b | None -> true)
+  (* case 本体の reply は別メッセージ宛なので、囲むメソッドの被覆にはならない。
+     case が選ばれた実行では囲むメソッドは reply しないまま終わる。 *)
+  | Ast.Select (_, _) -> false
   (* 式は無条件に評価されるので、式中の reply も「必ず起きる」とみなせる *)
   | Ast.Assign (_, e) | Ast.VarDecl (_, e) -> expr_has_reply e
   | Ast.CallStmt (_, args)
@@ -594,6 +596,15 @@ let rec check_stmt (env:env) (s:stmt) : unit =
      | _ ->
          Types.type_error ~loc:s.sloc
            "select: timeout requires both milliseconds and a body");
+    (* 検査中のクラス（self の型）。case の reply の帰属先を決めるのに使う *)
+    let self_cls =
+      match Hashtbl.find_opt env "self" with
+      | Some (sch :: _) ->
+          (match repr (Types.instantiate sch) with
+           | TActor (cls, _) -> Some cls
+           | _ -> None)
+      | _ -> None
+    in
     (* each case introduces fresh types for bound variables *)
     List.iter
       (fun (c:Ast.select_case) ->
@@ -604,6 +615,16 @@ let rec check_stmt (env:env) (s:stmt) : unit =
             Typing_env.add_mono env' x (TVar tv)
           )
           c.pat.vars;
+        (* ★ case 本体の reply は「選択されたメッセージ」に返る。
+           eval_thread が case 実行の前に set_current_msg_id を差し替えるので、
+           reply の型は囲むメソッドではなく c.pat.meth の rho に属する。 *)
+        (match self_cls with
+         | Some cls ->
+             (match Types.lookup_method_ret cls c.pat.meth with
+              | Some rho ->
+                  set_var_scheme env' "reply" (Forall ([], TFun ([rho], TUnit)))
+              | None -> ())
+         | None -> ());
         check_stmt env' c.body
       )
       cases
@@ -800,6 +821,149 @@ let infer_method (m : Ast.method_decl) =
     | _ -> ()
   ) p
 
+(* ================================================================= *)
+(*  リモート境界での戻り値型注釈の必須化                              *)
+(* ================================================================= *)
+(* AIOS_LAX_EXPOSE=1 で、公開アクターの注釈漏れをエラーではなく警告にする *)
+let lax_expose =
+  match Sys.getenv_opt "AIOS_LAX_EXPOSE" with
+  | Some "1" | Some "true" | Some "yes" -> ref true
+  | _ -> ref false
+
+(* プログラム中のプリミティブ呼び出しを (名前, 引数, 位置) で全部拾う。
+   web_listen / web_expose はメソッド本体の中から呼ばれることもあるので、
+   グローバル文だけでなくクラス本体も走査する。 *)
+let collect_prim_calls (p : Ast.program) : (string * Ast.expr list * Location.t) list =
+  let acc = ref [] in
+  let rec ex (e : Ast.expr) =
+    match e.desc with
+    | Ast.Call (f, args) ->
+        acc := (f, args, e.loc) :: !acc; List.iter ex args
+    | Ast.Binop (_, a, b) -> ex a; ex b
+    | Ast.Expr e1 | Ast.Await e1 -> ex e1
+    | Ast.New (_, args) | Ast.Array (args, _)
+    | Ast.NowSend (_, _, args) | Ast.FutureSend (_, _, args) -> List.iter ex args
+    | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Var _ -> ()
+  and st (s : Ast.stmt) =
+    match s.sdesc with
+    | Ast.CallStmt (f, args) ->
+        acc := (f, args, s.sloc) :: !acc; List.iter ex args
+    | Ast.Send (_, _, args) | Ast.UnsafeSend (_, _, args)
+    | Ast.Become (_, args) -> List.iter ex args
+    | Ast.Assign (_, e) | Ast.VarDecl (_, e) -> ex e
+    | Ast.Seq ss -> List.iter st ss
+    | Ast.If (c, a, b) -> ex c; st a; st b
+    | Ast.While (c, b) -> ex c; st b
+    | Ast.Select (cases, (_, to_body)) ->
+        List.iter (fun (c : Ast.select_case) -> st c.body) cases;
+        (match to_body with Some b -> st b | None -> ())
+  in
+  List.iter
+    (function
+      | Ast.Class c ->
+          List.iter st c.Ast.fields;
+          List.iter (fun (m : Ast.method_decl) -> st m.Ast.body) c.Ast.methods
+      | Ast.Global s -> st s)
+    p;
+  List.rev !acc
+
+(* 外から呼ばれうるアクターのメソッドには戻り値型注釈を要求する。
+
+   境界を開くのは web_listen である。web_gateway の POST /api/send は
+   to=<アクター名> で「任意のアクター」に到達するので、web_expose は
+   公開エンドポイントの別名を付けるだけで、到達可能性を絞ってはいない。
+   そこで 2 段階で報告する。
+
+   - web_expose で名指しされたアクター
+       プログラムが自ら「これが公開インタフェースだ」と宣言している。
+       注釈漏れはエラー（AIOS_LAX_EXPOSE=1 で警告）。
+   - web_listen があるとき、それ以外のアクター
+       /api/send 経由で到達可能ではあるが、公開の意図があるとは限らない。
+       警告にとどめる。
+
+   リモート送信（RemoteTarget）の相手は別ノードにあり、本体がこの
+   プログラムに無いので、ここでは検査できない。 *)
+let check_boundary_annotations (p : Ast.program) (env : env) : unit =
+  let calls = collect_prim_calls p in
+  let has_listen = List.exists (fun (f, _, _) -> f = "web_listen") calls in
+  let exposed_calls = List.filter (fun (f, _, _) -> f = "web_expose") calls in
+  if has_listen || exposed_calls <> [] then begin
+    (* クラス名 -> class_decl *)
+    let classes : (string, Ast.class_decl) Hashtbl.t = Hashtbl.create 16 in
+    List.iter
+      (function Ast.Class c -> Hashtbl.replace classes c.Ast.cname c | _ -> ())
+      p;
+    let class_of_var (v : string) : string option =
+      match Hashtbl.find_opt env v with
+      | Some (sch :: _) ->
+          (match repr (Types.instantiate sch) with
+           | TActor (cls, _) -> Some cls
+           | _ -> None)
+      | _ -> None
+    in
+    (* init は生成時にしか呼ばれないので対象外 *)
+    let unannotated (c : Ast.class_decl) : string list =
+      c.Ast.methods
+      |> List.filter (fun (m : Ast.method_decl) ->
+             m.Ast.mname <> "init"
+             && (match m.Ast.ret with None -> true | Some _ -> false))
+      |> List.map (fun (m : Ast.method_decl) -> m.Ast.mname)
+    in
+    let describe cls ms =
+      Printf.sprintf
+        "actor %s is reachable from outside this program, but %s %s no return type annotation; \
+         a remote caller cannot see the body, so the reply type has to be declared \
+         (method %s(...) : T)"
+        cls
+        (String.concat ", " ms)
+        (if List.length ms = 1 then "has" else "have")
+        (List.hd ms)
+    in
+    (* --- web_expose で名指しされたアクター --- *)
+    let exposed_classes = ref [] in
+    List.iter
+      (fun (_, args, loc) ->
+        match args with
+        | [_; { desc = Ast.String vname; _ }] ->
+            (match class_of_var vname with
+             | None ->
+                 Printf.eprintf
+                   "[warn] %s: web_expose(..., %S): %s is not a known actor variable, \
+                    so its return annotations cannot be checked\n%!"
+                   (Location.to_string loc) vname vname
+             | Some cls ->
+                 exposed_classes := cls :: !exposed_classes;
+                 (match Hashtbl.find_opt classes cls with
+                  | None -> ()
+                  | Some c ->
+                      (match unannotated c with
+                       | [] -> ()
+                       | ms ->
+                           let msg = describe cls ms in
+                           if !lax_expose then
+                             Printf.eprintf "[warn] %s: %s\n%!"
+                               (Location.to_string loc) msg
+                           else Types.type_error ~loc msg)))
+        | _ ->
+            Printf.eprintf
+              "[warn] %s: web_expose with non-literal arguments: \
+               return annotations cannot be checked statically\n%!"
+              (Location.to_string loc))
+      exposed_calls;
+    (* --- web_listen があるとき、名指しされていないアクター --- *)
+    if has_listen then
+      Hashtbl.iter
+        (fun cls (c : Ast.class_decl) ->
+          if not (List.mem cls !exposed_classes) then
+            match unannotated c with
+            | [] -> ()
+            | ms ->
+                Printf.eprintf
+                  "[warn] web_listen is called, so POST /api/send can reach any actor by name: %s\n%!"
+                  (describe cls ms))
+        classes
+  end
+
 let check_program (p: Ast.program) : (Types.tenv, string) result =
   let env0 = Typing_env.prelude () in
   try
@@ -810,6 +974,7 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
     in_preinfer := false;
     if !verbose then Types.debug_print_class_method_schemes ();
     List.iter (check_decl env0) p;          (* それから通常どおりトップレベルを検査 *)
+    check_boundary_annotations p env0;      (* ★ リモート境界の注釈必須検査 *)
     if !verbose then Types.debug_print_method_rets ();
     Ok env0
   with

@@ -1,0 +1,24 @@
+// (10) リモート境界での注釈必須
+//      web_expose した Adder は、本体の見えない相手から呼ばれる。
+//      推論はソースが手元にある場合しか使えないので、ここは宣言でしか埋まらない。
+//      → add に注釈が無いのでエラー。
+//
+//      Logger は web_expose していないが、web_listen があるので
+//      POST /api/send?to=logger でやはり到達できる。こちらは警告。
+class Adder {
+  method add(a, b) {
+    reply(a + b);
+  }
+}
+
+class Logger {
+  method log(msg) {
+    print(msg);
+  }
+}
+
+var adder = new Adder();
+var logger = new Logger();
+
+web_listen(8080);
+web_expose("/add", "adder");
