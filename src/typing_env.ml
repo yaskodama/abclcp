@@ -51,7 +51,7 @@ let set_eff (names : string list) (effs : string list) : unit =
 let () =
   (* Core.Math / Core.Introspection / reply : 効果なし *)
   set_eff [ "sin";"cos";"tan";"asin";"acos";"atan";"sqrt";"exp";"log10";
-            "abs";"floor";"ceil";"round";"typeof";"reply" ] [];
+            "abs";"floor";"ceil";"round";"typeof";"reply";"neg" ] [];
   (* Core.Array : 読みは効果なし、割り付けは mem *)
   set_eff [ "array_get"; "array_len" ] [];
   set_eff [ "array_empty"; "array_push"; "array_set" ] ["mem"];
@@ -191,6 +191,21 @@ let prelude () : env =
   List.iter add_f4 [ ">"; "<"; "<="; ">=" ];
   let add_f5 f = add_mono e f (TFun ([TInt; TInt], TBool)) in
   List.iter add_f5 [ ">"; "<"; "<="; ">=" ];
+
+  (* 2.5.3) 等値。数値・文字列・真偽値のそれぞれで比較できる。
+     候補は4つあるが戻り値はすべて bool なので、両辺が未束縛でも
+     曖昧にはならない（pick_overload は戻り値型が割れたときだけ曖昧と言う）。 *)
+  let add_eq f =
+    add_mono e f (TFun ([TInt;    TInt],    TBool));
+    add_mono e f (TFun ([TFloat;  TFloat],  TBool));
+    add_mono e f (TFun ([TString; TString], TBool));
+    add_mono e f (TFun ([TBool;   TBool],   TBool))
+  in
+  List.iter add_eq [ "=="; "!=" ];
+
+  (* 2.5.4) 単項マイナス。文法は - e を neg(e) へ落とす *)
+  add_mono e "neg" (TFun ([TInt],   TInt));
+  add_mono e "neg" (TFun ([TFloat], TFloat));
 
   (* 2.6) 文字列連結は ++ （+ からは外した）。
      + に string の overload を混ぜていたせいで、両辺が未束縛の a + b に

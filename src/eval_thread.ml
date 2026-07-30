@@ -775,6 +775,12 @@ let apply_binop op v1 v2 =
         | "==" -> a = b | "!=" -> a <> b
         | _ -> assert false)
 
+  (* --- 等値: 文字列と真偽値。数値は上の比較ケースが拾う --- *)
+  | "==", VString a, VString b -> VBool (a = b)
+  | "!=", VString a, VString b -> VBool (a <> b)
+  | "==", VBool a,   VBool b   -> VBool (a = b)
+  | "!=", VBool a,   VBool b   -> VBool (a <> b)
+
   (* --- 文字列連結は ++。両辺を文字列化して連結する。
          + は数値専用になったので、文字列を渡すと下の failwith に落ちる --- *)
   | "++", v1, v2 -> VString (to_string_plain v1 ^ to_string_plain v2)
@@ -904,6 +910,7 @@ let static_primitive_catalog = [
   { pname = "sqrt"; capability = "Core.Math"; psig = "float -> float"; pdesc = "square root" };
   { pname = "exp"; capability = "Core.Math"; psig = "float -> float"; pdesc = "exponential" };
   { pname = "log10"; capability = "Core.Math"; psig = "float -> float"; pdesc = "base-10 logarithm" };
+  { pname = "neg"; capability = "Core.Math"; psig = "int -> int | float -> float"; pdesc = "unary minus" };
   { pname = "abs"; capability = "Core.Math"; psig = "float -> float"; pdesc = "absolute value" };
   { pname = "floor"; capability = "Core.Math"; psig = "float -> float"; pdesc = "floor" };
   { pname = "ceil"; capability = "Core.Math"; psig = "float -> float"; pdesc = "ceiling" };
@@ -1468,6 +1475,10 @@ let prim_table : (string, value list -> value) Hashtbl.t =
     prim1_float_float "sqrt" sqrt;
     prim1_float_float "exp" exp;
     prim1_float_float "log10" (fun x -> log10 x);
+    ("neg", (function
+       | [VInt n]   -> VInt (- n)
+       | [VFloat f] -> VFloat (-. f)
+       | _ -> failwith "neg: expected (int) or (float)"));
     prim1_float_float "abs" abs_float;
     prim1_float_float "floor" (fun x -> floor x);
     prim1_float_float "ceil" (fun x -> ceil x);
@@ -1817,6 +1828,7 @@ let rec eval_expr (actor:actor) (e : expr) =
   match e.desc with
   | Int i -> VInt i
   | Float f  -> VFloat f
+  | Bool b   -> VBool b
   | String s -> VString s
   | Var x    -> get_var_a actor x
   | Binop (op, e1, e2) ->

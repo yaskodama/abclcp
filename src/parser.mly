@@ -43,9 +43,16 @@ let ty_of_name (loc : Location.t) (s : string) : Types.ty =
 %token COLON /* : ... 戻り値型注釈 */
 %token PLUSPLUS /* ++ ... 文字列連結 */
 %token BANG /* ! ... 効果注釈 !{...} */
+%token NE /* != */
+%token TRUE FALSE /* 真偽値リテラル */
+%token UMINUS /* 単項マイナスの優先順位用（トークンとしては使わない） */
+/* 優先順位は下に行くほど強い。等値 < 比較 < 文字列連結 < 加減 < 乗除 < 単項マイナス */
+%left EQ NE
+%left GE LE GT LT
 %left PLUSPLUS
 %left PLUS MINUS
 %left TIMES DIV
+%nonassoc UMINUS
 %start program
 %type <Ast.program> program
 %type <Ast.send_target> send_target
@@ -183,8 +190,14 @@ inits:
 expr:
   | FLOATLIT { mk_expr1 1 (Float $1) }
   | STRINGLIT { mk_expr1 1 (String $1) }
+  | TRUE  { mk_expr1 1 (Bool true) }
+  | FALSE { mk_expr1 1 (Bool false) }
   | INTLIT { mk_expr1 1 (Int $1) }
   | ID { mk_expr1 1 (Var $1) }
+  /* 単項マイナス。- e は neg(e) へ落とす。
+     リテラルを別規則で畳み込むと MINUS expr と reduce/reduce するので、
+     一般形の一本だけにする（-1 は neg(1) となり、型も値も期待どおり） */
+  | MINUS expr %prec UMINUS { mk_expr1 1 (Call ("neg", [$2])) }
   | expr PLUSPLUS expr { mk_expr1 2 (Binop ("++", $1, $3)) }
   | expr PLUS expr { mk_expr1 2 (Binop ("+", $1, $3)) }
   | expr MINUS expr { mk_expr1 2 (Binop ("-", $1, $3)) }
@@ -199,6 +212,8 @@ expr:
   | AWAIT expr { mk_expr1 1 (Await ($2, None)) }
   | AWAIT expr TIMEOUT INTLIT ELSE expr { mk_expr1 1 (Await ($2, Some ($4, $6))) }
   | ID LPAREN args RPAREN { mk_expr1 1 (Call ($1, $3)) }
+  | expr EQ expr { mk_expr1 2 (Binop ("==", $1, $3)) }
+  | expr NE expr { mk_expr1 2 (Binop ("!=", $1, $3)) }
   | expr GE expr { mk_expr1 2 (Binop (">=", $1, $3)) }
   | expr LE expr { mk_expr1 2 (Binop ("<=", $1, $3)) }
   | expr GT expr { mk_expr1 2 (Binop (">", $1, $3)) }

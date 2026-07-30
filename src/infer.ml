@@ -68,7 +68,7 @@ let rec expr_has_reply (e : Ast.expr) : bool =
   | Ast.Binop (_, a, b) -> expr_has_reply a || expr_has_reply b
   | Ast.Expr e1 -> expr_has_reply e1
   | Ast.Await (e1, d) -> expr_has_reply e1 || alt_has_reply d
-  | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Var _ -> false
+  | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ -> false
 and alt_has_reply = function
   | None -> false
   | Some (_, a) -> expr_has_reply a
@@ -134,7 +134,7 @@ let rec max_replies_expr (e : Ast.expr) : int =
   | Ast.Binop (_, a, b) -> cap2 (max_replies_expr a + max_replies_expr b)
   | Ast.Expr e1 -> max_replies_expr e1
   | Ast.Await (e1, d) -> cap2 (max_replies_expr e1 + max_alt d)
-  | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Var _ -> 0
+  | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ -> 0
 and max_alt = function None -> 0 | Some (_, a) -> max_replies_expr a
 
 (* 囲むメソッドから見た reply 回数の上界。
@@ -434,6 +434,7 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
   match e.desc with
   | Int _ -> TInt
   | Float _ -> TFloat
+  | Bool _ -> TBool
   | String _ -> TString
   | Binop (op, e1, e2) ->
     let t1 = infer_expr env e1 in
@@ -1059,7 +1060,7 @@ let collect_prim_calls (p : Ast.program) : (string * Ast.expr list * Location.t)
     | Ast.FutureSend (_, _, args) -> List.iter ex args
     | Ast.NowSend (_, _, args, d) ->
         List.iter ex args; (match d with Some (_,a) -> ex a | None -> ())
-    | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Var _ -> ()
+    | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ -> ()
   and st (s : Ast.stmt) =
     match s.sdesc with
     | Ast.CallStmt (f, args) ->

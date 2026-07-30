@@ -132,6 +132,10 @@ let pp_token = function
   | COLON      -> "COLON"
   | PLUSPLUS   -> "PLUSPLUS"
   | BANG       -> "BANG"
+  | NE         -> "NE"
+  | TRUE       -> "TRUE"
+  | FALSE      -> "FALSE"
+  | UMINUS     -> "UMINUS"
   | EOF       -> "EOF"
 
 let dump_tokens_of_string (src:string) =
@@ -354,6 +358,7 @@ let rec string_of_expr (e : Ast.expr) =
   match e.desc with
   | Float f -> string_of_float f
   | String s -> s
+  | Bool b -> string_of_bool b
   | Var v -> v
   | Binop (op, e1, e2) -> "(" ^ string_of_expr e1 ^ " " ^ op ^ " " ^ string_of_expr e2 ^ ")"
   | Call (fname, args) -> fname ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"

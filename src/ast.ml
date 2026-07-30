@@ -5,6 +5,7 @@ type expr = {
 } and expr_desc =
   | Int of int
   | Float of float
+  | Bool of bool
   | String of string
   | Binop of string * expr * expr
   | Call of string * expr list
@@ -93,6 +94,7 @@ let rec string_of_expr (e:expr) : string =
   match e.desc with
   | Int i          -> Printf.sprintf "Int %d" i
   | Float f        -> Printf.sprintf "Float %g" f
+  | Bool b         -> Printf.sprintf "Bool %b" b
   | String s       -> Printf.sprintf "String %S" s
   | Binop (op,a,b) -> Printf.sprintf "Binop(%s, %s, %s)" op (string_of_expr a) (string_of_expr b)
   | Call (f,args)  -> let xs = args |> List.map string_of_expr |> String.concat ", " in
@@ -171,6 +173,7 @@ let label_of_expr (e:expr) : string =
   | Int i          -> Printf.sprintf "Int %d" i
   | Float f        -> Printf.sprintf "Float %g" f
   | String s       -> Printf.sprintf "String %S" s
+  | Bool b         -> Printf.sprintf "Bool %b" b
   | Binop (op,_,_) -> "Binop " ^ op
   | Call (f,_)     -> "Call " ^ f
   | Expr _         -> "Expr"
@@ -327,6 +330,7 @@ let rec pprint_expr ?(lvl=0) (e:expr) : string =
   match e.desc with
   | Int i -> string_of_int i
   | Float f  -> string_of_float f
+  | Bool b   -> string_of_bool b
   | String s -> Printf.sprintf "\"%s\"" s
   | Var x    -> x
   | Binop (op,a,b) ->

@@ -1,0 +1,26 @@
+// g8: 等値比較・単項マイナス・真偽値リテラル
+//
+//     いずれも字句解析器や評価器には実装があったのに
+//     式の文法規則が無く「書けなかった」もの。
+//
+//       ==  !=          等値。int / float / string / bool のそれぞれで比較できる
+//       - e             単項マイナス。neg(e) へ落とす
+//       true  false     真偽値リテラル
+//
+//     優先順位は 等値 < 比較 < ++ < 加減 < 乗除 < 単項マイナス なので、
+//     1 + 2 == 3 は (1 + 2) == 3 と読まれる。
+class C {
+  var flag = false;                     // bool のフィールド
+  method set(v) : unit !{mut} { flag = v; }
+  method get() : bool !{} { reply(flag); }
+  method t() : unit !{log, mut} {
+    flag = true;
+    if (flag == true)  { print("literal true ok"); }
+    if (flag != false) { print("literal false ok"); }
+    var b = 1 < 2;
+    print("b = " ++ b);
+    print("not-eq: " ++ (true != false));
+  }
+}
+var c = new C();
+send c.t();

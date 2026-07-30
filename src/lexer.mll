@@ -26,6 +26,8 @@ rule token = parse
 | [' ' '\t']+                       { token lexbuf }
 
   (* --- キーワード/記号 --- *)
+| "true"       { TRUE }
+| "false"      { FALSE }
 | "class"      { CLASS }
 | "become"     { BECOME }
 | "method"     { METHOD }
@@ -49,6 +51,7 @@ rule token = parse
 | "timeout"    { TIMEOUT }
 | "->"         { ARROW }
 | "=="         { EQ }
+| "!="         { NE }
 | ">="         { GE }
 | "<="         { LE }
 | ">"          { GT }
