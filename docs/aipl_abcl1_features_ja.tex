@@ -1,0 +1,704 @@
+% AIPL に express mode と where を入れるとどうなるか
+%   lualatex -interaction=nonstopmode aipl_abcl1_features_ja.tex   （2回）
+\documentclass[11pt,a4paper]{ltjsarticle}
+\usepackage{amsmath,amssymb}
+\usepackage{amsthm}
+\usepackage{mathpartir}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+\geometry{margin=22mm}
+
+\theoremstyle{remark}
+\newtheorem{remark}{注意}
+\newtheorem{finding}{測定}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{gray},
+  breaklines=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  keywordstyle=\bfseries,
+  commentstyle=\itshape\color{gray!130},
+}
+\lstdefinelanguage{AIPL}{
+  morekeywords={class,method,var,float,new,now,future,await,reply,send,become,
+    call,if,else,while,do,select,case,timeout,self,sender,remote,print,
+    where,express,atomic,int,string,bool,unit,any},
+  sensitive=true,
+  morecomment=[l]{//},
+  morestring=[b]",
+}
+
+\newcommand{\ty}[1]{\ensuremath{\mathtt{#1}}}
+
+\title{AIPL に express mode と \texttt{where} を入れるとどうなるか\\
+{\large ---\ ABCL/1 へ近づけることの利点と代償 ---}}
+\author{ABCL$^{c}$+ / AIOS 処理系（\texttt{yaskodama/abclcp}）}
+\date{2026年07月30日 09:39 JST 版}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+先の比較レポートで、AIPL は ABCL/1 から三種のメッセージ送信を継承しつつ
+express mode、返信先の一級性、\texttt{where} 制約つきパターン受信を
+落としていることを整理した。本稿はそのうち
+\textbf{express mode}と\textbf{\texttt{where}}の二つを AIPL に入れた場合に
+何が起きるかを、構文・実装・型システム・形式的保証の四層で検討する。
+
+結論を三点にまとめる。
+第一に、\textbf{両者は型システムをほとんど壊さない}。どちらも
+「いつメッセージを受理するか」の話であり、「どんな型を持つか」の話ではないためである。
+第二に、\texttt{where} は\textbf{進行定理に第四の枝「ガード待ち」を追加する}。
+これは失うものが明確で、しかも \texttt{select} と名前 dispatch の並立という
+既存の不整合を解消できるので、費用対効果が高い。
+第三に、express mode は意外にも\textbf{型健全性の証明を壊さない}。
+形式モデル AIPL$^-$ はアクターの逐次性を最初から落としており、
+同一アクターへの複数タスクの並行実行を既に許しているからである。
+壊れるのは\emph{プログラム側の}不変条件であり、だからこそ ABCL/1 は
+atomicity 宣言を用意していた。
+
+一方で express mode には実装上の前提がある。現在のメソッドのローカル変数は
+アクターの環境に直接置かれ、呼び出し時に退避・復元されていない。
+これは今は観測できない潜在的な問題だが、入れ子実行を導入した途端に
+表に出る。本稿はこれを実測で確認した。
+\end{abstract}
+
+\tableofcontents
+
+\section{はじめに}
+
+\subsection{問い}
+
+AIPL（ABCL$^{c}$+）は ABCL/1 の子孫を自認しているが、
+ABCL/1 の中核機構のうち次の三つを持っていない。
+
+\begin{itemize}
+\item \textbf{express mode} ---- 処理中のメッセージを中断して割り込む機構。
+\item \textbf{返信先の一級性} ---- 返信先を値として他者へ渡し、委譲する機構。
+\item \textbf{\texttt{where}} ---- オブジェクトの状態に依存した受理条件。
+\end{itemize}
+
+本稿は前者と後者、すなわち\emph{受理と割り込みに関する二つ}を導入した場合の
+帰結を検討する。返信先の一級化は線形型を要する別問題なので扱わない。
+
+\subsection{なぜこの二つなのか}
+
+現在の AIPL には次の具体的な穴がある。
+
+\begin{itemize}
+\item \texttt{now} で返信を待っているアクターは、その間\textbf{他のメッセージを
+  一切処理できない}。1 アクター 1 スレッドで、\texttt{await\_future} が
+  条件変数でブロックするためである。状態を問い合わせることも、
+  止めることもできない。
+\item 状態に依存した待ち合わせが書けない。「バッファが空でないときだけ
+  \texttt{get} を受理する」を表現するには、受理してから条件を見て、
+  駄目なら自分に送り直すしかない。受信規律の外へ出てしまう。
+\item 受信経路が二本ある。名前による dispatch と \texttt{select} が並立し、
+  同名のメッセージが通常の dispatch に先取りされると \texttt{select} には
+  残らない。
+\end{itemize}
+
+express mode は一つ目、\texttt{where} は二つ目と三つ目に直接効く。
+
+\section{提案する形}
+
+\subsection{\texttt{where} ---- 状態依存の受理条件}
+
+メソッド宣言と \texttt{select} の case に、真偽値の\emph{ガード}を付けられる
+ようにする。
+
+\begin{lstlisting}[language=AIPL]
+class Buffer {
+  var n = 0;
+  var cap = 3;
+
+  // n < cap のときだけ put を受理する
+  method put(x) : unit where n < cap {
+    n = n + 1;
+    print("put, n=" ++ n);
+  }
+
+  // n > 0 のときだけ get を受理する
+  method get() : int where n > 0 {
+    n = n - 1;
+    reply(n);
+  }
+}
+\end{lstlisting}
+
+\texttt{select} 側も同じ形にする。
+
+\begin{lstlisting}[language=AIPL]
+select {
+  case get() where n > 0 -> { reply(n); }
+  timeout 500 -> { print("empty"); }
+}
+\end{lstlisting}
+
+意味は ABCL/1 と同じである。ガードが偽のメッセージは\textbf{受理されず、
+メールボックスに残る}。状態が変わって真になれば受理される。
+
+\subsection{express mode ---- 割り込み}
+
+送信側は三種それぞれに express 版を用意する。既存の \texttt{send!}
+（\texttt{UnsafeSend}）と衝突しないよう、修飾子として \texttt{express} を置く。
+
+\begin{lstlisting}[language=AIPL]
+express send a.stop();          // 割り込んで実行、待たない
+var s = express now a.status(); // 割り込んで実行、返信を待つ
+var f = express future a.status();
+\end{lstlisting}
+
+受信側は、割り込みで実行されてよいメソッドを明示する。
+どのメソッドが他のメソッドの実行を中断しうるかは、
+読み手にとって最も重要な情報だからである。
+
+\begin{lstlisting}[language=AIPL]
+class Worker {
+  var progress = 0;
+  var stopped  = 0;
+
+  // 通常のメソッド。長く走る
+  method run(n) : unit {
+    var i = 0;
+    while i < n do {
+      if (stopped >= 1) { i = n; }
+      progress = progress + 1;
+      i = i + 1;
+    }
+  }
+
+  // 割り込みで呼ばれてよい。run の実行中でも応答する
+  express method status() : int {
+    reply(progress);
+  }
+
+  express method stop() : unit {
+    stopped = 1;
+  }
+}
+\end{lstlisting}
+
+割り込まれたくない区間は \texttt{atomic} で保護する。
+
+\begin{lstlisting}[language=AIPL]
+method transfer(k) : unit {
+  atomic {
+    from = from - k;      // この2行の間に割り込まれると
+    to   = to + k;        // 合計が壊れる
+  }
+}
+\end{lstlisting}
+
+\section{実装への影響}
+
+AIPL の実装を読んだうえで、変更箇所を具体的に見積もる。
+
+\subsection{\texttt{where} の実装}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.4cm}@{}}
+\toprule
+ファイル & 変更 \\
+\midrule
+\texttt{lexer.mll}   & \texttt{where} をキーワードに追加 \\
+\texttt{parser.mly}  & \texttt{method\_decl} に省略可能な \texttt{where expr}、
+  \texttt{select\_case} にも同じものを追加 \\
+\texttt{ast.ml}      & \texttt{method\_decl} に \texttt{guard : expr option}、
+  \texttt{select\_case} にも同様 \\
+\texttt{infer.ml}    & ガードをメソッドの環境（フィールド＋仮引数）で
+  \ty{bool} として型検査するだけ \\
+\texttt{eval\_thread.ml} & \textbf{ここが本体}。\texttt{actor\_loop} が
+  \texttt{Queue.pop} で先頭を取るのをやめ、メールボックスを走査して
+  「名前が一致し、かつガードが真」の最初のメッセージを選ぶ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+走査の機構はすでにある。\texttt{select} の実装 \texttt{pop\_matching\_message}
+はメールボックスを一旦すべて取り出し、パターンに合うものを探し、
+残りを戻している。ガード評価を足すだけで再利用できる。
+
+\begin{remark}
+これは \texttt{select} と通常 dispatch を\textbf{統一する好機}でもある。
+通常 dispatch がガード付きの走査になるなら、\texttt{select} は
+「この名前の集合のみを対象に、タイムアウト付きで走査する」という
+特別な場合にすぎない。受信経路が一本になり、
+先取り競合という現在の不整合が消える。
+\end{remark}
+
+\subsection{express mode の実装}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.4cm}@{}}
+\toprule
+ファイル & 変更 \\
+\midrule
+\texttt{lexer.mll}   & \texttt{express}, \texttt{atomic} をキーワードに追加 \\
+\texttt{parser.mly}  & 送信の express 版 3 種、\texttt{express method}、
+  \texttt{atomic \{ ... \}} 文 \\
+\texttt{ast.ml}      & 送信に mode を持たせる、\texttt{method\_decl} に
+  \texttt{express : bool}、\texttt{Atomic of stmt} \\
+\texttt{types.ml} / \texttt{infer.ml} &
+  express メソッドの \texttt{reply} を、選択されたメッセージの $\rho$ に
+  束縛する（\texttt{select} の case で既に行っている処理と同型） \\
+\texttt{eval\_thread.ml} &
+  アクターに第二のキューを足す。\texttt{eval\_stmt} の文境界で
+  express キューを覗き、あれば\emph{入れ子で}評価する。
+  \texttt{atomic} 区間ではこの覗き込みを止める \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+割り込みは協調的なポーリングで実現する。OCaml のシステムスレッドを
+外から割り込むのは現実的でないので、\texttt{eval\_stmt} が文の境界で
+express キューを確認し、あればその場で express メソッドの本体を
+入れ子に評価して戻る。粒度は文単位になる。
+
+\subsection{前提となる修正 ---- ローカル変数のスコープ}
+
+入れ子実行を入れる前に直さなければならない箇所がある。
+
+\begin{finding}
+現在、メソッドの\textbf{仮引数}は呼び出しの前後で退避・復元されている。
+
+\begin{lstlisting}
+let saved = List.map (fun p -> (p, Hashtbl.find_opt actor.env p)) params in
+  List.iter2 (fun p v -> Hashtbl.replace actor.env p v) params arg_vals;
+  ...
+  eval_stmt actor mdecl.body;
+  List.iter (fun (p, ov) -> ...) saved      (* 復元 *)
+\end{lstlisting}
+
+しかし本体の \texttt{var} で宣言された\textbf{ローカル変数}は
+\texttt{eval\_stmt} が \texttt{actor.env} へ直接書き込むだけで、
+退避も復元もされない。
+\end{finding}
+
+これは\emph{今は観測できない}。型検査器が各メソッドを独立した環境
+（\texttt{clone env}）で検査するため、他のメソッドのローカルを参照する
+プログラムは型エラーになる。実測すると次のとおりである。
+
+\begin{lstlisting}[language=AIPL]
+class C {
+  method a() : unit { var tmp = 777; print("a: tmp=" ++ tmp); }
+  method b() : unit { print("b: tmp=" ++ tmp); }   // 宣言していない
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language={}]
+TYPE_ERROR: line 8, col 24: unbound variable: tmp
+\end{lstlisting}
+
+型が守っているので実害が出ていない。しかし express mode を入れると
+\textbf{同一アクター上で入れ子実行が起きる}。
+外側のメソッドが \texttt{var tmp} を持ち、割り込んだ express メソッドも
+\texttt{var tmp} を持てば、両者は型検査上まったく別の変数なのに
+実行時には同じ \texttt{actor.env} のエントリを共有し、上書きされる。
+
+したがって express mode の前提として、
+\textbf{メソッド呼び出しごとのフレームを導入する}
+（またはローカル変数も仮引数と同様に退避・復元する）修正が必要である。
+これは express mode とは独立に価値のある修正でもある。
+
+\section{型システムへの影響 ---- ほぼ無傷}
+
+ここが本稿の中心的な観察である。
+
+\subsection{どちらも「型」の話ではない}
+
+\texttt{where} も express mode も、\textbf{メッセージをいつ受理するか}を
+変える機構であって、\textbf{メッセージがどんな型を持つか}を変えない。
+AIPL の型システムが述べているのは後者だけである。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.4cm}@{}}
+\toprule
+現在の検査 & 二機構の影響 \\
+\midrule
+メソッドの存在       & 影響なし \\
+引数の個数と型       & 影響なし \\
+返信の型             & 影響なし \\
+返信の回数（高々一度）& express は\emph{文脈の分離}が必要。
+  \texttt{select} の case で既に実装済みの処理と同型 \\
+\texttt{select} の照合 & \texttt{where} でガードの \ty{bool} 検査が増えるだけ \\
+公開時の注釈         & 影響なし \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{\texttt{where} の型付け}
+
+ガードはメソッドの環境（フィールド＋仮引数）で \ty{bool} として
+型検査するだけである。追加規則は次の一行で足りる。
+
+\begin{mathpar}
+\inferrule*[right=\textsc{Method-Guard}]
+  {\Gamma, \overline{x{:}\tau} \vdash g : \ty{bool} \\
+   \Gamma, \overline{x{:}\tau} \vdash_{C.m} \mathit{body}}
+  {\Gamma \vdash \texttt{method}\ m(\overline{x})\ \texttt{where}\ g\ \{\mathit{body}\}}
+\end{mathpar}
+
+依存型や篩型は\emph{不要}である。それらが必要になるのは
+「ガードが真なら本体は安全」を\emph{証明}したい場合であって、
+型安全性のためではない。
+
+\subsection{express mode における \texttt{reply} の帰属}
+
+express メソッドの本体にある \texttt{reply} は、割り込んだ express
+メッセージへの返信である。囲んでいた通常メソッドの返信ではない。
+
+これは既に解決済みの問題と同型である。\texttt{select} の case 本体の
+\texttt{reply} も、囲むメソッドではなく選択されたメッセージへの返信であり、
+型検査器は case 本体で \texttt{reply} をそのメソッドの $\rho$ に
+束縛し直している。express メソッドも同じ扱いでよい。
+実行時に \texttt{ctx\_msg\_id} を退避・復元する処理も、
+\texttt{select} の実装がそのまま雛形になる。
+
+\subsection{ガードの純粋性という新しい要求}
+
+一点だけ、型システムに新しい要求が生じる。
+\textbf{ガードは副作用を持ってはならない}。
+受理の可否を試すためにガードを評価するので、
+そこで状態が変わると「試したら受理条件が変わった」ことになる。
+
+現在の OCaml 実装には効果システムが無い。最小限の対処は構文的な制限である。
+
+\begin{itemize}
+\item ガードで参照できるのはフィールドと仮引数のみ。
+\item 呼び出せるのは純粋なプリミティブのみ（比較、算術など）。
+\item \texttt{now} / \texttt{future} / \texttt{send} / \texttt{reply} /
+  \texttt{new} / \texttt{become} は書けない。
+\end{itemize}
+
+これは既存の構文検査（\texttt{expr\_has\_reply} など）と同じ形の
+走査で実装できる。
+
+\section{形式的保証への影響}
+
+\subsection{保存定理 ---- 影響なし}
+
+保存（preservation）は「well-typed な構成が一歩進んでも well-typed」である。
+状態の型不変条件は「状態が常に宣言された型を持つ」ことしか言わない。
+\texttt{where} は遷移が起こる条件を狭めるだけ、
+express mode は遷移の順序を変えるだけなので、どちらも保存を壊さない。
+
+\subsection{進行定理 ---- \texttt{where} は枝を一本増やす}
+
+現在の進行定理は三択として述べられている ---- 値・簡約・\texttt{await} 待ち。
+デッドロックは型では排除できないので、その境界を明示したものである。
+
+\texttt{where} を入れると、\textbf{第四の枝が必要になる}。
+メールボックスにメッセージがあるのに、どのガードも真でないため
+配送できない構成が存在するからである。
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+現在 & \texttt{where} 導入後 \\
+\midrule
+値である & 値である \\
+簡約できる & 簡約できる \\
+\texttt{await} 待ちである & \texttt{await} 待ちである \\
+ & \textbf{ガード待ちである} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+これは失うものが明確である。定理の主張が一つ弱くなる代わりに、
+「なぜ止まっているか」の分類が一つ増える。
+言い換えれば、\texttt{where} は\textbf{デッドロックの形を一つ増やす}。
+バッファが空のまま \texttt{get} だけが溜まれば、それは正当な待ちであるが、
+プログラムの誤りでそうなった場合と静的に区別できない。
+
+\subsection{逐次性 ---- express mode は証明を壊さない}
+
+これは直観に反するが、確認できた事実である。
+形式モデル AIPL$^-$ は「保証しないこと」の一覧で、
+アクターの逐次性を明示的に\emph{落として}いる。
+
+\begin{quote}
+\small
+actor の逐次性 ---- 落とした。同じ actor あての二通が同時にタスクになりうる。
+\end{quote}
+
+配送規則は無条件に新しいタスクを起こすので、
+同一アクターに対して複数のタスクが並行に走りうる。
+そして同レポートは、これが\emph{型安全性には影響しない}と明言している。
+状態の型不変条件は状態が常に正しい型であることしか言わず、
+どの順で書き換えられるかは問わないからである。
+
+したがって express mode の割り込みは、
+\textbf{形式モデルが既に許している実行の一部}にすぎない。
+逆に言えば、現在の\emph{実装}が形式モデルより厳しく
+（1 アクター 1 スレッドの逐次実行）作られているだけである。
+express mode はその差を埋める方向の変更であり、
+型健全性の証明をやり直す必要はない。
+
+\subsection{危ういのはプログラム側の不変条件}
+
+壊れるのは型ではなく、プログラムが持っている\emph{意味的な}不変条件である。
+
+リポジトリの健全性レポートは哲学者の食事問題について資源デッドロック自由を
+証明しているが、その証明はフォーク割り当てプロトコルの抽象状態機械
+$s = (\mathrm{phase}, \mathrm{own})$ についてのものであり、
+状態の健全性 $\mathrm{wf}(s)$ は
+「\textsf{Hold} なら \texttt{lo} のみを持つ」のように
+\textbf{phase と own が整合していること}を要求する。
+
+express mode で「phase を書き換えたが own はまだ」という瞬間に
+割り込まれると、その瞬間の状態は $\mathrm{wf}(s)$ を満たさない。
+型は壊れないが、抽象状態機械との対応が壊れる。
+同レポートが「実装との対応は言えない」と述べている箇所が、
+まさにここで効いてくる。
+
+\textbf{これが ABCL/1 に atomicity 宣言があった理由である。}
+割り込みを許すなら、割り込まれてはいけない区間を宣言できなければならない。
+express mode と \texttt{atomic} は分離できない一対の機構である。
+
+\section{メリット}
+
+\subsection{\texttt{where} の利点}
+
+\begin{enumerate}
+\item \textbf{同期が宣言的になる。} 有界バッファ、資源プール、
+  段階制御（初期化が済むまで受け付けない）などが、
+  受理条件としてそのまま書ける。フラグ変数も待ちループも要らない。
+
+\item \textbf{「受理してから条件を見て送り直す」という悪い定石が消える。}
+  現在この形を書くと、条件が偽の間メールボックスを自分で埋め続けることになる。
+  受信規律の中で待てるようになる。
+
+\item \textbf{受信経路が一本化できる。} 通常 dispatch がガード付き走査に
+  なれば、\texttt{select} はその特別な場合になる。
+  現在の「\texttt{select} が通常 dispatch に先取りされる」という
+  観測可能な不整合が消える。これは表現力を増やす話ではなく、
+  後付けで生じた矛盾の解消である。
+
+\item \textbf{既存の機構を再利用できる。} メールボックスの走査は
+  \texttt{select} の実装にすでにある。ガード評価を足すだけである。
+
+\item \textbf{型システムをほとんど触らない。} ガードの \ty{bool} 検査が
+  増えるだけで、依存型は要らない。
+\end{enumerate}
+
+\subsection{express mode の利点}
+
+\begin{enumerate}
+\item \textbf{塞がったアクターに手が届く。} 現在 \texttt{now} で待っている
+  アクターは石になる。express mode があれば、待っている最中でも
+  状態問い合わせ・中止指示・監視に応答できる。
+  これは現在の AIPL の最大のモデル的な穴に直接効く。
+
+\item \textbf{デッドロックからの脱出手段になる。} 相互 \texttt{now} で
+  固まった二者に、外から \texttt{express send a.abort()} を送れる。
+  型では排除できないデッドロックに対する\emph{運用上の}答えになる。
+
+\item \textbf{監視・内省が現実的になる。} \texttt{aios\_*} の内省
+  プリミティブは、対象アクターが動いていると意味のある値を返しにくい。
+  express mode があれば「いま何をしているか」を当人に聞ける。
+
+\item \textbf{タイムアウトの段階的な扱いが書ける。}
+  \texttt{select} の \texttt{timeout} は自分が待つ側の機構だが、
+  express mode は\emph{相手を叩く}側の機構である。両方あると
+  「一定時間返らなければ問い合わせ、それでも駄目なら中止」が書ける。
+
+\item \textbf{型健全性の証明を壊さない}（\S 5.3）。
+\end{enumerate}
+
+\section{デメリットと危険}
+
+\subsection{\texttt{where} の代償}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.8cm}@{}}
+\toprule
+項目 & 内容 \\
+\midrule
+進行定理が弱まる & 「ガード待ち」という第四の枝が増える（\S 5.2） \\
+FIFO でなくなる & メッセージの処理順が到着順と一致しなくなる。
+  意味論として明記が必要 \\
+飢餓 & あるメッセージのガードが永遠に真にならない場合、
+  そのメッセージは永久に残る。公平性は保証できない \\
+静的に検出できない誤り & 恒偽のガードを持つメソッドは
+  「決して受理されない」が、型検査は通る。
+  \texttt{select} の arity 不一致と同じ種類の
+  \emph{静かに壊れる}誤りが一つ増える \\
+コスト & 配送ごとにメールボックスを走査し、
+  各メッセージについてガードを評価する。
+  $O(1)$ から $O(n)$ になる \\
+ガードの純粋性 & 効果システムが無いので構文的に制限する必要がある（\S 4.4）\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+飢餓と恒偽ガードについては、緩和策がある。
+明らかに恒偽なガード（\texttt{false} や定数比較）は警告できる。
+また、あるメッセージが一定回数の走査で受理されなかったことを
+実行時に記録すれば、診断の手がかりになる。
+
+\subsection{express mode の代償}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.8cm}@{}}
+\toprule
+項目 & 内容 \\
+\midrule
+\textbf{意味的不変条件が壊れる} & 最大の問題。
+  \texttt{atomic} と対で導入しなければ使い物にならない（\S 5.4）\\
+前提となる修正 & メソッド呼び出しごとのフレームが必要。
+  現在ローカル変数は \texttt{actor.env} に直接置かれ、
+  退避・復元されていない（\S 3.3、実測済み）\\
+割り込み粒度 & 協調的ポーリングなので文境界でしか割り込めない。
+  単一の長い式や組込み関数の内部では割り込めない \\
+再入 & express メソッドが通常メソッドを呼ぶ、
+  express の中で express が来る、といった入れ子の深さ制限が要る \\
+デバッグ可能性 & 実行の非決定性が増える。
+  「どこで割り込まれたか」を再現するのが難しい \\
+既存プログラムの前提 & 「メソッドは中断されない」を暗黙に仮定している
+  既存コードは、express メソッドを一つ足した時点で
+  その仮定を失う。既定は非割り込みにすべき \\
+証明との対応 & 型健全性は無傷だが、
+  抽象状態機械との refinement を主張していた箇所は
+  \texttt{atomic} の裏付けが必要になる \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{二機構の相互作用}
+
+\begin{itemize}
+\item \textbf{express メッセージにガードを許すか。}
+  許すと「割り込みたいのに受理されない」という状況が生じ、
+  express の目的（緊急の応答）に反する。
+  \textbf{express メソッドにはガードを付けられない}とするのが妥当である。
+
+\item \textbf{\texttt{atomic} 区間の中で \texttt{now} を書けるか。}
+  書けると、\texttt{atomic} のまま返信を待つことになり、
+  その間割り込めない。express mode の目的を損なう。
+  \textbf{\texttt{atomic} 区間では \texttt{now} と \texttt{await} を禁止}
+  するのが安全である。これは構文的に検査できる。
+
+\item \textbf{ガード評価中に割り込むか。}
+  ガードは純粋で短いので、割り込まないのが単純である。
+\end{itemize}
+
+\section{段階的な導入案}
+
+いずれも独立に価値があり、この順序なら各段階で退行を測れる。
+
+\begin{center}
+\small
+\begin{tabular}{@{}rlp{7.2cm}@{}}
+\toprule
+段階 & 内容 & 備考 \\
+\midrule
+0 & メソッド呼び出しフレームの導入 &
+  ローカル変数を \texttt{actor.env} から出す。
+  express mode の前提だが単独でも意味がある潜在バグの修正 \\
+1 & \texttt{select} の case に \texttt{where} &
+  最小。通常 dispatch の FIFO を変えないので影響が閉じている。
+  ガードの \ty{bool} 検査と純粋性検査をここで作る \\
+2 & メソッドに \texttt{where}、通常 dispatch を走査化 &
+  進行定理に枝が増える。\texttt{select} を統一する好機 \\
+3 & \texttt{atomic} 区間 &
+  express より\emph{先}に入れる。
+  中で \texttt{now} / \texttt{await} を禁止する検査も同時に \\
+4 & express mode &
+  段階 0 と 3 が前提。既定は非割り込み、
+  \texttt{express method} と明示したものだけ割り込める \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+段階 1 と 2 の間、段階 3 と 4 の間で、
+既存コーパスの型検査判定と差分テストハーネスを回して測るべきである。
+これまでの改修で、見積りが実測と食い違うことが繰り返しあった。
+
+\section{結論}
+
+\subsection{どちらを先に入れるべきか}
+
+\textbf{\texttt{where} を先に入れるべきである。}理由は三つある。
+
+\begin{enumerate}
+\item 型システムへの影響が \ty{bool} 検査の追加だけで済む。
+\item 失うものが「進行定理に枝が一本増える」と明確に述べられる。
+\item \texttt{select} と名前 dispatch の並立という\emph{既存の}不整合を
+  解消できる。表現力の追加ではなく、負債の返済としての価値がある。
+\end{enumerate}
+
+express mode は、前提となる修正（呼び出しフレーム）と
+対で必要な機構（\texttt{atomic}）を抱えており、
+しかも既存コードの暗黙の仮定を壊す。
+価値は高いが、\texttt{where} のあとに置くのが順序として自然である。
+
+\subsection{全体としてどう評価するか}
+
+この二つを入れると、AIPL は ABCL/1 に確かに近づく。
+そして\textbf{その代償は型システムではなく、推論の難しさとして現れる}。
+
+型健全性は無傷である。保存は影響を受けず、
+逐次性は形式モデルが最初から落としているので express mode も証明を壊さない。
+進行定理だけが \texttt{where} によって枝を一本増やす。
+
+しかし、プログラムについて\emph{個別に}証明していた性質
+---- 哲学者の食事問題の資源デッドロック自由のような ----
+は、割り込みが入ると抽象状態機械との対応を \texttt{atomic} で
+裏づけ直す必要がある。
+
+先の比較レポートで
+「失った表現力が型付けを容易にしている」と書いた。本稿はその裏返しである。
+\textbf{表現力を戻すと、型は保てるが、個別の証明の手間が増える}。
+どちらを重く見るかが判断の分かれ目であり、
+研究目的が「実装された言語の健全性を機械検証する」ことにあるなら、
+\texttt{where} までは進み、express mode は \texttt{atomic} の設計が
+固まってから、というのが妥当な線である。
+
+\begin{thebibliography}{9}
+
+\bibitem{abcl1}
+Akinori Yonezawa, Jean-Pierre Briot, Etsuya Shibayama.
+\newblock Object-Oriented Concurrent Programming in ABCL/1.
+\newblock \emph{OOPSLA 1986}, pp.~258--268.
+
+\bibitem{abclbook}
+Akinori Yonezawa (ed.).
+\newblock \emph{ABCL: An Object-Oriented Concurrent System}. MIT Press, 1990.
+
+\bibitem{cmp}
+本リポジトリ \texttt{docs/aipl\_vs\_abcl1\_ja.pdf} ---
+  AIPL と ABCL/1 の機能・モデル比較。
+
+\bibitem{snd}
+本リポジトリ \texttt{docs/aipl\_soundness\_ja.pdf} ---
+  AIPL$^-$ の型健全性・型安全性の Coq 検証、哲学者の食事問題、
+  および「保証しないこと」の一覧。
+
+\bibitem{rep}
+本リポジトリ \texttt{docs/aipl\_reply\_inference\_ja.pdf} ---
+  \texttt{reply} からの戻り値型推論と \texttt{select} における
+  返信の帰属の扱い。
+
+\bibitem{guide}
+本リポジトリ \texttt{docs/aipl\_guide\_ja.pdf} --- 現状の言語ガイド。
+
+\end{thebibliography}
+
+\end{document}
