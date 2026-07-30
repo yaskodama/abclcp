@@ -1,0 +1,899 @@
+% AIPL の型健全性と型安全性（第2版）
+%   lualatex -interaction=nonstopmode aipl_soundness2_ja.tex   （2回）
+\documentclass[11pt,a4paper]{ltjsarticle}
+\usepackage{amsmath,amssymb}
+\usepackage{amsthm}
+\usepackage{mathpartir}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage[hidelinks]{hyperref}
+\geometry{margin=22mm}
+
+\newtheorem{theorem}{定理}
+\newtheorem{lemma}[theorem]{補題}
+\newtheorem{corollary}[theorem]{系}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{定義}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{注意}
+\newtheorem{finding}[theorem]{所見}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  basicstyle=\ttfamily\small, backgroundcolor=\color{codebg},
+  frame=single, framesep=4pt, rulecolor=\color{gray},
+  breaklines=true, showstringspaces=false,
+  columns=fullflexible, keepspaces=true,
+  keywordstyle=\bfseries, commentstyle=\itshape\color{gray!130},
+}
+\lstdefinelanguage{AIPL}{
+  morekeywords={class,method,var,new,now,future,await,reply,send,become,
+    timeout,else,if,while,do,select,case,self,sender,remote,print,
+    int,float,string,bool,unit,any,true,false},
+  sensitive=true, morecomment=[l]{//}, morestring=[b]",
+}
+
+% ---- 記法（第1版を踏襲） ----
+\newcommand{\tint}{\ensuremath{\mathtt{int}}}
+\newcommand{\tbool}{\ensuremath{\mathtt{bool}}}
+\newcommand{\tunit}{\ensuremath{\mathtt{unit}}}
+\newcommand{\tstr}{\ensuremath{\mathtt{string}}}
+\newcommand{\tact}[1]{\ensuremath{\mathtt{actor}[#1]}}
+\newcommand{\tfut}[2]{\ensuremath{\mathtt{future}\langle #1 \,!\, #2 \rangle}}
+\newcommand{\Om}{\Omega}
+\newcommand{\Sm}{\Sigma}
+\newcommand{\Ph}{\Phi}
+\newcommand{\Ps}{\Psi}
+\newcommand{\mtab}{\mathrm{mtab}}
+\newcommand{\stype}{\mathrm{stype}}
+\newcommand{\mret}{\mathrm{ret}}
+\newcommand{\meff}{\mathrm{eff}}
+\newcommand{\heapok}{\mathrm{heap\_ok}}
+\newcommand{\msgok}{\mathrm{msg\_ok}}
+\newcommand{\taskok}{\mathrm{task\_ok}}
+\newcommand{\confok}{\mathrm{conf\_ok}}
+\newcommand{\futok}{\mathrm{fut\_ok}}
+\newcommand{\stuck}{\mathrm{stuck}}
+\newcommand{\cstep}{\Longrightarrow}
+\newcommand{\subs}[2]{[#1 := #2]}
+\newcommand{\Eff}{\mathcal{E}}
+
+\title{AIPL の型健全性と型安全性（第 2 版）\\
+{\large ---\ 現行実装から証明可能な範囲 AIPL$^{-2}$ を切り出し、
+効果と期限つきで証明する ---}}
+\author{児玉工房 / AICE $\cdot$ AIPL プロジェクト}
+\date{2026年07月30日 14:02}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+第 1 版（2026 年 7 月 28 日）は、\texttt{reply} と戻り値型が結ばれていない
+当時の実装から、それを結んだ\emph{仮想の}部分言語 AIPL$^-$ を切り出して
+型健全性と型安全性を述べた。その後の実装でこの仮定は現実になり、
+さらに効果注釈と期限付き待ちが加わった。
+
+本稿は二段構えである。第 \ref{part:scope} 部で\textbf{現行実装から
+証明が成立する範囲を切り出す}。どの機能が入り、どれが外れ、
+なぜそうなるかを実装の事実に基づいて判定する。
+第 \ref{part:form} 部でその範囲 \textbf{AIPL$^{-2}$} を効果と期限つきで
+定式化し、第 \ref{part:proof} 部で証明する。
+
+主結果は\textbf{進行定理が二択になる}ことである。
+第 1 版の進行定理は「終状態・簡約できる・未解決 future の await で
+ブロック」の三択であり、第三の枝がデッドロックであった。
+AIPL$^{-2}$ では期限のない待ちが構文に存在せず、
+待ちは残り時間を減らす簡約として進むので、
+\textbf{ブロックの枝が消える}。系として\textbf{デッドロック自由}が言える。
+これは第 1 版が「一般には言えない」と明記した性質である。
+代償は明確で、停止性は依然として言えない。
+
+副産物として、効果の健全性から
+\textbf{実時間側のアクターがエージェント側を待てない}ことが定理として出る。
+また定式化の過程で、現行実装の効果伝播に穴があることが分かった ----
+\texttt{now} を \texttt{future} と \texttt{await} に分けて書くと
+効果検査を逃れる。第 \ref{sec:gap} 節で報告する。
+\end{abstract}
+
+\tableofcontents
+
+\part{証明が成立する範囲を切り出す}
+\label{part:scope}
+
+\section{第 1 版との関係}
+
+第 1 版 \texttt{docs/aipl\_soundness\_ja.pdf}（28 ページ）は次の立場を採った。
+
+\begin{quote}
+\small
+現行実装ではメソッドの返り値型が抽象構文木に存在せず、\texttt{reply} と
+\texttt{now} / \texttt{future} の戻り値が型で結ばれていないため、
+これらは \texttt{any} に落ちている。本レポートは、この一点だけを直した
+部分言語 AIPL$^-$ を定義し、その型健全性と型安全性を Coq で機械検証した。
+\end{quote}
+
+その後の実装で状況が変わった。第 1 版が「一点だけ直した仮想の言語」として
+仮定したものが、実装済みになっている。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+第 1 版が仮定または課題としたこと & 現在 & 実装 \\
+\midrule
+\texttt{reply} を本体の値と結ぶ & \textbf{実装済} & $\rho$ 表による推論と注釈 \\
+\texttt{now} / \texttt{future} の \texttt{any} を消す & \textbf{実装済} & 送信地点が $\rho$ を返す \\
+クラスの状態に型を宣言する & 一部 & 初期値から推論。宣言はまだ \\
+\texttt{send!}・remote・\texttt{sender} を any 境界として残す & そのまま & 変わらず \\
+効果 & \textbf{追加} & 8 種の効果注釈と検査 \\
+期限付き待ち & \textbf{追加} & \texttt{now/await ... timeout k else e} \\
+返信の線形性 & \textbf{追加} & 高々一度、注釈時はちょうど一度 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+したがって本稿の AIPL$^{-2}$ は、第 1 版の AIPL$^-$ と違って
+\textbf{仮想の言語ではない}。現行実装の部分集合であり、
+その部分集合に留まって書けば定理が保証を与える。
+
+\begin{remark}
+第 1 版は公開済み（\url{https://kodamay.org/reports/2026-07-28_aipl_soundness.pdf}）
+なので上書きせず、本稿を第 2 版として並置する。
+第 1 版の定理は AIPL$^-$ について依然として正しい。
+本稿は対象を広げ、主張を一つ強める。
+\end{remark}
+
+\section{現行実装の機能一覧と可否判定}
+
+現行実装（\texttt{yaskodama/abclcp}, branch \texttt{make-src-base}）の機能を
+一つずつ判定する。判定の根拠は実装の事実であり、推測ではない。
+
+\begin{center}
+\small
+\begin{longtable}{@{}llp{7.0cm}@{}}
+\toprule
+機能 & 判定 & 理由 \\
+\midrule
+\endhead
+変数・局所束縛 \texttt{var x = e} & \textbf{入る} & 代入補題の対象 \\
+算術・比較・等値・単項マイナス & \textbf{入る} &
+  \texttt{/} は \tint 同士でも \texttt{float}、整数除算は \texttt{div}。
+  評価器と型が一致している \\
+真偽値リテラル・条件分岐 & \textbf{入る} & 基本 \\
+文字列と \texttt{++} & \textbf{入る} &
+  \texttt{++} は全域関数（両辺を文字列化）。失敗しない \\
+フィールド（状態） & \textbf{入る} & store の型不変条件を言うため \\
+クラス表・メソッド表 & \textbf{入る} & メソッド解決の核 \\
+\texttt{new C} による生成 & \textbf{入る} & 表が動的に伸びる。単調性が要る \\
+\texttt{future} 送信 & \textbf{入る} & 中心 \\
+\texttt{await ... timeout k else e} & \textbf{入る} & \textbf{本稿の中心} \\
+\texttt{now ... timeout k else e} & \textbf{入る} & 上の糖衣 \\
+\texttt{send}（past 型）& \textbf{入る} & future を捨てる糖衣 \\
+\texttt{reply} & \textbf{入る} & 戻り値型と結ばれた。線形性も検査される \\
+戻り値型注釈 & \textbf{入る} & $\mret(C,m)$ として表に入れる \\
+効果注釈 & \textbf{入る} & \textbf{本稿で追加} \\
+\texttt{self} & \textbf{入る} & 状態アクセスとクラス文脈 \\
+プリミティブ（\texttt{print}, \texttt{ai\_call} 等）& \textbf{入る} &
+  宣言された型と効果を持つ不透明な定数として扱う \\
+\midrule
+期限のない \texttt{now} / \texttt{await} & \textbf{外れる} &
+  \textbf{これを外すことが本稿の要点}。実装は既定で警告、
+  \texttt{AIOS\_STRICT\_DEADLINE=1} でエラー \\
+\texttt{sender} & 外れる & 型が \texttt{any} で、送信先のメソッドも検査されない \\
+\texttt{remote(...)} & 外れる & 戻り値が \texttt{any}。対向ノードの
+  インタフェース記述の機構が無い \\
+\texttt{send!}（unsafe send）& 外れる & 明示的な escape hatch \\
+\texttt{become} & 外れる & 置換後のインタフェース互換性を検査していない \\
+アクター型の区別 & 外れる & \texttt{unify} が
+  \texttt{TActor(\_,\_), TActor(\_,\_) -> ()} で全アクターを同一視する \\
+\texttt{select} & 部分的に外れる &
+  \texttt{case} の照合と \texttt{reply} の帰属は実装済みだが、
+  受信の非決定性を構成に入れると議論が別問題になる \\
+配列 & 条件つき & 添字が範囲外なら実行時に失敗する。
+  \S\ref{sec:err} の\emph{指定エラー}として扱う \\
+\texttt{while} & 入るが停止性は言えない & ループ本体の \texttt{reply} は
+  線形性検査が弾く \\
+overload の曖昧性 & 外れる & 注釈で一意に決まる範囲に限る。
+  実装は曖昧をエラーにしている \\
+多相（型スキーム）& 外れる & 引数は単相。単一化アルゴリズムの健全性は別課題 \\
+\texttt{express} / \texttt{atomic} / \texttt{where} & 該当なし & 未実装 \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\section{入る理由・外れる理由}
+
+判定のうち、理由を述べておくべきものを挙げる。
+
+\subsection{期限のない待ちを外すと何が変わるか}
+
+第 1 版の進行定理の第三の枝は「すべてのタスクが未解決 future を
+await している」であった。期限がなければ、その状態から抜ける手段が
+言語に無い。だから型では排除できない。
+
+期限を必須にすると事情が変わる。待ちは\emph{残り時間を減らす}という
+簡約になり、残り時間が尽きれば \texttt{else} 節へ簡約される。
+つまり\textbf{待っているタスクは常に簡約できる}。
+第三の枝が空になり、進行定理は二択になる。
+
+\begin{remark}
+これは「時間が経つ」ことを簡約として数える立場である。
+計算は進んでいないが構成は動いている。
+実装との対応は良い ---- \texttt{await\_future\_timeout} は
+OCaml の \texttt{Condition} に時限待ちが無いため 1 ミリ秒刻みの
+ポーリングで実装されており、\emph{文字どおり}時間を刻む簡約になっている。
+\end{remark}
+
+\subsection{プリミティブをどう扱うか}
+
+\texttt{ai\_call} や \texttt{print} の中身は AIPL の外にある。
+これらを\textbf{宣言された型と効果を持つ不透明な定数}として扱う。
+すなわち $p : (\bar\tau) \to \tau \,!\, \varepsilon_p$ が与えられており、
+$p(\bar v)$ は 1 ステップで $\tau$ 型の値へ簡約され、その際 $\varepsilon_p$ の
+効果を起こす、と公理化する。
+
+これは逃げではなく、効果系の意味そのものである。
+効果の健全性（定理 \ref{thm:effsound}）は
+「プログラムが宣言した以外の効果を起こさない」を主張するが、
+プリミティブが宣言どおりに振る舞うことは前提であり、証明できない。
+\textbf{前提であることを明示するのが本稿の立場}である。
+
+\subsection{指定エラー ---- 配列の範囲外}
+\label{sec:err}
+
+配列の添字が範囲外なら実行時に失敗する。これを詰まり（stuck）と
+呼んでしまうと型安全性が壊れるので、標準的な扱いに従い
+\emph{指定エラー} $\mathbf{err}$ を導入する。
+型安全性の主張は「型の不整合で詰まらない」であり、
+$\mathbf{err}$ への到達は認める。ゼロ除算と同じ扱いである。
+
+\subsection{アクター型が区別されない件}
+
+実装の \texttt{unify} は \texttt{TActor} 同士を無条件に成功させる。
+したがって \texttt{actor[A]} と \texttt{actor[B]} が単一化できてしまう。
+これは潜在的な穴であり、AIPL$^{-2}$ では
+\textbf{アクター型はクラス名で区別される}という前提を置く。
+実装がこの前提を満たしていないので、
+この一点は\textbf{モデルが実装より厳しい}箇所である（\S\ref{sec:impl}）。
+
+\section{AIPL$^{-2}$ の確定}
+
+以上より、AIPL$^{-2}$ は次の言語である。
+
+\begin{quote}
+現行 AIPL のうち、\texttt{sender}・\texttt{remote}・\texttt{send!}・
+\texttt{become}・\texttt{select} を使わず、
+すべての \texttt{now} と \texttt{await} に期限と \texttt{else} 節を書き、
+すべてのメソッドに戻り値型と効果を注釈し、
+アクター型をクラス名で区別する言語。
+\end{quote}
+
+この範囲に留まって書けば、以下の定理が保証を与える。
+
+\part{定式化}
+\label{part:form}
+
+\section{構文}
+
+\begin{align*}
+\tau &::= \tint \mid \tbool \mid \tunit \mid \tstr
+        \mid \tact{C} \mid \tfut{\tau}{\varepsilon} \\
+\varepsilon &\subseteq \Eff = \{\mathtt{mut},\mathtt{time},\mathtt{io},
+        \mathtt{mem},\mathtt{net},\mathtt{ai},\mathtt{fs},\mathtt{log}\} \\[2pt]
+v &::= n \mid b \mid () \mid s \mid a \mid f \\
+e &::= v \mid x \mid e \oplus e
+     \mid \mathtt{var}\ x = e;\ e
+     \mid \mathtt{if}\ e\ e\ e \\
+  &\quad \mid \mathtt{self}.\mathtt{fld} \mid \mathtt{self}.\mathtt{fld} := e
+     \mid \mathtt{new}\ C(\bar e)
+     \mid p(\bar e) \\
+  &\quad \mid \mathtt{future}\ e.m(\bar e)
+     \mid \mathtt{await}\ e\ \mathtt{timeout}\ k\ \mathtt{else}\ e
+     \mid \mathtt{reply}\ e
+\end{align*}
+
+$a$ はアクター名、$f$ は future 名、$k \in \mathbb{N}$ は残り時間である。
+$\tfut{\tau}{\varepsilon}$ は「$\tau$ 型の値を返す future で、
+それを待つと $\varepsilon$ の効果を負う」を表す。
+
+\subsection{糖衣}
+
+\begin{align*}
+\mathtt{now}\ e.m(\bar e)\ \mathtt{timeout}\ k\ \mathtt{else}\ e_a
+&\;\equiv\;
+\mathtt{var}\ f = \mathtt{future}\ e.m(\bar e);\
+\mathtt{await}\ f\ \mathtt{timeout}\ k\ \mathtt{else}\ e_a \\
+\mathtt{send}\ e.m(\bar e)
+&\;\equiv\;
+\mathtt{var}\ \_ = \mathtt{future}\ e.m(\bar e);\ ()
+\end{align*}
+
+\begin{remark}[効果の伝播がこの糖衣から導かれる]
+\label{rem:prop}
+効果を future の型に載せたので、
+\textbf{待つ側だけが呼ばれる側の効果を負う}という規律が
+規則を追加せずに出る。
+\texttt{now} は \texttt{await} を含むので負い、
+\texttt{send} は future を捨てるので負わない。
+第 1 版に無かった論点であり、実装が \texttt{now} の辺に沿って
+不動点で伝播させているのを、より一様な形で述べたことになる。
+\end{remark}
+
+\section{表と構成}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+$\mtab(C,m) = (\bar\tau) \to \tau_r \,!\, \varepsilon_m$ & メソッド表 \\
+$\mret(C,m) = \tau_r$、$\meff(C,m) = \varepsilon_m$ & 戻り値型と宣言効果 \\
+$\stype(C)$ & クラス $C$ の状態の型 \\
+$\Om : a \mapsto C$ & アクター表 \\
+$\Sm : a \mapsto v$ & 状態表 \\
+$\Ph : f \mapsto (\tau, \varepsilon)$ & future 型表 \\
+$\Ps : f \mapsto v_\bot$ & future 値表（$\bot$ は未解決）\\
+$M$ & メッセージの多重集合 $\langle a \Leftarrow m(\bar v),\, f\rangle$ \\
+$T$ & タスク列 $(a, e, f)$。$f$ は解決すべき future \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+構成は $\mathcal{C} = \langle \Om, \Sm, \Ph, \Ps, M, T\rangle$ である。
+
+\section{型付け規則}
+
+判断は $\Om;\Ph;\Gamma;C \vdash e : \tau \,!\, \varepsilon$ である
+（$C$ は \texttt{self} のクラス、$\Gamma$ は変数環境）。
+主要な規則のみ示す。
+
+\begin{mathpar}
+\inferrule*[right=\textsc{T-Field}]
+  {\stype(C) = \tau}
+  {\Om;\Ph;\Gamma;C \vdash \mathtt{self}.\mathtt{fld} : \tau \,!\, \emptyset}
+\and
+\inferrule*[right=\textsc{T-Assign}]
+  {\stype(C) = \tau \\ \Gamma \vdash e : \tau \,!\, \varepsilon}
+  {\Gamma;C \vdash \mathtt{self}.\mathtt{fld} := e :
+    \tunit \,!\, \varepsilon \cup \{\mathtt{mut}\}}
+\and
+\inferrule*[right=\textsc{T-New}]
+  {\mtab(C',\mathtt{init}) = (\bar\tau) \to \tunit \,!\, \_ \\
+   \Gamma \vdash e_i : \tau_i \,!\, \varepsilon_i}
+  {\Gamma \vdash \mathtt{new}\ C'(\bar e) :
+    \tact{C'} \,!\, \textstyle\bigcup\varepsilon_i \cup \{\mathtt{mem}\}}
+\and
+\inferrule*[right=\textsc{T-Prim}]
+  {p : (\bar\tau) \to \tau \,!\, \varepsilon_p \\
+   \Gamma \vdash e_i : \tau_i \,!\, \varepsilon_i}
+  {\Gamma \vdash p(\bar e) : \tau \,!\,
+    \textstyle\bigcup\varepsilon_i \cup \varepsilon_p}
+\and
+\inferrule*[right=\textsc{T-Future}]
+  {\Gamma \vdash e : \tact{C'} \,!\, \varepsilon_0 \\
+   \mtab(C',m) = (\bar\tau) \to \tau_r \,!\, \varepsilon' \\
+   \Gamma \vdash e_i : \tau_i \,!\, \varepsilon_i}
+  {\Gamma \vdash \mathtt{future}\ e.m(\bar e) :
+    \tfut{\tau_r}{\varepsilon'} \,!\,
+    \varepsilon_0 \cup \textstyle\bigcup\varepsilon_i}
+\and
+\inferrule*[right=\textsc{T-Await}]
+  {\Gamma \vdash e : \tfut{\tau}{\varepsilon'} \,!\, \varepsilon_0 \\
+   \Gamma \vdash e_a : \tau \,!\, \varepsilon_a \\ k > 0}
+  {\Gamma \vdash \mathtt{await}\ e\ \mathtt{timeout}\ k\ \mathtt{else}\ e_a
+    : \tau \,!\, \varepsilon_0 \cup \varepsilon' \cup \varepsilon_a}
+\and
+\inferrule*[right=\textsc{T-Reply}]
+  {\mret(C,m) = \tau \\ \Gamma \vdash e : \tau \,!\, \varepsilon}
+  {\Gamma;C;m \vdash \mathtt{reply}\ e : \tunit \,!\, \varepsilon}
+\and
+\inferrule*[right=\textsc{T-Method}]
+  {\Gamma, \bar x{:}\bar\tau;C;m \vdash e_{\mathrm{body}} : \tunit \,!\, \varepsilon \\
+   \varepsilon \subseteq \meff(C,m) \\
+   \mathrm{replies}(e_{\mathrm{body}}) = 1}
+  {\vdash \mathtt{method}\ m(\bar x) : \tau_r \,!\, \meff(C,m)\ \{e_{\mathrm{body}}\}}
+\end{mathpar}
+
+\textsc{T-Await} が本稿の中心である。三点に注意されたい。
+
+\begin{enumerate}
+\item $k > 0$ を要求する。期限 $0$ の \texttt{await} は\emph{型付け規則の側では}
+  書けない。$k=0$ は簡約の途中でのみ現れる中間状態である。
+\item \texttt{else} 節は同じ $\tau$ を持たなければならない。
+  期限切れでも式全体の型は変わらない。
+\item 効果 $\varepsilon'$ ---- 呼ばれる側の宣言効果 ---- を負うのは
+  \textbf{await する側}である（注意 \ref{rem:prop}）。
+\end{enumerate}
+
+\section{操作的意味論}
+
+タスク内の簡約 $\Sm; e \to \Sm'; e'; \mathit{acts}$ は通常の評価文脈で与える。
+構成の簡約 $\mathcal{C} \cstep \mathcal{C}'$ のうち、本稿で重要なものを示す。
+
+\begin{mathpar}
+\inferrule*[right=\textsc{C-Deliver}]
+  {\langle a \Leftarrow m(\bar v), f\rangle \in M \\
+   \Om(a) = C \\ \mbox{$\mtab(C,m)$ の本体を $e_0$ とする}}
+  {\langle \Om,\Sm,\Ph,\Ps,M,T\rangle \cstep
+   \langle \Om,\Sm,\Ph,\Ps,M \setminus \{\cdot\},
+     (a, e_0\subs{\bar x}{\bar v}, f) :: T\rangle}
+\and
+\inferrule*[right=\textsc{C-Reply}]
+  {\Ps(f) = \bot}
+  {\langle \dots, (a, \mathtt{reply}\ v, f) :: T\rangle \cstep
+   \langle \dots, \Ps[f \mapsto v], \dots, T\rangle}
+\and
+\inferrule*[right=\textsc{C-Resolve}]
+  {\Ps(f') = v}
+  {\langle \dots, (a, \mathtt{await}\ f'\ \mathtt{timeout}\ k\ \mathtt{else}\ e_a, f) :: T\rangle
+   \cstep \langle \dots, (a, v, f) :: T\rangle}
+\and
+\inferrule*[right=\textsc{C-Tick}]
+  {\Ps(f') = \bot \\ k > 0}
+  {\langle \dots, (a, \mathtt{await}\ f'\ \mathtt{timeout}\ k\ \mathtt{else}\ e_a, f) :: T\rangle
+   \cstep \langle \dots, (a, \mathtt{await}\ f'\ \mathtt{timeout}\ (k-1)\ \mathtt{else}\ e_a, f) :: T\rangle}
+\and
+\inferrule*[right=\textsc{C-Timeout}]
+  {\Ps(f') = \bot}
+  {\langle \dots, (a, \mathtt{await}\ f'\ \mathtt{timeout}\ 0\ \mathtt{else}\ e_a, f) :: T\rangle
+   \cstep \langle \dots, (a, e_a, f) :: T\rangle}
+\end{mathpar}
+
+\begin{definition}[待ちは常に進む]
+\label{def:waitstep}
+\textsc{C-Resolve}、\textsc{C-Tick}、\textsc{C-Timeout} の三つは
+$\Ps(f')$ と $k$ の値によって\textbf{網羅的かつ排他的}である。
+解決済みなら \textsc{C-Resolve}、未解決で $k>0$ なら \textsc{C-Tick}、
+未解決で $k=0$ なら \textsc{C-Timeout}。
+したがって \texttt{await} を先頭に持つタスクは\emph{必ず}簡約できる。
+\end{definition}
+
+これが第 1 版との唯一の本質的な違いであり、
+進行定理が二択になる理由のすべてである。
+
+\section{不変条件}
+
+\begin{definition}[構成の健全性]
+$\confok(\mathcal{C})$ を次の合成とする。
+\begin{itemize}
+\item $\heapok$：$\forall a.\ \Om(a) = C \implies \Sm(a)$ は $\stype(C)$ 型。
+\item $\futok$：$\forall f.\ \Ph(f) = (\tau,\varepsilon)$ かつ
+  $\Ps(f) = v \neq \bot \implies v$ は $\tau$ 型。
+\item $\msgok$：$\langle a \Leftarrow m(\bar v), f\rangle \in M$ ならば
+  $\Om(a) = C$ に $m$ があり、$\bar v$ は $\mtab(C,m)$ の引数型を持ち、
+  $\Ph(f) = (\mret(C,m), \meff(C,m))$。
+\item $\taskok$：$(a,e,f) \in T$ ならば $\Om(a) = C$ として
+  $\Om;\Ph;\emptyset;C \vdash e : \tunit \,!\, \varepsilon$ かつ
+  $\varepsilon \subseteq \meff(C,m_f)$。ここで $m_f$ は $f$ を生んだメソッド。
+\end{itemize}
+\end{definition}
+
+$\taskok$ の後半が第 1 版に無い条件である ----
+\textbf{走っているタスクが今後起こしうる効果は、そのメソッドが宣言した
+効果の範囲に収まっている}。
+
+\part{証明}
+\label{part:proof}
+
+\section{補題}
+
+第 1 版の補題（型環境の外延性、表の単調性、値の型付けの文脈独立性、
+標準形、代入）はそのまま使える。効果を足したことで一つ増える。
+
+\begin{lemma}[効果の単調性]
+\label{lem:effmono}
+$\Gamma \vdash e : \tau \,!\, \varepsilon$ かつ
+$\Sm; e \to \Sm'; e'; \mathit{acts}$ ならば、
+ある $\varepsilon' \subseteq \varepsilon$ が存在して
+$\Gamma \vdash e' : \tau \,!\, \varepsilon'$ であり、
+かつ $\mathit{acts}$ が実際に起こす効果は $\varepsilon$ に含まれる。
+\end{lemma}
+
+\begin{proof}
+$e$ の構造に関する帰納法。要点のみ。
+\begin{itemize}
+\item \textsc{T-Prim}：$p(\bar v) \to v'$ のとき、
+  結果 $v'$ は値なので $\varepsilon' = \emptyset$。
+  実際に起こる効果は $\varepsilon_p \subseteq \varepsilon$。
+\item \textsc{T-Assign}：$\mathtt{self}.\mathtt{fld} := v \to ()$。
+  $\varepsilon' = \emptyset$、起こる効果は $\{\mathtt{mut}\} \subseteq \varepsilon$。
+\item \textsc{T-Await}：\textsc{C-Resolve} なら $e' = v$ で
+  $\varepsilon' = \emptyset$。\textsc{C-Timeout} なら $e' = e_a$ で
+  $\varepsilon' = \varepsilon_a \subseteq \varepsilon$。
+  \textsc{C-Tick} なら $e'$ の型付けは $k$ を除いて同一なので
+  $\varepsilon' = \varepsilon$。いずれも $\subseteq$。
+\item 条件分岐は選ばれた枝の効果が全体の部分集合。
+\item 評価文脈は帰納法の仮定から。
+\end{itemize}
+効果は合併でのみ構成されるので、部分項が値へ潰れるたびに単調に減る。
+\end{proof}
+
+\begin{remark}
+\textsc{C-Tick} で $\varepsilon' = \varepsilon$ となり\emph{減らない}点は
+重要である。$\subseteq$ を主張しているので問題ないが、
+効果の減少を停止性の尺度に使うことはできない。
+停止性が言えない理由の一つがここにある。
+\end{remark}
+
+\section{主定理}
+
+\begin{theorem}[理解できないメッセージは飛ばない]
+\label{thm:nmnu}
+$\confok(\mathcal{C})$ かつ $\mathcal{C} \cstep^{*} \mathcal{C}'$ ならば、
+$\mathcal{C}'$ のメッセージはすべて $\msgok$ を満たす。
+すなわち存在しないメソッドへの送信も、引数の型が合わない送信も現れない。
+\end{theorem}
+
+\begin{theorem}[保存 ---- 型と効果]
+\label{thm:pres}
+$\confok(\mathcal{C})$ かつ $\mathcal{C} \cstep \mathcal{C}'$ ならば
+$\confok(\mathcal{C}')$。
+とくに $\taskok$ の効果条件が保たれる ----
+タスクの残余効果は宣言効果の部分集合のままである。
+\end{theorem}
+
+\begin{proof}
+簡約規則ごとの場合分け。第 1 版の局所保存補題に、
+補題 \ref{lem:effmono} による効果条件の維持を加える。
+\textsc{C-Deliver} では $\msgok$ から
+$\Ph(f) = (\mret(C,m), \meff(C,m))$ が分かるので、
+\textsc{T-Method} の前提 $\varepsilon \subseteq \meff(C,m)$ が
+新しいタスクの効果条件をちょうど与える。
+\textsc{C-Reply} では $\futok$ が \textsc{T-Reply} の前提から従う。
+表が伸びる規則（\textsc{C-Deliver} と \texttt{new}）については
+単調性補題を使う。
+\end{proof}
+
+\begin{theorem}[進行 ---- 二択]
+\label{thm:prog}
+$\confok(\mathcal{C})$ ならば、次のいずれかが成り立つ。
+\begin{enumerate}
+\item $\mathcal{C}$ は終状態である（$M$ も $T$ も空）。
+\item ある $\mathcal{C}'$ が存在して $\mathcal{C} \cstep \mathcal{C}'$。
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+$M \neq \emptyset$ なら \textsc{C-Deliver} が適用できる。
+$M = \emptyset$ かつ $T \neq \emptyset$ とし、先頭タスク $(a,e,f)$ を見る。
+$\taskok$ より $e$ は $\tunit$ 型で型付く。標準形補題より
+$e$ は値か、簡約基（redex）を評価文脈に持つ。
+
+値の場合、$e = ()$ でタスクは終了できる（タスク除去規則）。
+簡約基を持つ場合、その形で場合分けする。
+第 1 版と異なるのは \texttt{await} の場合だけである。
+定義 \ref{def:waitstep} により、\textsc{C-Resolve}、\textsc{C-Tick}、
+\textsc{C-Timeout} のいずれかが必ず適用できる。
+他の簡約基（算術、条件分岐、フィールド、\texttt{new}、
+プリミティブ、\texttt{future} 送信、\texttt{reply}）については
+第 1 版の局所進行性補題がそのまま使える。
+配列の範囲外は $\mathbf{err}$ への簡約であり、
+簡約できることに変わりはない。
+
+よって $T \neq \emptyset$ ならつねに簡約できる。
+$M = \emptyset$ かつ $T = \emptyset$ が終状態である。
+\end{proof}
+
+\begin{corollary}[デッドロック自由]
+\label{cor:dlfree}
+$\confok(\mathcal{C})$ かつ $\mathcal{C} \cstep^{*} \mathcal{C}'$ ならば、
+$\mathcal{C}'$ は終状態か、簡約できる。
+すなわち\textbf{AIPL$^{-2}$ のプログラムはデッドロックしない}。
+\end{corollary}
+
+\begin{proof}
+定理 \ref{thm:pres} と \ref{thm:prog} を $\cstep^{*}$ に沿って繰り返す。
+\end{proof}
+
+\begin{remark}[第 1 版との差、そして限界]
+第 1 版は「デッドロック自由は一般には言えない ---- \texttt{await} がある」と
+明記し、進行定理の第三の枝としてそれを認めた。
+AIPL$^{-2}$ では期限のない \texttt{await} が構文に無いので枝が消える。
+
+ただし\textbf{これは「待たなくなる」という意味ではない}。
+相互に \texttt{now} で待ち合う二つのアクターは、
+両方が期限まで \textsc{C-Tick} を刻み、両方が \texttt{else} 節へ落ちる。
+プログラムは止まらないが、意図した結果も得られない。
+\emph{デッドロックが有限時間の失敗に変換される}のであって、
+失敗が消えるのではない。
+これが期限を必須にすることの本質である。
+\end{remark}
+
+\begin{theorem}[型安全性]
+\label{thm:safety}
+$\stuck(\mathcal{C})$ を
+「終状態でなく、$\mathbf{err}$ でもなく、簡約もできない」と定義する。
+このとき
+\[
+\confok(\mathcal{C}) \land \mathcal{C} \cstep^{*} \mathcal{C}'
+\implies \lnot\stuck(\mathcal{C}').
+\]
+\end{theorem}
+
+\begin{theorem}[状態の型不変条件]
+\label{thm:stinv}
+到達可能なすべての構成で $\heapok$ が成り立つ。
+すなわちアクターの状態は常に $\stype(C)$ 型である。
+\end{theorem}
+
+\begin{theorem}[future の型不変条件 ---- \texttt{reply} と戻り値型の一致]
+\label{thm:futinv}
+到達可能なすべての構成で $\futok$ が成り立つ。
+すなわち $\Ps(f) = v$ ならば $v$ は $\Ph(f)$ の第一成分の型を持つ。
+\end{theorem}
+
+\begin{remark}
+定理 \ref{thm:futinv} が、実装で見つけた不整合に対応する定理である。
+整数演算が \texttt{VFloat} を返していたとき、
+\texttt{reply(1+2)} は $\tint$ と型付けされながら実行時に
+浮動小数を \texttt{resolve} していた。これは $\futok$ の破れであり、
+定理 \ref{thm:futinv} が成り立たない状態だった。
+\textbf{定理が実装のバグを名指しできる}という例である。
+\end{remark}
+
+\section{効果の健全性と、その系}
+
+\begin{theorem}[効果の健全性]
+\label{thm:effsound}
+$\confok(\mathcal{C})$ かつ $\mathcal{C} \cstep^{*} \mathcal{C}'$ とする。
+このとき、実行のあいだにアクター $a$（クラス $C$、メソッド $m$ を処理中）が
+起こす効果はすべて $\meff(C,m)$ に含まれる。
+\end{theorem}
+
+\begin{proof}
+$\taskok$ の効果条件（$\varepsilon \subseteq \meff(C,m_f)$）が
+定理 \ref{thm:pres} で保たれる。
+補題 \ref{lem:effmono} より、各ステップで実際に起こる効果は
+そのステップ直前の残余効果 $\varepsilon$ に含まれる。
+$\varepsilon \subseteq \meff(C,m_f)$ なので従う。
+プリミティブが宣言どおりの効果しか起こさないことは前提である（\S 3.2）。
+\end{proof}
+
+\begin{corollary}[機外に出ないことが言える]
+$\mathtt{net} \notin \meff(C,m)$ ならば、$C$ の $m$ を処理している間、
+そのアクターはノード外へ通信しない。
+\end{corollary}
+
+\begin{corollary}[実時間側はエージェント側を待てない]
+\label{cor:boundary}
+$\meff(C,m) \cap \{\mathtt{net},\mathtt{ai},\mathtt{fs}\} = \emptyset$
+（実時間プロファイルの条件）を満たすメソッド $m$ の本体では、
+$\meff(C',m') \ni \mathtt{net}$ なるメソッドを
+\texttt{await}（したがって \texttt{now}）できない。
+\end{corollary}
+
+\begin{proof}
+\textsc{T-Await} により、待つ側の効果は
+$\varepsilon' = \meff(C',m')$ を含む。
+\textsc{T-Method} の前提 $\varepsilon \subseteq \meff(C,m)$ に反する。
+一方 \texttt{send} は future を捨てるので $\varepsilon'$ を負わず、許される。
+\end{proof}
+
+\begin{remark}
+系 \ref{cor:boundary} は、先の言語仕様レポートで
+「境界の方向の規律」として設計判断として述べたものである。
+効果を future の型に載せると、\textbf{規則を追加せずに定理として出る}。
+「制御ループがモデルの返りを待って期限を落とす」という
+最も起こりやすい事故が、\textsc{T-Await} 一つから排除される。
+\end{remark}
+
+\section{言えないこと}
+
+\begin{center}
+\small
+\begin{tabular}{@{}llp{6.4cm}@{}}
+\toprule
+性質 & 成否 & 理由 \\
+\midrule
+デッドロック自由 & \textbf{言える} & 定理 \ref{cor:dlfree}。第 1 版から変わった点 \\
+効果の上界 & \textbf{言える} & 定理 \ref{thm:effsound} \\
+境界の方向 & \textbf{言える} & 系 \ref{cor:boundary} \\
+\midrule
+停止性 & 言えない &
+  \texttt{while} があり、自分あて送信で無限に走れる。
+  \textsc{C-Tick} も効果を減らさない \\
+応答時間の上界 & 言えない &
+  期限は\emph{待つ側}の上界であり、計算の上界ではない \\
+公平性 & 言えない & どのメッセージを配送するかは非決定的 \\
+actor の逐次性 & 落とした & 同じ actor あての二通が同時にタスクになりうる。
+  第 1 版と同じ \\
+意図した結果が得られること & 言えない &
+  期限切れは \texttt{else} 節へ落ちる。詰まらないが正しくもない \\
+型推論アルゴリズムの健全性 & 言えない &
+  型付け\emph{関係}を定義しただけ。単一化は範囲外 \\
+プリミティブの効果宣言の正しさ & 前提 & 証明できない（\S 3.2）\\
+範囲外の機能 & 対象外 &
+  \texttt{sender}、remote、\texttt{become}、\texttt{select}、\texttt{send!} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\part{実装との対応}
+\label{part:impl}
+
+\section{モデルと実装のずれ}
+\label{sec:impl}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & モデル & 実装 \\
+\midrule
+期限のない \texttt{await} & 存在しない &
+  既定で警告。\texttt{AIOS\_STRICT\_DEADLINE=1} でエラー \\
+アクター型の区別 & クラス名で区別 &
+  \texttt{unify} が全アクターを同一視（\textbf{実装が緩い}）\\
+効果の伝播 & future の型に載る &
+  \texttt{now} の辺に沿って不動点（\textbf{実装が緩い}、\S\ref{sec:gap}）\\
+待ちの刻み & \textsc{C-Tick} &
+  1 ミリ秒のポーリング（対応が良い）\\
+逐次性 & 落としている &
+  1 アクター 1 スレッドで逐次（\textbf{実装が厳しい}）\\
+配列の範囲外 & $\mathbf{err}$ & 実行時例外（対応する）\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{実装の効果伝播に穴がある}
+\label{sec:gap}
+
+\begin{finding}
+定式化の過程で、現行実装の効果伝播に穴があることが分かった。
+実装は \texttt{now} 送信の地点で「呼ぶ側 $\to$ 呼ばれる側」の辺を張り、
+その辺に沿って不動点まで効果を伝播させている。
+しかし \texttt{await} では伝播させていない。したがって
+\begin{lstlisting}[language=AIPL]
+var f = future planner.plan(g);            // 辺が張られない
+var r = await f timeout 100 else "";       // ここでも伝播しない
+\end{lstlisting}
+と書くと、\texttt{now} を使った場合と\emph{意味は同じ}なのに
+\texttt{\{ai, net\}} が伝播せず、効果検査を逃れる。
+\end{finding}
+
+再現を確認した。同一のクラスに二つのメソッドを置き、
+どちらも \texttt{!\{time, log\}} と宣言する。
+
+\begin{lstlisting}[language=AIPL]
+class Planner {
+  method plan(g) : string !{ai, net} { reply(ai_call("plan " ++ g)); }
+}
+class Ctrl {
+  var p = new Planner();
+  method viaNow() : unit !{time, log} {              // 弾かれる（正しい）
+    var r = now p.plan("x") timeout 100 else "";
+    print(r);
+  }
+  method viaFutureAwait() : unit !{time, log} {      // 通ってしまう
+    var f = future p.plan("x");
+    var r = await f timeout 100 else "";
+    print(r);
+  }
+}
+\end{lstlisting}
+
+\noindent \texttt{viaNow} だけを残して型検査すると
+
+\begin{lstlisting}
+TYPE_ERROR: line 7, col 10: method Ctrl.viaNow declares {log, time}
+  but its body has {ai, log, net} (missing {ai, net})
+\end{lstlisting}
+
+\noindent と正しく弾かれる。ところが \texttt{viaFutureAwait} だけを残すと
+
+\begin{lstlisting}
+OK
+\end{lstlisting}
+
+\noindent となる。系 \ref{cor:boundary}（実時間側はエージェント側を待てない）が
+\textbf{実装では \texttt{now} と書いたときにしか効いていない}。
+本稿の定式化はこの穴を持たない。効果を
+$\tfut{\tau}{\varepsilon}$ として future の型に載せているので、
+\texttt{await} の規則が必ず $\varepsilon$ を負わせる。
+\texttt{now} が糖衣であることから伝播が導かれるので、
+\texttt{future}$+$\texttt{await} に分けても逃れられない。
+
+\textbf{実装の修正方針}は明確である。
+\texttt{TFuture of ty} を \texttt{TFuture of ty * eff} に変え、
+\texttt{FutureSend} が呼ばれる側の宣言効果を型に載せ、
+\texttt{Await} がそれを加える。
+現在の \texttt{now\_edges} と不動点は不要になる
+（future の型を通じて自然に伝播するため）。
+
+\subsection{差分テストが埋めている部分}
+
+第 1 版は「実装との対応は言えない ---- OCaml 実装との refinement は
+証明していない」と述べた。これは今も正しい。
+ただし部分的な検査は常設した ---- 型検査が付けた戻り値型と、
+実行時に \texttt{reply} された値の型を突き合わせるハーネスである
+（\texttt{scripts/type\_runtime\_diff.py}）。
+
+これは定理 \ref{thm:futinv}（future の型不変条件）を
+\emph{到達した構成についてだけ}確かめる仕組みである。
+証明の代わりにはならないが、
+実際にこれで整数演算の $\futok$ 破れを検出した。
+
+\section{Coq 形式化の見通し}
+
+第 1 版の Coq 開発（変数・局所束縛・代入補題、状態 store と型不変条件、
+クラス表とメソッド表、メールボックスと非同期送信、future 表と
+\texttt{await}、動的生成）は、本稿の骨格をすでに含んでいる。
+追加が必要なのは次の三点である。
+
+\begin{enumerate}
+\item \textbf{効果}を型と対にして持つ。判断を
+  $\vdash e : \tau \,!\, \varepsilon$ にし、$\taskok$ に効果条件を足す。
+  効果集合は有限なので \texttt{list} か有限集合で足りる。
+  補題 \ref{lem:effmono} が新規の証明義務である。
+\item \textbf{期限}を \texttt{await} に持たせ、
+  \textsc{C-Tick} / \textsc{C-Timeout} を加える。
+  進行定理の \texttt{await} の場合が\emph{易しくなる}
+  （三つの規則が網羅的なので、ブロックの場合分けが消える）。
+\item $\tfut{\tau}{\varepsilon}$ への変更。
+  future 型表 $\Ph$ が対を持つようになる。
+\end{enumerate}
+
+\begin{remark}
+作業量の見積もりとして、第 1 版の進行定理は
+\texttt{await} でブロックする場合の扱いが最も込み入っていた。
+本稿ではそこが単純化されるので、
+\textbf{効果を足す手間と、進行の証明が軽くなる分が概ね釣り合う}
+と見ている。
+\end{remark}
+
+\section{まとめ}
+
+\begin{enumerate}
+\item 第 1 版は\emph{仮想の}部分言語について証明した。
+  本稿の AIPL$^{-2}$ は\textbf{現行実装の部分集合}である。
+  この範囲に留まって書けば定理が保証を与える。
+
+\item 範囲の切り方（第 \ref{part:scope} 部）は実装の事実に基づく。
+  入るもの・外れるものを一覧にし、外れる理由を述べた。
+  外れるのは \texttt{sender}、remote、\texttt{send!}、\texttt{become}、
+  \texttt{select}、そして\textbf{期限のない待ち}である。
+
+\item 主結果は\textbf{進行定理が二択になる}こと。
+  期限のない待ちを構文から外すと、待ちが簡約として進むので
+  ブロックの枝が消える。系として\textbf{デッドロック自由}が言える
+  ---- 第 1 版が「一般には言えない」と明記した性質である。
+
+\item ただしこれは\emph{デッドロックが有限時間の失敗に変換される}
+  ということであり、失敗が消えるのではない。
+  相互に待ち合う二者は両方が期限切れになる。
+  詰まらないが正しくもない。
+
+\item 効果を future の型に載せると、
+  \textbf{待つ側だけが呼ばれる側の効果を負う}という規律が
+  規則を追加せずに出る。その系として
+  \textbf{実時間側がエージェント側を待てない}ことが定理になる。
+
+\item 定式化が実装の穴を見つけた。\texttt{now} を
+  \texttt{future}$+$\texttt{await} に分けると効果検査を逃れる。
+  修正方針は \texttt{TFuture} に効果を持たせることである。
+\end{enumerate}
+
+\section*{参考}
+
+\begin{itemize}
+\item 第 1 版 \texttt{docs/aipl\_soundness\_ja.pdf} ---
+  AIPL$^-$ の定式化と Coq 検証、哲学者の食事問題、「保証しないこと」の一覧。
+  \url{https://kodamay.org/reports/2026-07-28_aipl_soundness.pdf}
+\item \texttt{docs/aipl\_reply\_inference\_ja.pdf} ---
+  \texttt{reply} からの戻り値型推論と注釈、線形性、
+  整数演算の $\futok$ 破れの発見と修正。
+\item \texttt{docs/aipl\_abcl1\_features\_ja.pdf} ---
+  \texttt{where} と express mode、二つのプロファイル、理想仕様案。
+\item \texttt{docs/aipl\_kobayashi\_synthesis\_ja.pdf} ---
+  線形型・デッドロック自由な型・汎用型システム・資源使用型の位置づけ。
+\item Andrew K. Wright, Matthias Felleisen.
+  \emph{A Syntactic Approach to Type Soundness}.
+  Information and Computation 115(1), 1994.
+\item Benjamin C. Pierce. \emph{Types and Programming Languages}.
+  MIT Press, 2002.（store typing は第 13 章）
+\end{itemize}
+
+\end{document}

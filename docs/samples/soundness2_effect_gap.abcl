@@ -1,0 +1,16 @@
+class Planner {
+  method plan(g) : string !{ai, net} { reply(ai_call("plan " ++ g)); }
+}
+class Ctrl {
+  var p = new Planner();
+  // 実時間プロファイル相当: net も ai も宣言していない
+  method viaNow() : unit !{time, log} {
+    var r = now p.plan("x") timeout 100 else "";   // ここは弾かれるべき
+    print(r);
+  }
+  method viaFutureAwait() : unit !{time, log} {
+    var f = future p.plan("x");
+    var r = await f timeout 100 else "";           // 同じ意味。弾かれるか?
+    print(r);
+  }
+}
