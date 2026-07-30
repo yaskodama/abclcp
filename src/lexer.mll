@@ -32,6 +32,7 @@ rule token = parse
 | "float"      { FLOAT }
 | "call"       { CALL }
 | "send!"      { UNSAFESEND }
+| "!"          { BANG }
 | "send"       { SEND }
 | "now"        { NOW }
 | "future"     { FUTURE }

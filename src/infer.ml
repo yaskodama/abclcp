@@ -148,8 +148,34 @@ let rec max_replies (s : Ast.stmt) : int =
   | Ast.Select (_, (_, to_body)) ->
       (match to_body with Some b -> max_replies b | None -> 0)
 
+(* ---------------------------------------------------------------- *)
+(*  効果の収集                                                       *)
+(* ---------------------------------------------------------------- *)
+(* いま検査しているメソッドの効果を溜める先。check_decl が
+   メソッドごとに Types.eff_cell で確保したセルを指す。 *)
+let current_eff : Types.SSet.t ref ref = ref (ref Types.SSet.empty)
+let current_key : string ref = ref ""
+(* いま検査しているクラスのフィールド名。代入が mut かどうかの判定に使う。
+   ローカル変数への代入は mut ではない。 *)
+let current_fields : (string, unit) Hashtbl.t = Hashtbl.create 16
+
+let add_eff (l : string list) : unit =
+  let c = !current_eff in
+  c := List.fold_left (fun acc e -> Types.SSet.add e acc) !c l
+
+let add_eff_set (e : Types.SSet.t) : unit =
+  let c = !current_eff in c := Types.SSet.union !c e
+
 (* 検査中のメソッドが戻り値型を宣言しているか（エラー文言の出し分け用） *)
 let current_ret_declared = ref false
+
+(* now で待つ辺を記録する。future / send は待たないので辺を張らない。
+   FutureSend の型付けは now からも使われるので、now かどうかは
+   呼び出し側で判定して here を呼ぶ。 *)
+let in_now_send = ref false
+let record_now_edge (cls : string) (mname : string) : unit =
+  if !in_now_send && !current_key <> "" then
+    Types.add_now_edge !current_key (Types.eff_key cls mname)
 
 (* 送信先メソッドの戻り値型 ρ を引く。
    リモート先など静的に本体が見えないメソッドは any のまま（従来どおり）。 *)
@@ -241,6 +267,8 @@ let is_ground (t : ty) : bool = ISet.is_empty (ftv_ty t)
    a + b のように引数だけからは principal type が決まらない式でも、
    囲む reply の宣言型が分かっていれば一意に解決できる。 *)
 let pick_overload ?expected (loc:Location.t) (name:string) (env:tenv) (arg_tys:ty list) : ty =
+  (* ★ プリミティブの効果を、いま検査中のメソッドへ足す *)
+  add_eff_set (Typing_env.prim_eff name);
   let schemes =
     match Hashtbl.find_opt env name with
     | Some ss -> List.rev ss     (* ★ 登録順に戻す *)
@@ -422,6 +450,7 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
              (* ★ 2パス目（本番）：ここで初めて「未束縛変数はエラー」とする *)
              raise (Type_error (e.loc, ("unbound variable: " ^ x))))
   | New (cls, args) ->
+    add_eff ["mem"];                     (* ★ 動的割り付け *)
     let targs = List.map (infer_expr env) args in
     (match Types.lookup_class_method_scheme cls "init" with
      | Some sch ->
@@ -445,8 +474,9 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
       let ret =
         begin match target with
         (* リモート宛先は本体が別ノードにあり推論できない。
-           ここは宣言（インタフェース）でしか埋まらない場所なので any のまま。 *)
-        | RemoteTarget (_hostport, _actor_name) -> TAny
+           ここは宣言（インタフェース）でしか埋まらない場所なので any のまま。
+           ただし★ノード外へ出る通信なので net 効果は確定する。 *)
+        | RemoteTarget (_hostport, _actor_name) -> add_eff ["net"]; TAny
         | LocalTarget vname when vname = "sender" -> TAny
         | LocalTarget vname ->
             let t_actor = infer_expr env (mk_var vname) in
@@ -464,6 +494,7 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
                            List.iter2 (Types.unify ~loc:e.loc) param_tys arg_tys;
                            (* ★ 戻り値はスキーム側（量化で切れている）ではなく
                               ρ 表から取る。これが reply 地点と繋がっている唯一の経路。 *)
+                           record_now_edge cls mname;
                            method_ret_ty cls mname
                        | ty ->
                            Types.type_error ~loc:e.loc
@@ -476,10 +507,16 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
       in
       TFuture ret
   | NowSend (target, mname, args) ->
-      (* now は future の即時 await。戻り値型も同じ ρ になる。 *)
-      (match repr (infer_expr env { e with desc = FutureSend (target, mname, args) }) with
-       | TFuture t -> t
-       | _         -> TAny)
+      (* now は future の即時 await。戻り値型も同じ ρ になる。
+         ★ 待つので、呼ばれる側の効果を引き継ぐ辺を張る。 *)
+      let saved = !in_now_send in
+      in_now_send := true;
+      let r =
+        (match repr (infer_expr env { e with desc = FutureSend (target, mname, args) }) with
+         | TFuture t -> t
+         | _         -> TAny)
+      in
+      in_now_send := saved; r
   | Await e1 ->
       (match repr (infer_expr env e1) with
        | TFuture t -> t
@@ -500,6 +537,8 @@ let set (e:env) (name:string) (sch:scheme) =
 let rec check_stmt (env:env) (s:stmt) : unit =
   match s.sdesc with
   | Assign (x, e) ->
+    (* ★ フィールドへの代入だけが mut。ローカル変数は効果ではない *)
+    if Hashtbl.mem current_fields x then add_eff ["mut"];
     let t_rhs = infer_expr env e in
     (match Hashtbl.find_opt env x with
      | None ->
@@ -536,6 +575,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
       ignore (pick_overload s.sloc fname env arg_tys);
       ()
   | Become (cls, args) ->
+      add_eff ["mut"];                   (* ★ 振る舞いの置換は状態変更 *)
       let _ = Types.lookup_class_methods_inst cls in
       let targs = List.map (infer_expr env) args in
       (match Types.lookup_class_method_scheme cls "init" with
@@ -727,6 +767,15 @@ let check_decl (env:env) = function
         add env m.mname (Forall ([], ft))
       ) c.methods;
 
+      (* ★ このクラスのフィールド名を集める。代入が mut かどうかの判定に使う *)
+      Hashtbl.reset current_fields;
+      List.iter
+        (fun (st:Ast.stmt) ->
+          match st.sdesc with
+          | VarDecl (name, _) -> Hashtbl.replace current_fields name ()
+          | _ -> ())
+        c.fields;
+
       (* 3) 本文は“ローカル環境”で検査：ローカル変数が外へ漏れない *)
       List.iter (fun m ->
         let env_m = clone env in
@@ -768,7 +817,12 @@ let check_decl (env:env) = function
         set env_m "reply" (Forall ([], TFun ([rho], TUnit)));
 
         current_ret_declared := (m.ret <> None);
+        (* ★ 効果はこのメソッド専用のセルに溜める *)
+        current_key := Types.eff_key c.Ast.cname m.mname;
+        current_eff := Types.eff_cell c.Ast.cname m.mname;
         check_stmt env_m m.body;
+        current_key := "";
+        current_eff := ref Types.SSet.empty;
         current_ret_declared := false;
 
         (* ★ reply の線形性（上界）。注釈の有無によらず、二重 reply は常に誤り。
@@ -1070,18 +1124,63 @@ let check_boundary_annotations (p : Ast.program) (env : env) : unit =
         classes
   end
 
+(* 宣言された効果と、本体から集めた（そして now で伝播した）効果を照合する。
+   注釈が無いメソッドは推論に任せる ---- 戻り値型と同じ gradual な扱い。 *)
+let check_effect_annotations (p : Ast.program) : unit =
+  List.iter
+    (function
+      | Ast.Class c ->
+          List.iter
+            (fun (m : Ast.method_decl) ->
+              match m.Ast.eff with
+              | None -> ()                (* 無注釈は推論に任せる *)
+              | Some declared ->
+                  let d = Types.eff_of_list declared in
+                  let actual = Types.lookup_method_eff c.Ast.cname m.Ast.mname in
+                  (* 未知の効果名は誤記の可能性が高いので弾く *)
+                  let unknown =
+                    List.filter (fun e -> not (List.mem e Types.all_effects)) declared in
+                  if unknown <> [] then
+                    Types.type_error ~loc:m.Ast.body.Ast.sloc
+                      (Printf.sprintf "unknown effect(s) %s in %s.%s; known effects are %s"
+                         (String.concat ", " unknown) c.Ast.cname m.Ast.mname
+                         (String.concat ", " Types.all_effects));
+                  let missing = Types.SSet.diff actual d in
+                  if not (Types.SSet.is_empty missing) then
+                    Types.type_error ~loc:m.Ast.body.Ast.sloc
+                      (Printf.sprintf
+                         "method %s.%s declares %s but its body has %s (missing %s)"
+                         c.Ast.cname m.Ast.mname
+                         (Types.string_of_eff d) (Types.string_of_eff actual)
+                         (Types.string_of_eff missing)))
+            c.Ast.methods
+      | _ -> ())
+    p
+
+(* デバッグ表示。推論された効果を一覧する（移行の手がかり） *)
+let debug_print_effects () : unit =
+  print_endline "[method effects (inferred / declared)]";
+  Hashtbl.fold (fun k r acc -> (k, !r) :: acc) Types.method_effs []
+  |> List.sort (fun (a,_) (b,_) -> compare a b)
+  |> List.iter (fun (k, e) ->
+       Printf.printf "  %s !%s\n" k (Types.string_of_eff e))
+
 let check_program (p: Ast.program) : (Types.tenv, string) result =
   let env0 = Typing_env.prelude () in
   try
     Types.reset_method_rets ();             (* ★ 前回検査の ρ を持ち越さない *)
+    Types.reset_effects ();                 (* ★ 効果も持ち越さない *)
     prebind_global_actors p env0;
     in_preinfer := true;
     preinfer_all_classes p env0;           (* ★ 先に全クラスのメソッド型を登録 *)
     in_preinfer := false;
     if !verbose then Types.debug_print_class_method_schemes ();
     List.iter (check_decl env0) p;          (* それから通常どおりトップレベルを検査 *)
+    Types.propagate_effects ();             (* ★ now の連鎖に沿って効果を伝播 *)
+    check_effect_annotations p;             (* ★ 宣言と本体の効果を照合 *)
     check_boundary_annotations p env0;      (* ★ リモート境界の注釈必須検査 *)
     if !verbose then Types.debug_print_method_rets ();
+    if !verbose then debug_print_effects ();
     Ok env0
   with
   | Types.Type_error (loc, msg) ->

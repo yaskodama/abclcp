@@ -124,6 +124,82 @@ let lookup_method_ret (cls : string) (m : string) : ty option =
    前回の実行で確定済みの ρ を持ち越さないよう毎回クリアする *)
 let reset_method_rets () : unit = Hashtbl.reset method_ret_tys
 
+(* ================================================================= *)
+(*  効果（effect）                                                    *)
+(* ================================================================= *)
+(* 既存の capability 分類（実行時メタデータとして 17 種あった）を
+   静的に扱うための効果集合。プロファイル分離、境界の方向の規律、
+   外部流出の保証がすべてこの上に乗る。
+
+     mut   自分の状態（フィールド）を書き換える
+     time  時刻の取得・待機
+     io    装置への入出力
+     mem   動的割り付け（new、配列の伸長、アクター生成）
+     net   ノード外への通信
+     ai    モデル推論（機外へ出るものは net も併記する）
+     fs    永続化
+     log   観測のみの出力
+
+   ai と net を分けるのが要点。オンデバイス推論は {ai} だけを持ち
+   net を持たないので、「AI を使うが機外へは出ない」がシグネチャに現れる。 *)
+module SSet = Set.Make(String)
+
+let all_effects = ["mut"; "time"; "io"; "mem"; "net"; "ai"; "fs"; "log"]
+
+let eff_of_list (l : string list) : SSet.t =
+  List.fold_left (fun s e -> SSet.add e s) SSet.empty l
+
+let string_of_eff (e : SSet.t) : string =
+  if SSet.is_empty e then "{}"
+  else "{" ^ String.concat ", " (SSet.elements e) ^ "}"
+
+(* "クラス名#メソッド名" -> そのメソッドが持つ効果。
+   ρ と同じく可変で、本体検査中に育ち、そのあと now の連鎖に沿って
+   不動点まで伝播させる。 *)
+let method_effs : (string, SSet.t ref) Hashtbl.t = Hashtbl.create 97
+
+(* now で待つ辺 (呼び出す側, 呼ばれる側)。効果の伝播に使う。
+   send / future は待たないので辺を張らない。 *)
+let now_edges : (string * string) list ref = ref []
+
+let eff_key (cls : string) (m : string) : string = cls ^ "#" ^ m
+
+let eff_cell (cls : string) (m : string) : SSet.t ref =
+  let k = eff_key cls m in
+  match Hashtbl.find_opt method_effs k with
+  | Some r -> r
+  | None -> let r = ref SSet.empty in Hashtbl.replace method_effs k r; r
+
+let lookup_method_eff (cls : string) (m : string) : SSet.t =
+  match Hashtbl.find_opt method_effs (eff_key cls m) with
+  | Some r -> !r
+  | None -> SSet.empty
+
+let add_now_edge (caller : string) (callee : string) : unit =
+  if not (List.mem (caller, callee) !now_edges) then
+    now_edges := (caller, callee) :: !now_edges
+
+(* now で待つ側は、待っている間の性質に責任を持つので
+   呼ばれる側の効果を引き継ぐ。効果は増えるだけなので不動点で止まる。 *)
+let propagate_effects () : unit =
+  let changed = ref true in
+  let guard = ref 0 in
+  while !changed && !guard < 1000 do
+    changed := false; incr guard;
+    List.iter
+      (fun (caller, callee) ->
+        match Hashtbl.find_opt method_effs caller,
+              Hashtbl.find_opt method_effs callee with
+        | Some cr, Some ce ->
+            let merged = SSet.union !cr !ce in
+            if not (SSet.equal merged !cr) then (cr := merged; changed := true)
+        | _ -> ())
+      !now_edges
+  done
+
+let reset_effects () : unit =
+  Hashtbl.reset method_effs; now_edges := []
+
 let rec repr (t : ty) : ty =
   match t with
   | TVar vref ->

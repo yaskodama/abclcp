@@ -42,6 +42,7 @@ let ty_of_name (loc : Location.t) (s : string) : Types.ty =
 %token VAR EQ DOT BECOME
 %token COLON /* : ... 戻り値型注釈 */
 %token PLUSPLUS /* ++ ... 文字列連結 */
+%token BANG /* ! ... 効果注釈 !{...} */
 %left PLUSPLUS
 %left PLUS MINUS
 %left TIMES DIV
@@ -87,10 +88,19 @@ methods:
   | method_decl methods { $1 :: $2 }
 
 method_decl:
-  | METHOD ID LPAREN param_list RPAREN LBRACE stmts RBRACE
-    { { mname = $2; params = $4; ret = None; body = mk_stmt1 2 (Seq $7) } }
-  | METHOD ID LPAREN param_list RPAREN COLON ret_ann LBRACE stmts RBRACE
-    { { mname = $2; params = $4; ret = Some $7; body = mk_stmt1 2 (Seq $9) } }
+  | METHOD ID LPAREN param_list RPAREN opt_ret opt_eff LBRACE stmts RBRACE
+    { { mname = $2; params = $4; ret = $6; eff = $7;
+        body = mk_stmt1 2 (Seq $9) } }
+
+opt_ret:
+  | /* empty */     { None }
+  | COLON ret_ann   { Some $2 }
+
+/* 効果注釈 !{ai, net}。省略すると本体から推論する */
+opt_eff:
+  | /* empty */                  { None }
+  | BANG LBRACE RBRACE           { Some [] }
+  | BANG LBRACE id_list RBRACE   { Some $3 }
 
 ret_ann:
   | FLOAT { Types.TFloat }              /* float は予約語なので別扱い */

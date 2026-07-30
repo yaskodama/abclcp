@@ -1,0 +1,58 @@
+// g6: 効果注釈 !{...}
+//
+//     既存の capability 分類を静的にしたもの。効果は8種:
+//       mut  自分の状態を書き換える      net  ノード外への通信
+//       time 時刻の取得・待機            ai   モデル推論
+//       io   装置への入出力              fs   永続化
+//       mem  動的割り付け                log  観測のみの出力
+//
+//     注釈を省くと本体から推論される。書いた場合は
+//     「本体の効果 ⊆ 宣言した効果」が検査される（多めに宣言するのは可）。
+class Counter {
+  var n = 0;
+
+  method bump() : int !{mut} {   // フィールドへの代入は mut
+    n = n + 1;
+    reply(n);
+  }
+  method peek() : int !{} {      // 効果なし。純粋なので自由に複製できる
+    reply(n);
+  }
+  method show() : unit !{log} {  // print は log
+    print("n = " ++ n);
+  }
+}
+
+class Planner {
+  // ai_call は機外へ出るので ai と net の両方を持つ。
+  // これがシグネチャに現れるので、どのアクターが機外へ出るか一目で分かる
+  method plan(goal) : string !{ai, net} {
+    reply(ai_call("plan: " ++ goal));
+  }
+}
+
+class ViaNow {
+  // ★ now は待つので、呼ばれる側の効果を引き継ぐ。
+  //    {ai, net} を宣言しないと型エラーになる
+  method run(g) : string !{ai, net} {
+    var r = now planner.plan(g);
+    reply(r);
+  }
+}
+
+class ViaSend {
+  // ★ send は待たないので引き継がない。効果なしのままでよい
+  method fire(g) : unit !{} {
+    send planner.plan(g);
+  }
+}
+
+var planner = new Planner();
+var c = new Counter();
+var a = new ViaNow();
+var b = new ViaSend();
+
+// ai_call は外部APIを叩くので、この場では Counter だけ動かす
+print(now c.bump());
+print(now c.peek());
+send c.show();

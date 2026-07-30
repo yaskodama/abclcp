@@ -22,6 +22,7 @@ let () =
        | Ok _ ->
            print_endline "[OK] type check passed";
            Types.debug_print_method_rets ();
+           Infer.debug_print_effects ();
            print_endline "[class_method_schemes]";
            Hashtbl.iter
              (fun cls sigs ->
@@ -34,5 +35,6 @@ let () =
              Types.class_method_schemes
        | Error msg ->
            Printf.printf "[Type error] %s\n" msg;
-           Types.debug_print_method_rets ());
+           Types.debug_print_method_rets ();
+           Infer.debug_print_effects ());
       print_newline ()

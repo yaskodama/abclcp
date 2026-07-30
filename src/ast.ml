@@ -51,6 +51,9 @@ type method_decl = {
       None なら reply から推論する。Some t なら t が正で、
       本体の reply はすべて t に照合され、全パス被覆も検査される。 *)
    ret : Types.ty option;
+   (* 省略可能な効果注釈: method m(x) : T !{ai, net} { ... }
+      None なら本体から推論する。Some l なら本体の効果が l に含まれることを検査。 *)
+   eff : string list option;
    body : stmt;
 }
 
@@ -135,10 +138,15 @@ let string_of_ret_ann = function
   | None   -> ""
   | Some t -> " : " ^ Types.string_of_ty_pretty t
 
+let string_of_eff_ann = function
+  | None   -> ""
+  | Some l -> " !{" ^ String.concat ", " l ^ "}"
+
 let string_of_method_decl (md : method_decl) =
   let params = String.concat ", " md.params in
-  Printf.sprintf "Method(%s(%s)%s, body=%s)"
-    md.mname params (string_of_ret_ann md.ret) (string_of_stmt md.body)
+  Printf.sprintf "Method(%s(%s)%s%s, body=%s)"
+    md.mname params (string_of_ret_ann md.ret) (string_of_eff_ann md.eff)
+    (string_of_stmt md.body)
 
 let string_of_class_decl (c : class_decl) =
   let fs = c.fields |> List.map string_of_stmt |> String.concat "; " in
@@ -372,8 +380,8 @@ let rec pprint_stmt ?(lvl=0) (s:stmt) : string =
 
 let pprint_method ?(lvl=0) (m:method_decl) =
   let args = String.concat ", " m.params in
-  Printf.sprintf "%smethod %s(%s)%s {\n%s\n%s}"
-    (indent lvl) m.mname args (string_of_ret_ann m.ret)
+  Printf.sprintf "%smethod %s(%s)%s%s {\n%s\n%s}"
+    (indent lvl) m.mname args (string_of_ret_ann m.ret) (string_of_eff_ann m.eff)
     (pprint_stmt ~lvl:(lvl+1) m.body)
     (indent lvl)
 

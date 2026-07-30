@@ -32,6 +32,65 @@ let add_poly (e:env) (name:string) (sch:scheme) : unit =
 let find_all (e:env) (name:string) : scheme list =
   match Hashtbl.find_opt e name with Some xs -> xs | None -> []
 
+(* ================================================================= *)
+(*  プリミティブ -> 効果                                              *)
+(* ================================================================= *)
+(* 既存の capability 分類（eval_thread の prim_specs に 17 種ある）を
+   静的な効果へ写した表。分類を新たに設計するのではなく、
+   すでにある分類を静的にしただけである。
+
+   要点は ai と net を分けること。機外へ出るモデル呼び出しは両方を持つが、
+   オンデバイス推論を足すときは {ai} だけを与えればよく、
+   「AI を使うが機外へは出ない」がシグネチャに現れる。 *)
+let prim_effs : (string, SSet.t) Hashtbl.t = Hashtbl.create 128
+
+let set_eff (names : string list) (effs : string list) : unit =
+  let e = eff_of_list effs in
+  List.iter (fun n -> Hashtbl.replace prim_effs n e) names
+
+let () =
+  (* Core.Math / Core.Introspection / reply : 効果なし *)
+  set_eff [ "sin";"cos";"tan";"asin";"acos";"atan";"sqrt";"exp";"log10";
+            "abs";"floor";"ceil";"round";"typeof";"reply" ] [];
+  (* Core.Array : 読みは効果なし、割り付けは mem *)
+  set_eff [ "array_get"; "array_len" ] [];
+  set_eff [ "array_empty"; "array_push"; "array_set" ] ["mem"];
+  (* Console / AIOS.Kernel / AIOS.Event / Protocol.Session / Actor.Introspection *)
+  set_eff [ "print" ] ["log"];
+  set_eff [ "capabilities"; "capability_prims"; "aios_kernel"; "aios_actors";
+            "aios_actor_info"; "aios_actor_methods"; "aios_mailbox_len";
+            "actor_dump" ] ["log"];
+  set_eff [ "aios_emit"; "aios_events"; "aios_events_since";
+            "aios_event_count" ] ["log"];
+  set_eff [ "protocol_define"; "protocol_start"; "protocol_use";
+            "protocol_current"; "protocol_state"; "protocol_end";
+            "protocol_events" ] ["log"];
+  (* Time *)
+  set_eff [ "wait" ] ["time"];
+  (* UI.SDL : 装置への出力 *)
+  set_eff [ "sdl_init"; "sdl_clear"; "sdl_line"; "sdl_erase_line";
+            "sdl_present"; "sdl_line_c" ] ["io"];
+  (* AIOS.Memory / AIOS.Task : 永続化 *)
+  set_eff [ "aios_memory_put"; "aios_memory_get"; "aios_memory_has";
+            "aios_memory_keys"; "aios_task_create"; "aios_task_set";
+            "aios_task_get"; "aios_task_info"; "aios_tasks" ] ["fs"];
+  (* AIOS.Model : モデル推論。機外へ出るので net も持つ *)
+  set_eff [ "ai_call"; "ai_call_with_system"; "model_generate";
+            "gemini_generate"; "openai_generate" ] ["ai"; "net"];
+  (* AIOS.Remote / Web / AIOS.Service : ノード外への通信 *)
+  set_eff [ "remote_review"; "remote_review_ja"; "remote_reviewer_host";
+            "web_listen"; "web_expose";
+            "aios_now"; "aios_future" ] ["net"];
+  set_eff [ "aios_register_service"; "aios_services"; "aios_service_actor";
+            "aios_service_info" ] ["log"];
+  (* Actor : 動的生成 *)
+  set_eff [ "spawn" ] ["mem"]
+
+let prim_eff (name : string) : SSet.t =
+  match Hashtbl.find_opt prim_effs name with
+  | Some e -> e
+  | None   -> SSet.empty      (* 未登録のプリミティブは効果なしと見なす *)
+
 let prelude () : env =
   let e = empty_env () in
 

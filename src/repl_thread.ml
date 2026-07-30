@@ -131,6 +131,7 @@ let pp_token = function
   | BECOME     -> "BECOME"
   | COLON      -> "COLON"
   | PLUSPLUS   -> "PLUSPLUS"
+  | BANG       -> "BANG"
   | EOF       -> "EOF"
 
 let dump_tokens_of_string (src:string) =
