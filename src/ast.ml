@@ -12,9 +12,11 @@ type expr = {
   | Var of string
   | New of string * expr list    (* new Line(10,20) *)
   | Array of expr list * Types.ty option
-  | NowSend of send_target * string * expr list
+  (* now / await は期限と else 節を持てる: (ミリ秒, 期限切れ時の式)。
+     None は期限なし（当面は警告。AIOS_STRICT_DEADLINE=1 でエラー）。 *)
+  | NowSend of send_target * string * expr list * (int * expr) option
   | FutureSend of send_target * string * expr list
-  | Await of expr
+  | Await of expr * (int * expr) option
 
 and send_target =
   | LocalTarget of string
@@ -102,14 +104,16 @@ let rec string_of_expr (e:expr) : string =
   | Array (es, _tyopt) ->
     let xs = es |> List.map string_of_expr |> String.concat ", " in
     Printf.sprintf "Array[%s]" xs
-  | NowSend (tgt, meth, args) ->
+  | NowSend (tgt, meth, args, d) ->
     let xs = args |> List.map string_of_expr |> String.concat ", " in
-    Printf.sprintf "Now(%s.%s, [%s])" (string_of_send_target tgt) meth xs
+    Printf.sprintf "Now(%s.%s, [%s]%s)" (string_of_send_target tgt) meth xs
+      (match d with None -> "" | Some (ms,_) -> Printf.sprintf ", timeout %d" ms)
   | FutureSend (tgt, meth, args) ->
     let xs = args |> List.map string_of_expr |> String.concat ", " in
     Printf.sprintf "Future(%s.%s, [%s])" (string_of_send_target tgt) meth xs
-  | Await e ->
-    Printf.sprintf "Await(%s)" (string_of_expr e)
+  | Await (e, d) ->
+    Printf.sprintf "Await(%s%s)" (string_of_expr e)
+      (match d with None -> "" | Some (ms,_) -> Printf.sprintf ", timeout %d" ms)
 
 let rec string_of_stmt (s:stmt) : string =
   match s.sdesc with
@@ -173,9 +177,9 @@ let label_of_expr (e:expr) : string =
   | Var x          -> "Var " ^ x
   | New (cls, _)   -> "New " ^ cls                 (* ★ 追加 *)
   | Array (_,_)    -> "Array"
-  | NowSend (tgt, meth, _) -> "Now " ^ string_of_send_target tgt ^ "." ^ meth
+  | NowSend (tgt, meth, _, _) -> "Now " ^ string_of_send_target tgt ^ "." ^ meth
   | FutureSend (tgt, meth, _) -> "Future " ^ string_of_send_target tgt ^ "." ^ meth
-  | Await _ -> "Await"
+  | Await (_, _) -> "Await"
 ;;
 
 let children_of_expr (e:expr) : ('a list) =
@@ -184,9 +188,9 @@ let children_of_expr (e:expr) : ('a list) =
   | Call (_,arg)  -> arg
   | Expr e        -> [e]
   | New (_, args)              -> args                 (* ★ 追加 *)
-  | NowSend (_, _, args)       -> args
+  | NowSend (_, _, args, d)    -> args @ (match d with None -> [] | Some (_,a) -> [a])
   | FutureSend (_, _, args)    -> args
-  | Await e                    -> [e]
+  | Await (e, d)               -> e :: (match d with None -> [] | Some (_,a) -> [a])
   | _             -> []
 
 let rec dump_expr ?(prefix="") ?(is_last=true) (e : expr) =
@@ -335,14 +339,18 @@ let rec pprint_expr ?(lvl=0) (e:expr) : string =
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
   | Array (es, _) ->
     "[" ^ String.concat ", " (List.map (pprint_expr ~lvl) es) ^ "]"
-  | NowSend (tgt, meth, args) ->
-      Printf.sprintf "now %s.%s(%s)" (string_of_send_target tgt) meth
+  | NowSend (tgt, meth, args, d) ->
+      Printf.sprintf "now %s.%s(%s)%s" (string_of_send_target tgt) meth
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
+        (match d with None -> ""
+         | Some (ms,a) -> Printf.sprintf " timeout %d else %s" ms (pprint_expr ~lvl a))
   | FutureSend (tgt, meth, args) ->
       Printf.sprintf "future %s.%s(%s)" (string_of_send_target tgt) meth
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
-  | Await e ->
+  | Await (e, d) ->
       "await " ^ pprint_expr ~lvl e
+      ^ (match d with None -> ""
+         | Some (ms,a) -> Printf.sprintf " timeout %d else %s" ms (pprint_expr ~lvl a))
 
 let rec pprint_stmt ?(lvl=0) (s:stmt) : string =
   let indent = String.make (lvl*2) ' ' in

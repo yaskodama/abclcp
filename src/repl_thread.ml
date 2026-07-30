@@ -361,13 +361,17 @@ let rec string_of_expr (e : Ast.expr) =
   | Int i -> string_of_int i
   | New (cls, args) -> cls ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
   | Array (_,_) -> "array"
-  | NowSend (tgt, meth, args) ->
+  | NowSend (tgt, meth, args, dl) ->
       "now " ^ string_of_send_target tgt ^ "." ^ meth ^ "(" ^
       String.concat ", " (List.map string_of_expr args) ^ ")"
+      ^ (match dl with None -> ""
+         | Some (ms, a) -> Printf.sprintf " timeout %d else %s" ms (string_of_expr a))
   | FutureSend (tgt, meth, args) ->
       "future " ^ string_of_send_target tgt ^ "." ^ meth ^ "(" ^
       String.concat ", " (List.map string_of_expr args) ^ ")"
-  | Await e -> "await " ^ string_of_expr e
+  | Await (e, dl) -> "await " ^ string_of_expr e
+      ^ (match dl with None -> ""
+         | Some (ms, a) -> Printf.sprintf " timeout %d else %s" ms (string_of_expr a))
   
 let rec string_of_stmt (st: Ast.stmt) =
   match st.sdesc with

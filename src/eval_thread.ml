@@ -143,6 +143,25 @@ let await_future (f:future_state) : value =
   | None, Some msg -> failwith ("future rejected: " ^ msg)
   | None, None -> failwith "future await failed"
 
+(* 期限付きの待ち。OCaml の Condition には時限待ちが無いので、
+   短い sleep でポーリングする。解決すれば Some v、期限切れなら None。
+   拒否された場合は例外を投げる（期限切れとは区別する）。 *)
+let await_future_timeout (f:future_state) (ms:int) : value option =
+  let deadline = Unix.gettimeofday () +. (float_of_int ms /. 1000.0) in
+  let step = 0.001 in                      (* 1ms 刻み *)
+  let rec loop () =
+    Mutex.lock f.fmutex;
+    let r = f.fresult and e = f.ferror in
+    Mutex.unlock f.fmutex;
+    match r, e with
+    | Some v, _ -> Some v
+    | None, Some msg -> failwith ("future rejected: " ^ msg)
+    | None, None ->
+        if Unix.gettimeofday () >= deadline then None
+        else (Thread.delay step; loop ())
+  in
+  loop ()
+
 (* current actor name while executing a message (for session log) *)
 let set_current_actor_name (nm:string option) =
   (current_exec_context ()).ctx_actor_name <- nm
@@ -1834,13 +1853,25 @@ let rec eval_expr (actor:actor) (e : expr) =
           reject_future f.fid "future remote send is not implemented"
       end;
       VFuture f
-  | NowSend (target, meth, args) ->
+  | NowSend (target, meth, args, dl) ->
       (match eval_expr actor { e with desc = FutureSend (target, meth, args) } with
-       | VFuture f -> await_future f
+       | VFuture f ->
+           (match dl with
+            | None -> await_future f            (* 期限なし: 従来どおり無期限に待つ *)
+            | Some (ms, alt) ->
+                (match await_future_timeout f ms with
+                 | Some v -> v
+                 | None   -> eval_expr actor alt))   (* 期限切れ -> else 節 *)
        | _ -> failwith "now: internal future send failed")
-  | Await e ->
-      (match eval_expr actor e with
-       | VFuture f -> await_future f
+  | Await (e1, dl) ->
+      (match eval_expr actor e1 with
+       | VFuture f ->
+           (match dl with
+            | None -> await_future f
+            | Some (ms, alt) ->
+                (match await_future_timeout f ms with
+                 | Some v -> v
+                 | None   -> eval_expr actor alt))
        | v -> failwith ("await: expected future, got " ^ type_name_of_value v))
 and eval_stmt (actor:actor) (s : Ast.stmt) =
   match s.sdesc with

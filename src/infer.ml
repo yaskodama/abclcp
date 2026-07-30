@@ -62,11 +62,16 @@ let rec expr_has_reply (e : Ast.expr) : bool =
   | Ast.Call (_, args)
   | Ast.New (_, args)
   | Ast.Array (args, _)
-  | Ast.NowSend (_, _, args)
   | Ast.FutureSend (_, _, args) -> List.exists expr_has_reply args
+  | Ast.NowSend (_, _, args, d) ->
+      List.exists expr_has_reply args || alt_has_reply d
   | Ast.Binop (_, a, b) -> expr_has_reply a || expr_has_reply b
-  | Ast.Expr e1 | Ast.Await e1 -> expr_has_reply e1
+  | Ast.Expr e1 -> expr_has_reply e1
+  | Ast.Await (e1, d) -> expr_has_reply e1 || alt_has_reply d
   | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Var _ -> false
+and alt_has_reply = function
+  | None -> false
+  | Some (_, a) -> expr_has_reply a
 
 let rec stmt_has_reply (s : Ast.stmt) : bool =
   match s.sdesc with
@@ -120,12 +125,17 @@ let rec max_replies_expr (e : Ast.expr) : int =
   | Ast.Call (_, args)
   | Ast.New (_, args)
   | Ast.Array (args, _)
-  | Ast.NowSend (_, _, args)
   | Ast.FutureSend (_, _, args) ->
       cap2 (List.fold_left (fun n a -> n + max_replies_expr a) 0 args)
+  (* 期限切れの else 節は「本体と else のどちらか一方」なので max を取る *)
+  | Ast.NowSend (_, _, args, d) ->
+      cap2 (List.fold_left (fun n a -> n + max_replies_expr a) 0 args
+            + max_alt d)
   | Ast.Binop (_, a, b) -> cap2 (max_replies_expr a + max_replies_expr b)
-  | Ast.Expr e1 | Ast.Await e1 -> max_replies_expr e1
+  | Ast.Expr e1 -> max_replies_expr e1
+  | Ast.Await (e1, d) -> cap2 (max_replies_expr e1 + max_alt d)
   | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Var _ -> 0
+and max_alt = function None -> 0 | Some (_, a) -> max_replies_expr a
 
 (* 囲むメソッドから見た reply 回数の上界。
    select の case 本体は別メッセージ宛なので数えない（timeout 本体だけ数える）。 *)
@@ -194,6 +204,13 @@ let unify_try (loc : Location.t) (t1 : ty) (t2 : ty) : bool =
 (* ---------------------------------------------------------------- *)
 (*  オーバーロード解決                                                *)
 (* ---------------------------------------------------------------- *)
+
+(* AIOS_STRICT_DEADLINE=1 で、期限なしの now / await をエラーにする。
+   既定は警告（既存コードに now が 57 箇所・await が 30 箇所あるため）。 *)
+let strict_deadline =
+  match Sys.getenv_opt "AIOS_STRICT_DEADLINE" with
+  | Some "1" | Some "true" | Some "yes" -> ref true
+  | _ -> ref false
 
 (* 曖昧な overload は既定でエラーにする。
    principal type が無い箇所は注釈で決める、という規律にするため。
@@ -506,7 +523,7 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
         end
       in
       TFuture ret
-  | NowSend (target, mname, args) ->
+  | NowSend (target, mname, args, dl) ->
       (* now は future の即時 await。戻り値型も同じ ρ になる。
          ★ 待つので、呼ばれる側の効果を引き継ぐ辺を張る。 *)
       let saved = !in_now_send in
@@ -516,12 +533,20 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
          | TFuture t -> t
          | _         -> TAny)
       in
-      in_now_send := saved; r
-  | Await e1 ->
-      (match repr (infer_expr env e1) with
-       | TFuture t -> t
-       | TAny -> TAny
-       | t -> Types.type_error ~loc:e.loc ("await expected future, got " ^ string_of_ty_pretty t))
+      in_now_send := saved;
+      check_deadline env e.loc "now" r dl;
+      r
+  | Await (e1, dl) ->
+      let r =
+        (match repr (infer_expr env e1) with
+         | TFuture t -> t
+         | TAny -> TAny
+         | t -> Types.type_error ~loc:e.loc
+                  ("await expected future, got " ^ string_of_ty_pretty t))
+      in
+      check_deadline env e.loc "await" r dl;
+      r
+
   | Array (elems, _) ->
     begin match elems with
     | [] -> TArray TUnit
@@ -531,6 +556,34 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
         TArray t1
     end
     
+(* 期限節の検査。
+   else 節は本体と同じ型でなければならない ---- 期限切れでも
+   式全体の型は変わらないため。
+   期限が無い場合は、無期限に待つのでデッドロックの余地が残る。
+   AIOS_STRICT_DEADLINE=1 でエラー、既定は警告。 *)
+and check_deadline (env:env) (loc:Location.t) (kind:string)
+                   (rty:ty) (dl:(int * Ast.expr) option) : unit =
+  match dl with
+  | Some (ms, alt) ->
+      if ms <= 0 then
+        Types.type_error ~loc (kind ^ ": timeout must be positive");
+      let ta = infer_expr ?expected:(expected_of rty) env alt in
+      (try Types.unify ~loc rty ta
+       with Types.Type_error (_, _) ->
+         Types.type_error ~loc
+           (Printf.sprintf
+              "%s: the else branch has type %s but the call returns %s"
+              kind (Types.string_of_ty_pretty (repr ta))
+              (Types.string_of_ty_pretty (repr rty))))
+  | None ->
+      let msg =
+        Printf.sprintf
+          "%s without a deadline waits forever; write `%s ... timeout <ms> else <expr>`"
+          kind kind
+      in
+      if !strict_deadline then Types.type_error ~loc msg
+      else Printf.eprintf "[warn] %s: %s\n%!" (Location.to_string loc) msg
+
 let set (e:env) (name:string) (sch:scheme) =
   Hashtbl.replace e name [sch]
 
@@ -1000,9 +1053,12 @@ let collect_prim_calls (p : Ast.program) : (string * Ast.expr list * Location.t)
     | Ast.Call (f, args) ->
         acc := (f, args, e.loc) :: !acc; List.iter ex args
     | Ast.Binop (_, a, b) -> ex a; ex b
-    | Ast.Expr e1 | Ast.Await e1 -> ex e1
+    | Ast.Expr e1 -> ex e1
+    | Ast.Await (e1, d) -> ex e1; (match d with Some (_,a) -> ex a | None -> ())
     | Ast.New (_, args) | Ast.Array (args, _)
-    | Ast.NowSend (_, _, args) | Ast.FutureSend (_, _, args) -> List.iter ex args
+    | Ast.FutureSend (_, _, args) -> List.iter ex args
+    | Ast.NowSend (_, _, args, d) ->
+        List.iter ex args; (match d with Some (_,a) -> ex a | None -> ())
     | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Var _ -> ()
   and st (s : Ast.stmt) =
     match s.sdesc with

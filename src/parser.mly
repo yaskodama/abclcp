@@ -191,9 +191,13 @@ expr:
   | expr TIMES expr { mk_expr1 2 (Binop ("*", $1, $3)) }
   | expr DIV expr { mk_expr1 2 (Binop ("/", $1, $3)) }
   | NEW ID LPAREN args RPAREN { mk_expr1 1 (New ($2, $4)) }
-  | NOW send_target DOT ID LPAREN args RPAREN { mk_expr1 1 (NowSend ($2, $4, $6)) }
+  | NOW send_target DOT ID LPAREN args RPAREN
+      { mk_expr1 1 (NowSend ($2, $4, $6, None)) }
+  | NOW send_target DOT ID LPAREN args RPAREN TIMEOUT INTLIT ELSE expr
+      { mk_expr1 1 (NowSend ($2, $4, $6, Some ($9, $11))) }
   | FUTURE send_target DOT ID LPAREN args RPAREN { mk_expr1 1 (FutureSend ($2, $4, $6)) }
-  | AWAIT expr { mk_expr1 1 (Await $2) }
+  | AWAIT expr { mk_expr1 1 (Await ($2, None)) }
+  | AWAIT expr TIMEOUT INTLIT ELSE expr { mk_expr1 1 (Await ($2, Some ($4, $6))) }
   | ID LPAREN args RPAREN { mk_expr1 1 (Call ($1, $3)) }
   | expr GE expr { mk_expr1 2 (Binop (">=", $1, $3)) }
   | expr LE expr { mk_expr1 2 (Binop ("<=", $1, $3)) }

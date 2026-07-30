@@ -1,0 +1,41 @@
+// g7: 期限付き now / await
+//
+//     now や await を期限なしで書くと、返信が来なければ永久に待つ。
+//     アクターは1台1スレッドで動くので、待っている間そのアクターは
+//     他のメッセージを一切処理できない ── 石になる。
+//
+//     そこで期限と else 節を書けるようにした。
+//
+//       now t.m(a) timeout <ミリ秒> else <式>
+//       await f    timeout <ミリ秒> else <式>
+//
+//     else 節は本体と同じ型でなければならない（期限切れでも式全体の型は
+//     変わらないため）。期限なしの形は当面は警告で、
+//     AIOS_STRICT_DEADLINE=1 でエラーになる。
+//
+//     進行定理の観点では、期限付きの待ちは有限時間で必ず解けるので、
+//     期限付きだけを使うプログラムではデッドロック自由が言える。
+class Slow {
+  method work(k) : int !{time} {
+    wait(300);              // 300ms かかる
+    reply(k * 2);
+  }
+  method fast(k) : int !{} {
+    reply(k * 2);
+  }
+}
+
+var s = new Slow();
+
+// 期限内に返る
+var a = now s.fast(21) timeout 1000 else 0;
+print("fast = " ++ a);
+
+// 期限切れ -> else 節の値になる
+var b = now s.work(21) timeout 50 else 0;
+print("slow(timed out) = " ++ b);
+
+// future を期限付きで await する
+var f = future s.fast(5);
+var c = await f timeout 1000 else 0;
+print("await = " ++ c);
