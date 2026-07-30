@@ -41,10 +41,10 @@
 
 \newcommand{\ty}[1]{\ensuremath{\mathtt{#1}}}
 
-\title{AIPL に express mode と \texttt{where} を入れるとどうなるか\\
-{\large ---\ ABCL/1 へ近づけることの利点と代償 ---}}
+\title{AIPL の言語仕様の検討\\
+{\large ---\ ABCL/1 の機構の再導入と、分散 AI エージェント／実時間 OS という目的から ---}}
 \author{ABCL$^{c}$+ / AIOS 処理系（\texttt{yaskodama/abclcp}）}
-\date{2026年07月30日 09:39 JST 版}
+\date{2026年07月30日 09:48 JST 版}
 
 \begin{document}
 \maketitle
@@ -72,9 +72,24 @@ atomicity 宣言を用意していた。
 アクターの環境に直接置かれ、呼び出し時に退避・復元されていない。
 これは今は観測できない潜在的な問題だが、入れ子実行を導入した途端に
 表に出る。本稿はこれを実測で確認した。
+
+第 \ref{part:purpose} 部では視点を変え、AIPL が
+\textbf{分散 AI エージェント言語}と
+\textbf{実時間 OS（フィジカル AI）の記述言語}という
+二つの目的を持つとしたら、どのような言語仕様であるべきかを考察する。
+結論は\textbf{一つの中核と二つのプロファイル}である。
+二つの目的の要求は多くの点で正反対であり、
+一つの言語で両方を無差別に許すと、どちらの保証も得られない。
+両者を静的に分ける鍵は effect/capability 系であり、
+幸いなことに実装にはすでに 17 種の capability 分類が存在する
+（ただし現在は実行時メタデータにとどまり、型検査器は使っていない）。
+Ada の Ravenscar プロファイルという直接の先例もある。
 \end{abstract}
 
 \tableofcontents
+
+\part{express mode と \texttt{where} の再導入}
+\label{part:mech}
 
 \section{はじめに}
 
@@ -671,6 +686,1012 @@ express mode は、前提となる修正（呼び出しフレーム）と
 \texttt{where} までは進み、express mode は \texttt{atomic} の設計が
 固まってから、というのが妥当な線である。
 
+\part{二つの目的に向けた言語仕様の考察}
+\label{part:purpose}
+
+\section{二つの目的とその要求}
+
+ここから視点を変える。AIPL が次の二つを目的に持つとしたら、
+どのような言語仕様であるべきか。
+
+\begin{itemize}
+\item \textbf{分散 AI エージェント言語} ---- 複数ノードに分散した
+  エージェントが、モデル呼び出し・記憶・タスク・プロトコルを通じて協調する。
+  実装にはすでに \texttt{ai\_call}、\texttt{model\_generate}、
+  \texttt{aios\_memory\_*}、\texttt{aios\_task\_*}、\texttt{protocol\_*}、
+  \texttt{remote(...)}、HTTP ゲートウェイが揃っている。
+\item \textbf{実時間 OS（フィジカル AI）の記述言語} ---- センサ・アクチュエータを
+  持つ実機の上で、周期処理と割り込みを記述する。
+  別リポジトリで Xinu 上の実行系（プリエンプティブ優先度、tickless タイマ）と
+  AIPL からのコード生成が進んでいることを前提とする。
+\end{itemize}
+
+\subsection{分散 AI エージェント言語としての要求}
+
+\begin{enumerate}
+\item \textbf{待ち時間が長く、しかも予測できない。}
+  モデル呼び出しは秒単位で、失敗もする。
+  \texttt{now} で待つと、その間アクターは何もできない。
+\item \textbf{失敗が普通である。}タイムアウト、部分的な成功、リトライが日常であり、
+  「返るか返らないか」ではなく「何が返り、返らなかったときどうするか」を
+  書けなければならない。
+\item \textbf{結果が構造を持つ。}モデルの出力は JSON 相当の構造である。
+  現在の AIPL の型は \ty{int} / \ty{float} / \ty{string} / \ty{bool} /
+  \ty{unit} / 配列 / アクターだけで、\textbf{レコードも直和も無い}。
+  構造をすべて文字列で運ぶことになる。
+\item \textbf{どこへ何が出ていくかが重要である。}機外へ出る呼び出しと
+  ローカル推論は区別されなければならない。
+  監査・秘匿・課金のいずれの観点からも必要である。
+\item \textbf{対話の順序に規律がある。}\texttt{protocol\_*} は
+  すでにセッションプロトコルを実行時に検査しているが、型ではない。
+\end{enumerate}
+
+\subsection{実時間 OS（フィジカル AI）としての要求}
+
+\begin{enumerate}
+\item \textbf{時間が仕様である。}周期、期限、最悪実行時間、ジッタが
+  正しさの一部になる。「いつか終わる」では不十分である。
+\item \textbf{有界であること。}メモリ、ループ回数、メールボックス長、
+  再帰深さ ---- すべてに上限が要る。
+  動的割り付けは初期化後には禁止したい。
+\item \textbf{割り込みが本質である。}センサ・タイマ・通信の到着は割り込みであり、
+  第 \ref{part:mech} 部の express mode がまさにこれである。
+  そして割り込まれてはいけない区間（\texttt{atomic}）が必ず要る。
+\item \textbf{ブロックが致命的である。}\texttt{now} で無期限に待つ制御ループは
+  期限を守れない。
+\item \textbf{数値の決定性。}浮動小数はハードウェアによって時間も結果も揺れる。
+  制御ループでは整数か固定小数点が望ましい。
+  なお AIPL では \texttt{/} が \ty{int} 同士でも \ty{float} を返す仕様である。
+\item \textbf{物理量の取り違えが事故になる。}\texttt{m/s} と
+  \texttt{rad/s} を足しても現在の型システムは何も言わない。
+\end{enumerate}
+
+\subsection{両者は多くの点で正反対である}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & 分散 AI エージェント & 実時間 OS \\
+\midrule
+待ち時間        & 秒単位、予測不能 & マイクロ秒〜ミリ秒、上界必須 \\
+失敗            & 日常。設計に織り込む & 許されない（設計で排除する） \\
+データ          & 構造化・可変長・スキーマ推測 & 固定長・既知 \\
+メモリ          & 動的でよい & 初期化後は静的 \\
+非決定性        & 本質的（モデル出力） & 排除したい \\
+\texttt{now}    & 使いたいが長く待つ & 期限なしでは使えない \\
+浮動小数        & 問題ない & 避けたい \\
+外部通信        & 中心的な機能 & 限定・帯域保証つき \\
+優先度          & 概念が薄い & 中心的 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+同じ言語で両方を\emph{無差別に}許すと、どちらの保証も得られない。
+実時間側は「この部分は割り付けもブロックもしない」と言えなくなり、
+エージェント側は不要な制約を負う。
+
+\section{提案 ---- 一つの中核と二つのプロファイル}
+
+\subsection{先例 ---- Ada の Ravenscar プロファイル}
+
+この形には直接の先例がある。Ada は汎用言語だが、
+高信頼・実時間用途に対して\textbf{Ravenscar プロファイル}という
+制限された部分集合を定義した。動的なタスク生成を禁じ、
+待ち合わせの形を限定し、解析可能性を確保する。
+言語を分けるのではなく、\emph{同じ言語の中に検証可能な部分集合を切る}
+という設計である。
+
+同様に、分散側には E 言語という先例がある。E は\textbf{ブロックを一切許さず}、
+eventual send と promise だけで書かせる。デッドロックを言語から
+排除するための選択である。
+
+AIPL が採るべきはこの二つを合わせた形である。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{5.0cm}p{5.0cm}@{}}
+\toprule
+ & プロファイル A（\texttt{agent}） & プロファイル R（\texttt{realtime}） \\
+\midrule
+方針 & ブロックを避け、失敗を型に持つ &
+  有界性と期限を静的に保証する \\
+許す effect & \texttt{net}, \texttt{ai}, \texttt{fs}, \texttt{mem},
+  \texttt{time} & \texttt{io}（宣言した装置のみ）, \texttt{time} \\
+禁止 & 無期限 \texttt{now} & \texttt{now}（期限なし）、動的割り付け、
+  非有界ループ、再帰、浮動小数 \\
+必須 & 失敗の扱い、リモートインタフェース宣言 &
+  周期／期限／優先度の宣言、\texttt{atomic} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{すでにある土台 ---- capability 分類}
+
+好都合なことに、実装にはすでに capability の分類が入っている。
+プリミティブごとに分類が付けられ、実行時に列挙できる。
+実測すると 17 分類あった。
+
+\begin{lstlisting}[language={}]
+Core.Math  Core.Array  Core.Introspection  Console  Time
+Actor  Actor.Introspection
+AIOS.Kernel  AIOS.Service  AIOS.Task  AIOS.Memory  AIOS.Event
+AIOS.Model  AIOS.Model.OpenAI  AIOS.Model.Gemini  AIOS.Remote
+Protocol.Session  UI.SDL  Web
+\end{lstlisting}
+
+\begin{finding}
+この分類は\textbf{実行時メタデータにとどまっており、型検査器は一切使っていない}。
+\texttt{capabilities()} と \texttt{capability\_prims(c)} で内省できるだけである。
+\end{finding}
+
+つまりプロファイル分離のための\emph{データはすでにある}。
+足りないのは、これを静的な effect として\emph{メソッドに伝播させ、
+宣言と照合する}機構だけである。姉妹実装（Python 版 AIPL）では
+効果注釈が gradual に検査されており、方式の前例も内部にある。
+
+\subsection{effect を静的にする}
+
+メソッドに effect を宣言でき、本体が使うプリミティブと送信先の effect の
+和が宣言に含まれることを検査する。
+
+\begin{lstlisting}[language=AIPL]
+class Planner {
+  // 機外へ出ることを宣言している
+  method plan(goal) : string !{ai, net} {
+    reply(ai_call("plan: " ++ goal));
+  }
+}
+
+class Controller {
+  // io と time だけ。net も ai も使えない
+  method step(sensor) : int !{io, time} {
+    reply(clamp(sensor));
+  }
+}
+\end{lstlisting}
+
+これで得られるものは大きい。
+
+\begin{itemize}
+\item \textbf{機外に出ないローカル推論を型で示せる。}
+  たとえばオンデバイス推論のプリミティブに \texttt{\{ai\}} だけを与え、
+  \texttt{net} を含めなければ、「AI を使うが機外へは出ない」ことが
+  シグネチャに現れる。
+\item \textbf{実時間側で禁止すべき effect を列挙できる。}
+  \texttt{net} や \texttt{ai} を持つメソッドは
+  プロファイル R では呼べない、と機械的に言える。
+\item \textbf{監査ができる。}どのアクターがどの外部資源に触るかが
+  静的に集計できる。
+\end{itemize}
+
+\section{中核に必要な仕様}
+
+両プロファイルに共通して必要なものを挙げる。
+いずれも現在の穴を埋める作業でもある。
+
+\begin{enumerate}
+\item \textbf{型の穴を閉じる。}
+  \texttt{sender} が \ty{any} で送信が無検査、リモート送信先が \ty{any}、
+  アクター型が単一化で区別されない、\texttt{become} が置換後の
+  インタフェースを検査しない ---- これらは分散でも実時間でも致命的である。
+  分散では相手を間違え、実時間では存在しないメソッドへ送っても
+  実行時まで分からない。
+
+\item \textbf{リモートインタフェース記述。}
+  対向ノードの \texttt{class C \{ method m(x) : T \}} だけを書いた
+  記述を読み込み、\texttt{remote(...)} に型を付ける。
+  戻り値型注釈を必須にしたのはこの前提づくりであった。
+  実時間メッシュでもエージェント連携でも、これが無いと境界が \ty{any} のままである。
+
+\item \textbf{レコードと直和。}
+  現在は構造化データを表現できない。
+  エージェント側は JSON 相当、実時間側はセンサフレームやコマンドを
+  構造として運びたい。直和があれば「成功か失敗か」も型で表せる。
+
+\item \textbf{\texttt{where} ガード}（第 \ref{part:mech} 部）。
+  エージェント側では「必要なデータが揃うまで受理しない」、
+  実時間側では「状態機械の段階に合わない指令を受理しない」に効く。
+  どちらも本質的である。
+
+\item \textbf{\texttt{==} と \texttt{!=}。}
+  現在これらは字句解析器と評価器にあるのに\emph{文法規則が無く書けない}。
+  状態機械を書く言語としては欠落が大きい。
+\end{enumerate}
+
+\section{プロファイル A ---- 分散 AI エージェント}
+
+\subsection{無期限 \texttt{now} を禁止し、期限付きにする}
+
+エージェントにとって最悪の事態は、モデル呼び出しの返りを待って
+アクターが石になることである。\texttt{now} を廃するのではなく、
+\textbf{期限と失敗時の分岐を必須にする}。
+
+\begin{lstlisting}[language=AIPL]
+var r = now planner.plan(goal) timeout 5000 else "fallback";
+\end{lstlisting}
+
+型としては \texttt{now ... timeout ... else e} の全体が
+$\rho$ 型の式であり、\texttt{else} 節も同じ型を持つことを要求すればよい。
+既存の \texttt{select} の \texttt{timeout} と同じ機構で実装できる。
+
+これは進行定理に対して\textbf{良い方向}に働く。現在の進行定理の第三の枝
+「\texttt{await} 待ち」は、期限付き \texttt{now} だけを使うプログラムでは
+有限時間で解消するので、その範囲でデッドロック自由が言える。
+言い換えれば、\textbf{期限を必須にすることは型で保証できる進行性を増やす}。
+
+\subsection{失敗を型に持つ}
+
+期限切れ、モデルの拒否、ネットワーク断は日常である。
+直和があれば戻り値型として書ける。
+
+\begin{lstlisting}[language=AIPL]
+method plan(goal) : Result<string, Error> !{ai, net} { ... }
+\end{lstlisting}
+
+現在は「失敗したら文字列に \texttt{"ERROR: ..."} を入れる」しかなく、
+呼び出し側が確認を忘れても型検査は通る。
+
+\subsection{セッションプロトコルを型へ上げる}
+
+\texttt{protocol\_*} は実行時にプロトコル状態を検査している。
+これを型レベルのセッション型へ上げることは、健全性レポートが
+すでに次の課題として挙げている。
+戻り値型注釈を必須にしたことで、$!m(T).?R.\cdots$ の $R$ が
+インタフェースに書かれている状態になった。前提は整っている。
+
+\subsection{構造化出力のスキーマ検査}
+
+モデル出力を型付きの値へ取り込む箇所は、必ず動的検査になる。
+そこを\textbf{一点に閉じ込める}のが型システムの役目である。
+
+\begin{lstlisting}[language=AIPL]
+// 検査に失敗したら Err になる。以降は型が保証される
+var p = parse<Plan>(now planner.plan(goal) timeout 5000 else "");
+\end{lstlisting}
+
+\section{プロファイル R ---- 実時間 OS／フィジカル AI}
+
+\subsection{時間を宣言する}
+
+周期、期限、優先度をメソッドの宣言に置く。
+
+\begin{lstlisting}[language=AIPL]
+class Balancer {
+  // 1kHz、期限 800us、優先度 10
+  periodic method tick() : unit !{io, time}
+      period 1000us deadline 800us priority 10 {
+    var s = read_gyro();
+    set_motor(pid(s));
+  }
+}
+\end{lstlisting}
+
+これは型システムの仕事ではなく\emph{スケジューリング可能性解析}の仕事だが、
+言語が宣言を持てば解析器を書ける。Xinu 上の実行系が
+プリエンプティブ優先度と tickless タイマを持つなら、
+宣言をそのままスケジューラの設定へ落とせる。
+
+\subsection{有界性を静的に強制する}
+
+プロファイル R では次を禁止または制限する。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+対象 & 扱い \\
+\midrule
+\texttt{new}（動的アクター生成） & 初期化フェーズのみ許可 \\
+配列の伸長（\texttt{array\_push}） & 禁止。容量は宣言する \\
+\texttt{while} & 禁止。上界の明らかな \texttt{for} だけを許す \\
+再帰・自分あて送信の連鎖 & 禁止（呼び出しグラフで検査） \\
+期限なし \texttt{now} / \texttt{await} & 禁止 \\
+浮動小数 & 禁止または固定小数点に置換 \\
+\texttt{net}, \texttt{ai}, \texttt{fs} effect & 禁止 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+これらはいずれも\textbf{構文と effect の検査で機械的に実施できる}。
+依存型は要らない。
+\texttt{while} の禁止は既存の \texttt{reply} 線形性検査
+（ループ本体の \texttt{reply} を「2 回以上」と判定する走査）と
+同じ形の解析で足りる。
+
+\subsection{数値 ---- 固定小数点と単位}
+
+浮動小数を避けるなら、\ty{int} を基本にした固定小数点型が要る。
+ここで、本セッションで整理した数値の扱いが直接効いてくる。
+現在 \texttt{/} は \ty{int} 同士でも \ty{float} を返す。
+プロファイル R ではこれを許せないので、
+\texttt{div} と \texttt{mod}、あるいは固定小数点の \texttt{/} を
+別に用意することになる。
+
+さらにフィジカル AI では\textbf{物理単位}を型に載せる価値が大きい。
+
+\begin{lstlisting}[language=AIPL]
+var v : float<m/s>   = 1.2;
+var w : float<rad/s> = 0.3;
+var x = v + w;          // 単位不一致として型エラーにしたい
+\end{lstlisting}
+
+単位は型の添字として扱えるので、依存型は不要である。
+乗除で指数を足し引きする規則を単一化に入れるだけで済み、
+制御ソフトの事故の実際的な原因を一つ潰せる。
+
+\subsection{割り込みとしての express mode}
+
+第 \ref{part:mech} 部の express mode は、実時間側では選択肢ではなく\textbf{必然}である。
+センサ・タイマ・通信の到着は割り込みであり、
+\texttt{express method} がハンドラ、\texttt{atomic} が
+クリティカルセクションに対応する。
+
+そして第 \ref{part:mech} 部で挙げた前提と制約が、そのまま実時間の作法になる。
+
+\begin{itemize}
+\item メソッド呼び出しフレームの導入（割り込みハンドラは入れ子で走る）。
+\item \texttt{atomic} 区間では \texttt{now} / \texttt{await} を禁止。
+\item ハンドラ自身も有界でなければならない。
+  \textbf{express メソッドはプロファイル R の制約を必ず満たす}
+  ---- ループ禁止、割り付け禁止、期限つき ---- とすべきである。
+\end{itemize}
+
+\subsection{有界メールボックスと溢れ方針}
+
+無限に伸びるキューは実時間では使えない。
+容量と、溢れたときの方針を宣言させる。
+
+\begin{lstlisting}[language=AIPL]
+class Sensor mailbox 8 overflow drop_oldest { ... }
+\end{lstlisting}
+
+溢れが起きうることは型では消せないが、
+\emph{どうするかを宣言させる}ことで、暗黙の失敗を無くせる。
+
+\section{二つのプロファイルの境界}
+
+分散エージェントと実時間制御は同じシステムの中で協調する
+---- エージェントが判断し、実時間側が実行する。
+両者をつなぐ規律が要る。
+
+\subsection{方向の規律}
+
+\begin{center}
+\small
+\begin{tabular}{@{}llp{6.0cm}@{}}
+\toprule
+方向 & 許す送信 & 理由 \\
+\midrule
+A $\to$ R & \texttt{send} のみ &
+  実時間側の応答を待つとエージェント側が塞がる。
+  結果が要るなら R 側から通知させる \\
+R $\to$ A & 期限付き \texttt{future} のみ &
+  実時間側は決してブロックしてはならない。
+  \texttt{now} は使えない \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+すなわち\textbf{実時間側からエージェント側への同期呼び出しを型で禁止する}。
+これは effect と期限の検査で機械的に実施できる。
+「制御ループが LLM の返りを待って期限を落とす」という
+最も起こりやすい事故を、言語が構造的に防ぐ。
+
+\subsection{境界アクター}
+
+境界はアクターとして明示する。
+
+\begin{lstlisting}[language=AIPL]
+// エージェント側の判断を受け取り、実時間側へ渡すだけの境界
+class Bridge profile boundary {
+  var target = 0;
+
+  // A 側からは send のみ
+  express method set_target(v) : unit !{} { target = v; }
+
+  // R 側は即座に読める
+  method get_target() : int !{} { reply(target); }
+}
+\end{lstlisting}
+
+境界アクターは\textbf{状態の受け渡しだけを行い、計算しない}。
+express で書き込み、通常メソッドで読む。
+これなら実時間側は待たない。
+
+\section{型健全性と証明への影響}
+
+提案した仕様が、既存の形式的保証にどう影響するかを整理する。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.6cm}@{}}
+\toprule
+仕様 & 影響 \\
+\midrule
+effect 系 & 保存・進行に影響なし。effect は型の\emph{添え物}として
+  独立に定式化できる（型と effect の対で保存を述べる標準的な形） \\
+レコード・直和 & 標準的な拡張。保存の証明が場合分けで長くなるだけ \\
+期限付き \texttt{now} & \textbf{進行定理を強める}。
+  期限付き待ちは有限時間で解消するので、
+  第三の枝が「有限時間後に解消する待ち」に格上げできる \\
+\texttt{where} & 進行定理に「ガード待ち」の枝を追加（第 \ref{part:mech} 部）\\
+express + \texttt{atomic} & 型健全性は無傷。
+  プログラム個別の不変条件は \texttt{atomic} で裏づけ直す必要がある \\
+有界性の制約 & 型システムの外側の構文・グラフ解析。
+  健全性の証明には影響しないが、\emph{停止性}という
+  現在言えていない性質をプロファイル R では言えるようになる \\
+物理単位 & 型の添字として単一化に入れるだけ。依存型は不要 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+注目すべきは、\textbf{プロファイル R では現在言えていない性質が言えるようになる}
+ことである。健全性レポートは「停止性は言えない ---- メソッドが自分あてに
+送れば無限に走る」と述べているが、プロファイル R は
+まさにそれを禁止するので、停止性と応答時間の上界が主張できる。
+
+\section{実装の順序}
+
+これまでの改修で、見積りが実測と食い違うことが繰り返しあった。
+以下は順序の提案であり、各段階で既存コーパスの判定と
+差分テストハーネスを回して測るべきである。
+
+\begin{center}
+\small
+\begin{tabular}{@{}rlp{6.6cm}@{}}
+\toprule
+ & 内容 & 位置づけ \\
+\midrule
+1 & \texttt{==} / \texttt{!=} の文法追加 & 数行。欠落の解消 \\
+2 & 型の穴を閉じる（\texttt{sender}、アクター型の区別、\texttt{become}）&
+  両プロファイルの前提 \\
+3 & effect 注釈と検査（既存 capability 分類を静的化）&
+  \textbf{プロファイル分離の土台}。ここが要 \\
+4 & リモートインタフェース記述 & 分散の境界を閉じる \\
+5 & レコードと直和 & エージェント側の構造化データ、失敗の型 \\
+6 & 期限付き \texttt{now} & 進行性が強まる。A の必須要件 \\
+7 & \texttt{where} ガードと受信経路の統一 & 第 \ref{part:mech} 部 \\
+8 & 呼び出しフレーム、\texttt{atomic}、express mode &
+  第 \ref{part:mech} 部。R の必須要件 \\
+9 & 有界性の制約とプロファイル宣言 & R の閉じ込め \\
+10 & 周期・期限・優先度の宣言とスケジューリング解析 &
+  Xinu 実行系との接続 \\
+11 & 物理単位 & あれば事故が減る。優先度は低い \\
+12 & セッション型 & 長期目標 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+段階 3 が要である。effect が静的になれば、
+プロファイルの区別も、境界の方向の規律も、
+実時間側の禁止事項も、すべて同じ機構の上に載る。
+そして既存の capability 分類がそのまま使えるので、
+分類を新たに設計する必要はない。
+
+\section{まとめ ---- どのような言語仕様とすべきか}
+
+\begin{enumerate}
+\item \textbf{一つの中核と二つのプロファイル}にする。
+  二つの目的の要求は正反対であり、無差別に許すとどちらの保証も得られない。
+  Ada の Ravenscar プロファイルという先例がある。
+
+\item \textbf{プロファイルを分ける機構は effect/capability 系}である。
+  実装にはすでに 17 種の capability 分類があり、
+  実行時メタデータにとどまっている。これを静的にすることが最優先である。
+
+\item \textbf{中核では型の穴を閉じ、構造化データを入れる。}
+  \texttt{sender} と \texttt{remote} の \ty{any}、
+  アクター型の非区別、\texttt{become} の未検査、
+  レコード・直和の不在、\texttt{==} の欠落 ---- これらは
+  分散でも実時間でも支障になる。
+
+\item \textbf{エージェント側は「ブロックしない」を型で強制する。}
+  期限付き \texttt{now} を必須にし、失敗を直和で表す。
+  これは進行定理を\emph{強める}方向の変更である。
+
+\item \textbf{実時間側は「有界である」を静的に強制する。}
+  ループ・割り付け・再帰・浮動小数・外部通信を制限し、
+  周期と期限を宣言する。express mode と \texttt{atomic} は
+  選択肢ではなく必然である。
+  そしてこのプロファイルでは、現在言えていない停止性と
+  応答時間の上界が主張できるようになる。
+
+\item \textbf{境界は方向を規律する。}
+  実時間側からエージェント側への同期呼び出しを型で禁止する。
+  「制御ループがモデルの返りを待って期限を落とす」という
+  最も起こりやすい事故を、言語が構造的に防ぐ。
+\end{enumerate}
+
+第 \ref{part:mech} 部で「表現力を戻すと、型は保てるが個別の証明の手間が増える」と書いた。
+第 \ref{part:purpose} 部の結論はその続きである。
+\textbf{目的を二つに分けて宣言させれば、それぞれの目的に見合った保証を
+別々に主張できる。}一つの言語で一つの保証を目指すより、
+一つの中核で二つの保証を目指すほうが、この二つの目的には適している。
+
+
+\part{AIPL 理想仕様（案）}
+\label{part:spec}
+
+第 \ref{part:purpose} 部の考察を、仕様として明文化する。
+以下は「こうあるべき」という案であり、現状の実装とは異なる。
+現状との差分は \S\ref{sec:delta} にまとめる。
+
+\section{設計原則}
+
+\begin{enumerate}
+\item[\textbf{P1}] \textbf{アクターが唯一の並行単位である。}
+  共有変数を持たない。状態はアクターに閉じ、
+  外からはメッセージでしか触れない。
+
+\item[\textbf{P2}] \textbf{通信は三種、そして待つなら期限を持つ。}
+  \texttt{send}（待たない）、\texttt{now}（待つ）、
+  \texttt{future}（後で受け取る）。
+  \textbf{無期限に待つ構文は存在しない。}
+
+\item[\textbf{P3}] \textbf{返信はちょうど一度、宣言された型で行う。}
+  戻り値型は必ず宣言する。推論は補助であって省略の許可ではない。
+
+\item[\textbf{P4}] \textbf{受理は名前とガードだけで決まり、受信経路は一本である。}
+  同じメッセージが二つの経路で競合しない。
+
+\item[\textbf{P5}] \textbf{効果は宣言し、検査する。}
+  プロファイルは効果と構文の制限として定義される。
+  新しい概念を足すのではなく、既にある capability 分類を静的にする。
+
+\item[\textbf{P6}] \textbf{境界はインタフェース宣言でのみ型付ける。}
+  \ty{any} は仕様に存在しない。
+  リモートも外部公開も、宣言された interface を通す。
+
+\item[\textbf{P7}] \textbf{実時間プロファイルでは有界性を静的に強制する。}
+  ループ、割り付け、再帰、待ち、外部通信のすべてに上限か禁止を課す。
+\end{enumerate}
+
+\section{構文}
+
+\subsection{宣言}
+
+\begin{lstlisting}[language={}]
+program    ::= decl*
+decl       ::= class | interface | record | variant | global
+
+class      ::= "class" ID profile? mailbox? "{" field* method* "}"
+profile    ::= "profile" ("agent" | "realtime" | "boundary")
+mailbox    ::= "mailbox" INT overflow?
+overflow   ::= "overflow" ("drop_oldest" | "drop_newest" | "error")
+
+interface  ::= "interface" ID "{" sig* "}"
+sig        ::= "method" ID "(" params ")" ":" type effects? ";"
+
+record     ::= "record" ID "{" ID ":" type ("," ID ":" type)* "}"
+variant    ::= "variant" ID "{" ID ("(" type ")")?
+                          ("|" ID ("(" type ")")?)* "}"
+
+field      ::= "var" ID ":" type "=" expr ";"
+method     ::= "express"? "method" ID "(" params ")" ":" type
+               effects? guard? timing? block
+params     ::= (ID ":" type ("," ID ":" type)*)?
+effects    ::= "!" "{" effect ("," effect)* "}"
+guard      ::= "where" expr
+timing     ::= ("period" dur)? ("deadline" dur)? ("priority" INT)?
+dur        ::= INT ("us" | "ms" | "s")
+global     ::= stmt
+\end{lstlisting}
+
+現状との主な違いは、\textbf{仮引数とフィールドに型を書く}こと、
+\textbf{戻り値型が必須}であること、
+そして \texttt{interface} / \texttt{record} / \texttt{variant} /
+\texttt{profile} / \texttt{mailbox} / \texttt{express} /
+\texttt{where} / \texttt{timing} が加わることである。
+
+\subsection{型}
+
+\begin{lstlisting}[language={}]
+type ::= "int" | "bool" | "string" | "unit"
+       | "float" | "float" "<" unit ">"        // 物理単位つき
+       | "fix" "<" INT "," INT ">"             // 固定小数点（整数部,小数部ビット）
+       | type "[" INT "]"                      // 固定長配列
+       | type "[]"                             // 可変長配列（プロファイル A のみ）
+       | "future" "<" type ">"
+       | ID                                    // actor / interface / record / variant
+       | ID "<" type ("," type)* ">"           // 型構築子の適用
+unit ::= ID ("^" INT)? (("*"|"/") ID ("^" INT)?)*   // m, m/s, rad/s, kg*m/s^2
+\end{lstlisting}
+
+\textbf{\ty{any} は無い。}
+現状 \ty{any} が使われている三箇所は次のように置き換える。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+現状 & 理想仕様 \\
+\midrule
+\texttt{sender} : \ty{any} & \texttt{sender} : \texttt{Reply<}$\rho$\texttt{>}
+  （返信のみ可能な能力） \\
+リモート送信先 : \ty{any} & 宣言された \texttt{interface} 型 \\
+未注釈メソッドの戻り値 : \ty{any} & 戻り値型は必須なので存在しない \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{式}
+
+\begin{lstlisting}[language={}]
+expr ::= INT | FLOAT | STRING | "true" | "false" | ID
+       | expr binop expr | "!" expr
+       | expr "." ID                                  // レコードのフィールド
+       | ID "{" ID "=" expr ("," ID "=" expr)* "}"    // レコード生成
+       | ID "(" args ")"                              // 関数・構築子
+       | "new" ID "(" args ")"                        // プロファイル A / 初期化のみ
+       | "now" target "." ID "(" args ")" "timeout" dur "else" expr
+       | "express" "now" target "." ID "(" args ")" "timeout" dur "else" expr
+       | "future" target "." ID "(" args ")" "deadline" dur
+       | "await" expr "timeout" dur "else" expr
+       | "match" expr "{" ("case" pat "->" expr)+ "}"
+       | "(" expr ")"
+binop ::= "+" | "-" | "*" | "/" | "div" | "mod" | "++"
+        | "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||"
+target ::= ID | "self" | "remote" "(" STRING "," STRING ")" ":" ID
+\end{lstlisting}
+
+要点を四つ挙げる。
+
+\begin{itemize}
+\item \textbf{\texttt{now} と \texttt{await} は期限と \texttt{else} を伴う。}
+  期限なしの形は文法に存在しない（\textbf{P2}）。
+\item \texttt{==}、\texttt{!=}、\texttt{\&\&}、\texttt{||}、\texttt{!} を入れる。
+  現状これらは書けない。
+\item \texttt{/} は浮動小数の除算、\texttt{div} / \texttt{mod} は整数除算とする。
+  \ty{int} 同士の \texttt{/} が \ty{float} を返す現状の曖昧さを解消する。
+\item リモート送信先は \texttt{remote("host:port","actor") : IFace} と
+  interface を明記する。これで境界の \ty{any} が消える。
+\end{itemize}
+
+\subsection{文}
+
+\begin{lstlisting}[language={}]
+stmt  ::= "var" ID ":" type "=" expr ";"
+        | ID "=" expr ";"
+        | expr ";"
+        | "reply" "(" expr ")" ";"
+        | "send" target "." ID "(" args ")" ";"
+        | "express" "send" target "." ID "(" args ")" ";"
+        | "if" "(" expr ")" stmt ("else" stmt)?
+        | "for" ID "in" expr ".." expr "do" stmt          // 有界
+        | "while" "(" expr ")" stmt                       // プロファイル A のみ
+        | "atomic" block
+        | "select" "{" case+ timeout? "}"
+        | "become" ID "(" args ")" ";"
+        | "match" expr "{" ("case" pat "->" stmt)+ "}"
+        | block
+case  ::= "case" ID "(" params ")" guard? "->" block
+\end{lstlisting}
+
+\texttt{for} は上下限が明らかな有界ループで、両プロファイルで使える。
+\texttt{while} はプロファイル A のみとする。
+
+\section{型システム}
+
+\subsection{判断の形}
+
+型付けは\textbf{型と効果の対}で述べる。
+
+\[
+\Gamma \vdash_{C.m} e : \tau\ !\ \varepsilon
+\]
+
+$\Gamma$ は変数環境、$C.m$ は検査中のメソッド（\texttt{reply} の帰属先）、
+$\tau$ が型、$\varepsilon$ が効果集合である。
+
+\subsection{主要な規則}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{Reply}]
+  {\mathit{ret}(C,m) = \tau \\ \Gamma \vdash_{C.m} e : \tau\ !\ \varepsilon}
+  {\Gamma \vdash_{C.m} \texttt{reply}(e) : \ty{unit}\ !\ \varepsilon}
+\and
+\inferrule*[right=\textsc{Send}]
+  {\Gamma \vdash a : \ty{actor}(C') \\
+   C'.m' : (\vec{\tau}) \to \tau'\ !\ \varepsilon' \\
+   \Gamma \vdash e_i : \tau_i\ !\ \varepsilon_i}
+  {\Gamma \vdash \texttt{send}\ a.m'(\vec{e}) : \ty{unit}\ !\ \textstyle\bigcup\varepsilon_i}
+\and
+\inferrule*[right=\textsc{Now}]
+  {\Gamma \vdash a : \ty{actor}(C') \\
+   C'.m' : (\vec{\tau}) \to \tau'\ !\ \varepsilon' \\
+   \Gamma \vdash e_i : \tau_i\ !\ \varepsilon_i \\
+   \Gamma \vdash e_{\mathit{alt}} : \tau'\ !\ \varepsilon_a}
+  {\Gamma \vdash \texttt{now}\ a.m'(\vec{e})\ \texttt{timeout}\ d\
+    \texttt{else}\ e_{\mathit{alt}} : \tau'\ !\
+    \varepsilon' \cup \varepsilon_a \cup \textstyle\bigcup\varepsilon_i}
+\and
+\inferrule*[right=\textsc{Method}]
+  {\Gamma, \overline{x{:}\tau} \vdash g : \ty{bool}\ !\ \emptyset \\
+   \Gamma, \overline{x{:}\tau} \vdash_{C.m} \mathit{body} : \ty{unit}\ !\ \varepsilon_b \\
+   \varepsilon_b \subseteq \varepsilon \\
+   \mathit{replies}(\mathit{body}) = 1}
+  {\Gamma \vdash \texttt{method}\ m(\overline{x{:}\tau}) : \tau_r\ !\varepsilon\
+    \texttt{where}\ g\ \{\mathit{body}\}}
+\end{mathpar}
+
+三点が重要である。
+
+\begin{enumerate}
+\item \textbf{\textsc{Send} は callee の効果 $\varepsilon'$ を伝播させない。}
+  効果は別アクターで起こるからである。
+\item \textbf{\textsc{Now} は伝播させる。}呼び出し側が待つので、
+  待っている間の性質は呼び出し側の責任になる。
+  \textbf{この一点だけで境界の方向の規律が導かれる}
+  ---- プロファイル R は \texttt{net} や \texttt{ai} を持てないので、
+  それらを持つメソッドを \texttt{now} で呼べない。
+\item \textbf{ガードは効果を持てない}（$\varepsilon = \emptyset$）。
+  受理の試行で状態が変わってはならない。
+\end{enumerate}
+
+\subsection{返信の規律}
+
+$\mathit{replies}(\mathit{body}) = 1$ は「全実行パスでちょうど一度
+\texttt{reply} する」である。現在は上界を構文で、
+下界を注釈時にのみ検査しているが、
+戻り値型が必須になれば両方を常に課せる。
+
+\texttt{select} の case 本体と express メソッドの本体は
+\emph{別の}返信文脈である。それぞれ対応するメッセージの
+$\mathit{ret}$ に照合される。
+
+\subsection{物理単位}
+
+単位は型の添字であり、乗除で指数を足し引きする。
+
+\begin{mathpar}
+\inferrule*{ }{\ty{float}\langle u_1\rangle \times \ty{float}\langle u_2\rangle
+  \to \ty{float}\langle u_1 u_2\rangle}
+\and
+\inferrule*{ }{\ty{float}\langle u\rangle + \ty{float}\langle u\rangle
+  \to \ty{float}\langle u\rangle}
+\end{mathpar}
+
+加減は単位が一致していなければ型エラーとする。依存型は不要である。
+
+\section{効果}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+効果 & 意味 & 対応する既存 capability \\
+\midrule
+\texttt{mut}   & 自分の状態を書き換える & --- \\
+\texttt{time}  & 時刻の取得、待機 & \texttt{Time} \\
+\texttt{io}    & 宣言した装置への入出力 & \texttt{UI.SDL}、GPIO 等 \\
+\texttt{mem}   & 動的割り付け（\texttt{new}、配列の伸長）&
+  \texttt{Core.Array}、\texttt{Actor} \\
+\texttt{net}   & ノード外への通信 &
+  \texttt{Web}、\texttt{AIOS.Remote} \\
+\texttt{ai}    & モデル推論 &
+  \texttt{AIOS.Model}（機外へ出るものは \texttt{net} も併記）\\
+\texttt{fs}    & 永続化 & \texttt{AIOS.Memory} \\
+\texttt{log}   & 観測のみの出力 & \texttt{Console}、\texttt{AIOS.Event} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+対応表があるので、既存の 17 分類から機械的に初期値を与えられる。
+新しく設計する必要はない。
+
+\begin{remark}
+\texttt{ai} と \texttt{net} を分けるのが要点である。
+オンデバイス推論は \texttt{\{ai\}} だけを持ち \texttt{net} を持たない。
+これにより「AI を使うが機外へは出ない」がシグネチャに現れる。
+フィジカル AI では、この区別が安全性と秘匿の両方で意味を持つ。
+\end{remark}
+
+\section{プロファイル}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{3.9cm}p{3.9cm}p{2.4cm}@{}}
+\toprule
+ & \texttt{agent} & \texttt{realtime} & \texttt{boundary} \\
+\midrule
+許す効果 &
+  すべて &
+  \texttt{mut}, \texttt{time}, \texttt{io}, \texttt{log} &
+  \texttt{mut} のみ \\
+\texttt{new} &
+  可 & 初期化フェーズのみ & 不可 \\
+配列 &
+  可変長可 & 固定長のみ & 固定長のみ \\
+\texttt{while} &
+  可 & 不可（\texttt{for} のみ）& 不可 \\
+再帰・自己送信の連鎖 &
+  可 & 不可 & 不可 \\
+\texttt{now} / \texttt{await} &
+  期限必須 & 期限必須。かつ相手の効果が
+  許容集合に収まる場合のみ & 不可 \\
+浮動小数 &
+  可 & \texttt{fix<i,f>} または
+  単位つき \ty{float} のみ & 不可 \\
+\texttt{timing} 宣言 &
+  任意 & \textbf{必須} & --- \\
+\texttt{mailbox} 宣言 &
+  任意 & \textbf{必須} & 必須 \\
+\texttt{express} &
+  可 & 可（ハンドラも R の制約に従う）& 可 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+プロファイルは\textbf{型システムの外側の構文・グラフ解析}で強制する。
+依存型は要らない。そして \textsc{Now} の効果伝播規則があるので、
+「実時間アクターがエージェントを同期で呼ぶ」は
+\emph{効果の検査だけで}禁止される。
+
+\section{実行モデル}
+
+\subsection{アクターの状態}
+
+各アクターは通常キューと express キューを持つ。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+状態 & 内容 \\
+\midrule
+\textsf{idle}    & 受理可能なメッセージを待っている \\
+\textsf{running} & メソッド本体を実行中 \\
+\textsf{blocked} & 期限付きで返信を待っている（期限で必ず解ける）\\
+\textsf{atomic}  & \texttt{atomic} 区間の実行中。express を保留する \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+ABCL/1 の dormant / active / waiting に対応する。
+違いは \textsf{blocked} が必ず有限時間で解けることである（\textbf{P2}）。
+
+\subsection{受理規則 ---- 一本の経路}
+
+\begin{enumerate}
+\item express キューに、名前が一致し\emph{ガードを持たない}
+  express メソッドに対応するメッセージがあれば、それを受理する。
+  \textsf{atomic} 中は保留する。
+\item そうでなければ、通常キューを到着順に走査し、
+  \textbf{名前が一致し、かつガードが真}である最初のメッセージを受理する。
+\item どちらも無ければ \textsf{idle} で待つ。
+  新しい到着、または状態の変化があれば再走査する。
+\end{enumerate}
+
+\texttt{select} は「対象を指定した名前集合に限り、期限を付けた」
+規則 2 の特別な場合である。これで受信経路が一本になり、
+現在の先取り競合（\S 3 の \texttt{select} の注意）が消える。
+
+\subsection{\texttt{atomic}}
+
+\begin{itemize}
+\item \texttt{atomic} 区間では express を受理しない。
+\item \texttt{atomic} 区間では \texttt{now} / \texttt{await} を書けない
+  （構文検査）。待ちながら割り込みを止めることを許さない。
+\item \texttt{atomic} 区間は有界でなければならない
+  （プロファイル R では \texttt{for} のみ）。
+\end{itemize}
+
+\subsection{返信}
+
+\texttt{reply} は、いま受理しているメッセージに一度だけ答える。
+express ハンドラや \texttt{select} の case で受理したメッセージは
+それぞれ独立の返信先を持つ。
+
+\section{現状との差分}
+\label{sec:delta}
+
+\subsection{足すもの}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+項目 & 効く目的 \\
+\midrule
+\texttt{==} \texttt{!=} \texttt{\&\&} \texttt{||} \texttt{!} & 両方 \\
+\texttt{record} / \texttt{variant} と \texttt{match} & 主にエージェント \\
+\texttt{interface} 宣言とリモートの型付け & 両方 \\
+効果注釈と検査 & 両方（プロファイルの土台）\\
+\texttt{profile} 宣言 & 両方 \\
+\texttt{where} ガード & 両方 \\
+\texttt{express} と \texttt{atomic} & 主に実時間 \\
+\texttt{mailbox} 容量と溢れ方針 & 主に実時間 \\
+\texttt{timing}（周期・期限・優先度）& 実時間 \\
+\texttt{fix<i,f>} と物理単位 & 実時間 \\
+\texttt{for} 有界ループ & 実時間 \\
+メソッド呼び出しフレーム（実装）& express の前提 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{変えるもの}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & 現状 & 理想仕様 \\
+\midrule
+戻り値型 & 省略可（推論）& \textbf{必須}。推論は補助 \\
+仮引数・フィールド & 型を書かない & 型を書く \\
+\texttt{now} / \texttt{await} & 期限なし & \textbf{期限と \texttt{else} 必須} \\
+\texttt{/} & \ty{int} 同士でも \ty{float} &
+  \texttt{/} は浮動小数、\texttt{div}/\texttt{mod} が整数 \\
+\texttt{sender} & \ty{any}、送信は無検査 &
+  \texttt{Reply<}$\rho$\texttt{>}。返信のみ \\
+リモート送信先 & \ty{any} & \texttt{interface} 型 \\
+受信経路 & 名前 dispatch と \texttt{select} が並立 &
+  一本（\texttt{select} は特別な場合）\\
+\texttt{become} & 引数のみ検査 &
+  インタフェースの一致を検査 \\
+アクター型 & 単一化で区別されない & クラス名で区別 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{禁止するもの（プロファイル R）}
+
+期限なしの待ち、\texttt{while}、再帰と自己送信の連鎖、
+初期化後の \texttt{new} と配列の伸長、浮動小数（単位つきと固定小数点を除く）、
+\texttt{net} / \texttt{ai} / \texttt{fs} 効果、
+\texttt{atomic} 中の待ち。
+
+\section{この仕様で言えるようになること}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+性質 & 現状 & 理想仕様 \\
+\midrule
+型健全性（保存・進行）& 言える & 言える（効果つきに拡張）\\
+返信がちょうど一度 & 注釈時のみ & \textbf{常に言える} \\
+境界の型 & \ty{any} & \textbf{言える}（interface）\\
+デッドロック自由 & 一般には言えない &
+  \textbf{期限付き待ちのみなので、有限時間で解ける} \\
+停止性 & 言えない & \textbf{プロファイル R では言える} \\
+応答時間の上界 & 言えない &
+  \textbf{プロファイル R では解析できる}（宣言があるので）\\
+機外へ出ないこと & 言えない & \textbf{効果で言える} \\
+単位の整合 & 言えない & \textbf{言える} \\
+公平性 & 言えない & 言えない（\texttt{where} で悪化する）\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+現状「言えない」とされていた四つ ---- デッドロック自由、停止性、
+応答時間、外部流出 ---- が、\textbf{プロファイルを宣言させることで
+言えるようになる}。これが第 \ref{part:purpose} 部の結論の具体的な中身である。
+
+引き換えに公平性は悪化する。\texttt{where} を入れると
+ガードが永遠に真にならないメッセージが残りうるからで、
+これは仕様として明記し、診断で補うべき部分である。
+
+\section{最小の到達点}
+
+全部を一度に作る必要はない。
+次の四つが揃った時点で「二つの目的に耐える言語」と言える。
+
+\begin{enumerate}
+\item \textbf{効果注釈と検査}（既存 capability 分類の静的化）。
+  プロファイル分離、境界の方向の規律、外部流出の保証がここに乗る。
+\item \textbf{期限付き \texttt{now} / \texttt{await} のみ}。
+  デッドロック自由が言えるようになる。
+\item \textbf{\texttt{interface} 宣言}。\ty{any} が消える。
+\item \textbf{\texttt{profile realtime} の有界性検査}。
+  停止性と応答時間が言えるようになる。
+\end{enumerate}
+
+\texttt{record} / \texttt{variant}、物理単位、\texttt{where}、
+express mode は、この四つの上に順に足していける。
+
+
 \begin{thebibliography}{9}
 
 \bibitem{abcl1}
@@ -698,6 +1719,25 @@ Akinori Yonezawa (ed.).
 
 \bibitem{guide}
 本リポジトリ \texttt{docs/aipl\_guide\_ja.pdf} --- 現状の言語ガイド。
+
+\bibitem{ravenscar}
+Alan Burns, Brian Dobbing, Tullio Vardanega.
+\newblock Guide for the use of the Ada Ravenscar Profile in high integrity
+systems.
+\newblock \emph{Ada Letters} XXIV(2), 2004.
+\newblock （同じ言語の中に検証可能な部分集合を切るという設計の先例）
+
+\bibitem{elang}
+Mark Miller, E. Dean Tribble, Jonathan Shapiro.
+\newblock Concurrency Among Strangers: Programming in E as Plan Coordination.
+\newblock \emph{TGC 2005}.
+\newblock （ブロックを一切許さず eventual send と promise だけで書かせる設計）
+
+\bibitem{lustre}
+Nicolas Halbwachs, Paul Caspi, Pascal Raymond, Daniel Pilaud.
+\newblock The synchronous data flow programming language LUSTRE.
+\newblock \emph{Proceedings of the IEEE} 79(9), 1991.
+\newblock （実時間記述における有界性と時間の宣言）
 
 \end{thebibliography}
 
