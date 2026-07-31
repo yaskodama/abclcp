@@ -1,0 +1,643 @@
+% AIPL 3実装の同期 ---- 実装レポート
+%   lualatex -interaction=nonstopmode aipl_three_impl_parity_ja.tex   （2回）
+\documentclass[11pt,a4paper]{ltjsarticle}
+\usepackage{amsmath,amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage[hidelinks]{hyperref}
+\geometry{margin=22mm}
+
+\definecolor{codebg}{gray}{0.96}
+\definecolor{okgreen}{rgb}{0.0,0.45,0.15}
+\definecolor{badred}{rgb}{0.65,0.10,0.10}
+\lstset{
+  basicstyle=\ttfamily\small, backgroundcolor=\color{codebg},
+  frame=single, framesep=4pt, rulecolor=\color{gray},
+  breaklines=true, showstringspaces=false,
+  columns=fullflexible, keepspaces=true,
+  keywordstyle=\bfseries, commentstyle=\itshape\color{gray!130},
+}
+\lstdefinelanguage{AIPL}{
+  morekeywords={class,method,var,new,now,future,await,reply,send,become,
+    timeout,else,if,while,do,select,case,self,sender,remote,print,return,
+    int,float,string,bool,unit,any,true,false},
+  sensitive=true, morecomment=[l]{//}, morestring=[b]",
+}
+\newcommand{\ok}{\textcolor{okgreen}{\textbf{○}}}
+\newcommand{\bad}{\textcolor{badred}{\textbf{×}}}
+
+\title{AIPL 3実装の同期\\
+{\large ---\ 拡張子の統一、仕様追随、そして調べる過程で出た6つの不具合 ---}}
+\author{児玉工房 / AICE $\cdot$ AIPL プロジェクト}
+\date{2026年08月01日 00:25}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+AIPL には実装が3つある ---- 正である OCaml 版、Python の CLI 実装（Py-I）、
+ブラウザで動く JavaScript 実装（JS-I）。OCaml 版に加えた一連の仕様変更に
+残る2つが追いついておらず、\textbf{ガイドのサンプル8本が Py-I でも JS-I でも
+1本も動かない}状態になっていた。
+
+本レポートはこれを揃えた作業の記録である。やったことは二つ。
+ソースの拡張子を \texttt{.abcl} から \texttt{.aipl} へ統一し（4リポジトリ 478 本）、
+Py-I と JS-I を最新の言語仕様へ追随させた。結果、サンプルは3実装すべてで動き、
+出力も一致する。
+
+ただし本レポートの主眼は作業一覧ではない。\textbf{揃える過程で6つの不具合が
+出てきたこと}と、\textbf{それがどうやって見つかったか}である。うち3つは
+正であるはずの OCaml 版のバグだった。とくに \texttt{g4\_select} の挙動差を
+「スケジューリングの違い」と片付けずに\emph{どちらが正しいか}を調べたことが、
+トップレベル送信の順序破壊 $\to$ select の返信経路の欠落 $\to$ アクターを
+引数で渡せない、という連鎖の発見につながった。
+
+見つけ方の型は3つに集約できる。\textbf{3実装を並べて件数を比べる}、
+\textbf{機械的な置換をせず構文木で判定する}、\textbf{検査の指摘は件数でなく
+実物を開いて確かめる}。最後の型は実際に効き、reply 検査の 62 件の指摘のうち
+59 件が誤検出であることを暴いた。
+\end{abstract}
+
+\tableofcontents
+
+\section{三つの実装}
+
+\begin{center}
+\small
+\begin{tabular}{@{}llp{6.2cm}@{}}
+\toprule
+ & 場所 & 備考 \\
+\midrule
+OCaml 版 & \texttt{\textasciitilde/aios/abclcp} & \textbf{正}。10.8k 行。
+  REPL から \texttt{load} / \texttt{compile} \\
+Py-I & \texttt{\textasciitilde/test-bed/aios-claude/src/python-aipl} &
+  CLI。15.7k 行。Lark 文法（\texttt{grammar.lark}）\\
+JS-I & \texttt{\textasciitilde/projects/drone-hil/abcl} &
+  \textbf{ブラウザ実装}。5.2k 行。jison 文法を
+  \texttt{parser.js} へ生成 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+JS-I がブラウザ実装であることは以降の随所に効いてくる。デモは HTML ページで、
+\texttt{index.html} が \texttt{parser/parser.js} を \texttt{<script>} で読み込み、
+\texttt{interpreter.js} を ES モジュールとして import する。検証のために
+node から \texttt{parser.yy} に \texttt{ast.js} を束ねて \texttt{Interpreter} を
+回すヘッドレスの足場を組んだ。
+
+\subsection{着手前の状態}
+
+ガイドのサンプル（\texttt{docs/samples/guide/g1..g8}）を各実装に流したところ、
+\textbf{Py-I も JS-I も8本すべて失敗}した。Py-I の実際のエラーはこうである。
+
+\begin{lstlisting}
+g8: [parse error] No terminal matches 'f' ... var flag = false;
+g7: [parse error] Unexpected token Token('COLON', ':')
+g1: [parse error] Unexpected token Token('PLUS', '+')
+\end{lstlisting}
+
+\noindent 真偽値リテラル、戻り値型注釈 \verb|: T|、文字列連結 \verb|++| の
+いずれもが無い。JS-I も \texttt{grammar.jison} に \verb|++|・\verb|:|・
+\verb|!{| の規則そのものが無かった。
+
+\section{拡張子の統一}
+
+言語名は AIPL なのにソースの拡張子が \texttt{.abcl} のままだった。前身の
+ABCL に由来する名残で、3実装をまたいで混乱の元になっていた。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+リポジトリ & 改名 & 参照追随 & コミット \\
+\midrule
+\texttt{aios/abclcp} & 93 & 50 & \texttt{cccb29d} \\
+\texttt{test-bed/aios-claude} & 380 & 443 & \texttt{2ac81b9} \\
+\texttt{projects/drone-hil} & 3 & 6 & \texttt{b78ec34} \\
+\texttt{aipl\_line\_simulator} & 2 & 10 & \texttt{7856575} \\
+\midrule
+合計 & \textbf{478} & \textbf{509} & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+履歴を保つため \texttt{mv} ではなく \texttt{git mv} を使った。参照は
+\texttt{.sh}・\texttt{.bat}・\texttt{.md}・\texttt{.py}・\texttt{.json}・
+\texttt{.tex}・\texttt{.js} など広範に及んだが、拡張子を決め打ちしている
+\emph{コード}は \texttt{aipl\_dashboard.py} の2箇所（\texttt{endswith(".abcl")}）
+だけだった。処理系のパーサ・字句解析器・REPL は拡張子を見ていない。
+
+検証は「型検査の結果が改名前と1件ずつ一致するか」で行い、
+\textbf{93本中93本が完全一致}した。うち27本は \texttt{PARSE\_ERROR} だが、
+これは改名前から同じ旧構文の残骸であり本件の退行ではない。
+
+\section{仕様の追随}
+
+OCaml 版に入っていて Py-I / JS-I に無かったものを移した。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & OCaml & Py-I & JS-I \\
+\midrule
+\verb|++|（文字列連結）& 既 & \ok 追加 & \ok 追加 \\
+真偽値リテラル & 既 & \ok 追加 & \ok 追加 \\
+優先順位の分離 & 既 & \ok 追加 & \ok 追加 \\
+\texttt{timeout ... else}（期限）& 既 & \ok 追加 & \ok 追加 \\
+戻り値型注釈 \verb|: T| & 既 & \ok 別名追加 & \ok 追加 \\
+効果注釈 \verb|!{...}| & 既 & 既 & \ok 追加 \\
+\verb|+| を数値専用に & 既 & \ok 移行 & \ok 追加 \\
+引数の型注釈 \verb|method m(x: T)| & \ok 追加 & 既 & \ok 追加 \\
+reply 線形性の検査 & 既 & \ok 追加 & \ok 追加 \\
+期限の警告 & 既 & \ok 追加 & \ok 追加 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+優先順位は OCaml 版に合わせて分離した。低い順に
+
+\[
+\text{等値} < \text{比較} < \text{\texttt{++}} < \text{加減} < \text{乗除}
+< \text{単項マイナス}
+\]
+
+\noindent であり、\textbf{二項演算子はすべて左結合}である（等値も含む）。
+これは実測で確かめた ---- \verb|1 == 2 == false| は
+\verb|((1 == 2) == false)| と読まれて \texttt{true} になり、
+\verb|- - 3| は \texttt{3} になる。
+
+\subsection{Py-I は書式が違っていただけの箇所があった}
+
+Py-I の \texttt{grammar.lark} には既に \texttt{return\_anno} と
+\texttt{effect\_anno} があった。無かったのではなく\textbf{書式が違って}いた。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & OCaml 版 & Py-I \\
+\midrule
+戻り値型注釈 & \verb|method m(x) : T| & \verb|method m(x) -> T| \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+両方受けるようにした。注釈が黙って捨てられていないことは、パースした
+AST を直接覗いて確かめた（\texttt{ret='int' eff=['log']}）。
+「通ったが無視されていた」は AIPL の道具立てで何度も踏んだ罠である。
+
+\section{\texttt{+} から \texttt{++} への移行 ---- 正規表現を使わなかった理由}
+\label{sec:migrate}
+
+OCaml 版では \verb|+| は数値専用で、文字列連結は \verb|++| に分離済みである
+（オーバーロードの曖昧さを潰すため）。同じことを Py-I でやったところ、
+テストが 15通過/5失敗 $\to$ 6通過/14失敗 に悪化した。調べると
+\textbf{既存の \texttt{.aipl} 資産 437 本のうち 263 本が \texttt{+} で文字列を
+連結}していた。
+
+移行が必要だが、\textbf{正規表現で置換してはいけない}。\verb|+| は左結合で
+\verb|++| より強く結合するので、連鎖の \verb|+| を1つだけ替えると意味が変わる。
+
+\begin{lstlisting}[language=AIPL]
+"a" + b + c        // (("a" + b) + c)  ---- 全体が文字列連結
+"a" ++ b + c       // "a" ++ (b + c)   ---- b と c が数値なら加算に化ける
+\end{lstlisting}
+
+そこで構文木で判定した。Lark を \texttt{propagate\_positions=True} で
+生の木に落とし、\texttt{add\_expr} の\emph{連鎖ごと}に
+「オペランドのどれかが文字列か」を見て、該当する連鎖の \verb|+| トークンの
+位置をすべて集め、\textbf{末尾から}置換する（\verb|+| 1文字 $\to$
+\verb|++| 2文字で以降の位置がずれるため）。
+
+\begin{center}
+\small
+238 本 / 5448 箇所を書き換え
+\end{center}
+
+\subsection{構文木は文字列リテラルの中を見ない}
+
+これで済んだと思ったらテストが2本落ちた（\texttt{\_test\_dynamic},
+\texttt{\_test\_methodpatch}）。原因は、実行時にコンパイルする AIPL ソースを
+\emph{文字列として}持つファイルがあったこと。
+
+\begin{lstlisting}[language=AIPL]
+"    print(\"  [Counter] tick -> n=\" + n);\n" ++
+\end{lstlisting}
+
+\noindent 外側の連結は \verb|++| に直っているのに、文字列の中の \verb|+| は
+構文木からは見えないので残る。\verb|\"| を含む行を別途処理して解消した
+（8本11行）。
+
+\subsection{検証}
+
+移行後、437本中413本がパースできる。失敗24本は移行前と同数・同一である
+（\texttt{Generics.aipl} の型引数など、元から通らない旧構文）。テストは
+15通過/5失敗で\textbf{基準と完全一致}し、新規失敗はゼロだった。
+
+\section{見つかった6つの不具合}
+
+ここからが本題である。揃える作業そのものより、\textbf{揃えようとして初めて
+見えた不具合}のほうが多く、しかもその半分は正であるはずの OCaml 版にあった。
+
+\subsection{(1) トップレベルの \texttt{send} がプログラム順を破っていた}
+\label{sec:order}
+
+\texttt{g4\_select} の出力が3実装で食い違っていた。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+OCaml 版 & \texttt{direct:1 / waiting / timed out} \\
+Py-I, JS-I & \texttt{waiting / got 1} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+これを「スケジューリングの違い」で片付けず、\textbf{どちらが正しいのかを
+最小の例で測った}。
+
+\begin{lstlisting}[language=AIPL]
+class A {
+  method first()  : unit !{log} { print("1st: first"); }
+  method second() : int  !{log} { print("2nd: second"); reply(7); }
+}
+var a = new A();
+send a.first();
+print("now returned " ++ (now a.second() timeout 1000 else 0));
+\end{lstlisting}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+OCaml 版 & \texttt{2nd: second / now returned 7 / 1st: first} \\
+Py-I, JS-I & \texttt{1st: first / 2nd: second / now returned 7} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{OCaml 版だけが FIFO を破っていた}。5回ずつ走らせて、どちらも
+決定的であることを確かめている（競合ではない）。
+
+原因はメールボックスではなかった。アクターの \texttt{queue} は単一の
+\texttt{Queue.t} で、\texttt{actor\_loop} も \texttt{Queue.pop} の厳密な FIFO、
+\texttt{send\_message} も mutex 下で即 \texttt{push} する。つまり配送は正しい。
+ずれていたのは \texttt{repl\_thread.ml} の \texttt{compile} で、
+\textbf{トップレベルの \texttt{Send} だけを \texttt{pending\_global\_sends} に
+積んで全文の実行後にまとめて送っていた}のに、\texttt{CallStmt}
+（\texttt{print(now ...)} など）はその場で実行していたことだった。
+
+後回しは前方参照のために入っていたと思われるが、対象93本を調べたところ
+\texttt{send} が \texttt{var ... = new ...} より前に来るファイルは\textbf{0本}
+だった。それでも壊さないよう、\textbf{宛先が既に生成されていればその場で送り、
+まだ無い場合だけ後回しにする}条件付きに変えた（\texttt{df66dca}）。
+
+これで \texttt{g4\_select} は
+\texttt{waiting / got 1 / via select:1} となり、ガイドの説明
+「select で job を待つ。case 本体の reply は job への返信になる」と一致した。
+
+\subsection{(2)(3) select の case 本体の reply が呼び出し元へ戻らない}
+
+(1) を直したことで \texttt{g4} が\emph{実際に} select 経路を通るようになり、
+そこで Py-I と JS-I が破綻していることが分かった。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Py-I & 値が返らず \texttt{[REPLY] via select:1} とログするだけ \\
+JS-I & \texttt{now deadlock: slot rs-1 not fulfilled} で\textbf{失敗} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+原因は両方とも同じで、case 本体を実行するときに\textbf{受け取ったメッセージの
+返信先を据えていなかった}こと。親フレーム（select を書いたメソッド自身）の
+返信先を辿ってしまっていた。Py-I は \texttt{drained[i]} の
+\texttt{reply\_future} を捨てており、JS-I は
+\texttt{actor.\_\_currentSlotId} を差し替えていなかった。それぞれ据えるよう
+直した（\texttt{e7b6295}, \texttt{c2929f5}）。
+
+\subsection{(4) 期限検査がトップレベルを見ていなかった ---- 両実装で}
+
+JS-I に期限検査を移し、OCaml 版と\textbf{件数を並べて}比べたところ合わなかった。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+期限警告の件数 & OCaml & Py-I & JS-I \\
+\midrule
+\texttt{g3\_actors} & 3 & 1 & 1 \\
+\texttt{g6\_effects} & 3 & 1 & 1 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+原因はクラスのメソッドしか走査しておらず、
+\texttt{print(now front.place(3));} のような\textbf{トップレベルの
+\texttt{now}} を見ていなかったこと。JS-I を直して比べ直したら、
+\textbf{同じ穴が Py-I にもあった}（\texttt{GlobalStmt} を通っていなかった）。
+両方直して全項目が一致した（\texttt{22c0569}, \texttt{9c7696c}）。
+
+\textbf{1実装だけ見ていたら両方見逃していた。}
+
+\subsection{(5) JS-I の \texttt{wait} がブロックしない}
+
+\texttt{g7\_deadline} だけが最後まで揃わなかった。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+OCaml 版, Py-I & \texttt{slow(timed out) = 0} \\
+JS-I & \texttt{slow(timed out) = 42}（期限が発火しない）\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+OCaml 版と Py-I の \texttt{wait(ms)} はメソッド実行中にブロックするので、
+その後の \texttt{reply} も遅れる。JS-I の \texttt{wait} は
+\texttt{actor.\_\_nextDelay} を立てて\emph{次の}メッセージ配送を遅らせるだけで、
+実行中の処理はブロックしない。ブラウザで同期ブロックすると画面が固まるための
+設計であって手抜きではない。
+
+意味を変えるのは実行基盤に踏み込むので、\textbf{先に影響を数えた} ----
+drone-hil 全体で \texttt{wait} と \texttt{reply} を同居させているメソッドは
+\textbf{0個}だった（\texttt{wait} はデモのアニメーションの間合いにしか
+使われていない）。そこでブロックの代わりに
+「この先の \texttt{reply} を ms だけ遅らせる」形で近似した（\texttt{4b6f2b5}）。
+
+\begin{itemize}
+\item \texttt{wait}: \texttt{actor.\_\_replyDelayMs} に加算
+\item \texttt{Reply}: 遅延があれば即 fulfill せず
+      \verb|{slotId, value, notBefore}| を積む
+\item \texttt{\_drainOneStep}: 毎回フラッシュし、待ちが残っていれば
+      「まだ進む余地がある」として \texttt{true} を返す
+      （\texttt{false} だと \texttt{drainUntilSlot} が deadlock 例外を投げる）
+\end{itemize}
+
+これで5回とも \texttt{slow(timed out) = 0} で安定した。
+
+\subsection{(6) アクターをメッセージの引数として渡せない}
+\label{sec:actorarg}
+
+引数の型注釈を入れたあとに見つかった。
+
+\begin{lstlisting}[language=AIPL]
+var d = new D();
+send p.take(d);      // take が呼ばれない。エラーも出ない
+\end{lstlisting}
+
+アクター同士が相手を教え合う基本的な書き方が封じられていた。注釈の有無に
+関わらず再現するので、注釈とは無関係の既存の不具合である。原因は\textbf{3つ
+重なっていた}。
+
+\paragraph{(6a) 値を式へ戻すときアクターを文字列に潰していた。}
+メッセージ引数は値へ評価してから \texttt{expr\_of\_value} で式に戻して送る。
+その \texttt{expr\_of\_value} が
+
+\begin{lstlisting}[language={[Objective]Caml}]
+| VActor (n,_) -> String ("<actor:" ^ n ^ ">")
+\end{lstlisting}
+
+\noindent としており、受け手に届くのはアクターではなく文字列だった。
+真偽値も \texttt{String "true"} に潰していた（\texttt{Bool} の式型ができたのに
+古いまま）。\texttt{expr\_desc} に \texttt{ActorRef} を追加し、
+\texttt{VActor $\to$ ActorRef}、\texttt{VBool $\to$ Bool} とした。
+
+\paragraph{(6b) トップレベルの \texttt{send} が引数を評価していなかった。}
+生の式のまま \texttt{send\_message} に渡していたので、受け手の環境で
+\texttt{Var "d"} が解決できず黙って落ちていた
+（\texttt{actor\_loop} が例外を握って web イベントに積むだけなので無反応に見える）。
+
+\paragraph{(6c) \texttt{VActor} が実体名を持っていなかった。}
+\texttt{VActor} の第1要素はクラス名なのだが、
+\texttt{resolve\_actor\_from\_term} はそれを\emph{実体名}として読んでおり、
+コード内で一貫していない。実体名とクラス名が一致する場合と、変数名で引ける
+場合にだけ動いていた ---- 引数で受け取ったアクターはそのどちらでもない。
+
+\texttt{actor\_value \textasciitilde name \textasciitilde cls} を用意し、
+第1要素はクラス名のまま実体名を表の \texttt{"\_\_actor\_name"} に入れ、
+\texttt{actual\_local\_target} と \texttt{resolve\_actor\_from\_term} が
+「実体名 $\to$ 第1要素 $\to$ 変数名」の順で引くようにした。
+第1要素の意味は変えていないので \texttt{typeof} 等は無傷である
+（\texttt{cbaa7bc}）。
+
+\section{見つけ方の型}
+
+同じ発見が3つの型に集約できる。他の多実装プロジェクトにもそのまま効くと思う。
+
+\subsection{3つ並べて件数を比べる}
+
+\S 5.4 がそれである。1実装を見て「出た」で満足すると過小報告に気づかない。
+同じ入力に対する\emph{件数}を並べると、単体では正しく見える実装の穴が出る。
+
+\subsection{機械的な置換をせず構文木で判定する}
+
+\S\ref{sec:migrate} がそれである。演算子の優先順位が絡む書き換えは、
+正規表現では\emph{意味を変えずに}行えない。構文木で連鎖を判定し、
+バイト位置で末尾から置換する。ただし\textbf{構文木は文字列リテラルの中を
+見ない}ので、実行時コンパイルを持つ言語ではそこが漏れる。
+
+\subsection{検査の指摘は件数でなく実物を開いて確かめる}
+
+reply の線形性検査を入れたとき、全437本で\textbf{28本62件}の指摘が出た。
+件数だけ見れば「よく効いている」と読めるが、開いてみると全て
+
+\begin{lstlisting}[language=AIPL]
+method add(x: int, y: int) -> int { return x + y; }
+\end{lstlisting}
+
+\noindent の形だった。\textbf{Py-I のメソッドは OCaml 版と違い
+\texttt{return} でも返せる}。\texttt{return} を勘定に入れたら
+\textbf{62件が3件に落ちた}。その前段でも、\texttt{function}
+（\texttt{reply} ではなく \texttt{return} で返す）に検査をかけて
+\texttt{\_test\_linear} を落としている。
+
+残った3件は\textbf{本物}だった。
+
+\begin{lstlisting}[language=AIPL]
+method read() {
+  if (kind == "Formula") { var v = eval_one(...); reply(v); }
+  reply(val);            // if に else も脱出も無いので落ちてくる
+}
+\end{lstlisting}
+
+\noindent \texttt{kind == "Formula"} のとき2回 \texttt{reply} する。
+\texttt{Future.set} が冪等なので実害は出ていないが（先勝ちで \texttt{v} が
+返る）、2つ目は死んだコードである。
+
+\begin{quote}
+\small
+指摘は「出たら本物」でないと使われなくなる。件数で納得すると、
+誤検出だらけの検査を仕込むことになる。
+\end{quote}
+
+\subsection{おまけ ---- 警告が出力経路に載っているか}
+
+Py-I に期限の警告を足したのに、\texttt{--type-check} にも
+\texttt{type\_check()} にも現れなかった。module 直下の \texttt{check()} が
+issues しか返していなかったためである。\textbf{検査を足しただけで見えない
+ままなら、無いのと同じ}である。
+
+\section{退行させた一度と、その気づき方}
+
+引数の型注釈を JS-I に入れたとき、\texttt{g4\_select} が
+\texttt{now deadlock: slot rs-1 not fulfilled} に戻った。
+\texttt{params} を使う文法規則が \texttt{method\_decl} と
+\texttt{select\_case} の\textbf{2つ}あり、片方だけ直したためである。
+\texttt{params} を \verb|{name, ty}| の並びに変えた結果、case 本体の束縛
+\texttt{localEnv[p]} がオブジェクトをキーにしてしまい、引数が見えなくなっていた。
+
+\textbf{ガイドの8本を毎回流していなければ気づかなかった。}
+検証を「変更に関係ありそうな範囲」に絞らないことが効いた場面である。
+
+\section{最終状態}
+
+\subsection{ガイドのサンプル}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccc l@{}}
+\toprule
+ & OCaml & Py-I & JS-I & 一致 \\
+\midrule
+\texttt{g1\_hello} & \ok & \ok & \ok & 一致 \\
+\texttt{g2\_now\_future} & \ok & \ok & \ok & 一致 \\
+\texttt{g3\_actors} & \ok & \ok & \ok & 一致 \\
+\texttt{g4\_select} & \ok & \ok & \ok & 一致 \\
+\texttt{g6\_effects} & \ok & \ok & \ok & 一致 \\
+\texttt{g7\_deadline} & \ok & \ok & \ok & 一致 \\
+\texttt{g8\_bool\_equality} & \ok & \ok & \ok & 一致 \\
+\texttt{g9\_actor\_arg} & \ok & \ok & \ok & 一致 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent（\texttt{g5\_web} は Web サーバを立てるので出力比較の対象外）
+着手前は Py-I・JS-I とも \textbf{0/8} だった。
+
+\subsection{\texttt{g9}: アクターを引数で渡す}
+
+本作業で追加したサンプルである。\S\ref{sec:actorarg} の修正がそのまま効く。
+
+\lstinputlisting[language=AIPL]{samples/guide/g9_actor_arg.aipl}
+
+\begin{center}
+\small 3実装とも \texttt{got actor / after send / pong}
+\end{center}
+
+なお最初は \texttt{typeof(x)} を使って書いていたが、\textbf{\texttt{typeof} は
+JS-I に無い}（\texttt{Unknown function: typeof}）ため3実装共通で動かず、
+外した。サンプルは3実装で動くことに意味がある。
+
+\subsection{残っている差}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.0cm}@{}}
+\toprule
+項目 & 内容 \\
+\midrule
+\texttt{typeof} の書式 &
+  OCaml: \verb|actor(D) { ping : () -> unit }|、
+  Py-I: \verb|actor(D, methods=[ping])|。JS-I には存在しない \\
+メソッド内の \texttt{return} &
+  Py-I は受けるが JS-I は受けない。
+  \texttt{bench/*.aipl} 3本がこれで止まっている \\
+アクター型の区別 &
+  OCaml の \texttt{unify} は \texttt{TActor} 同士を無条件に成功させる。
+  \texttt{actor[A]} と \texttt{actor[B]} が単一化できてしまう \\
+出力のフラッシュ &
+  OCaml の REPL がスクリプト終了時に最後の1行を取りこぼすことがある。
+  実装差ではなく出力の揺らぎ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{コミット一覧}
+
+\begin{center}
+\small
+\begin{longtable}{@{}lll@{}}
+\toprule
+リポジトリ & コミット & 内容 \\
+\midrule
+\endhead
+abclcp & \texttt{cccb29d} & 拡張子を \texttt{.aipl} へ（93本）\\
+abclcp & \texttt{df66dca} & トップレベル \texttt{send} の順序（\S\ref{sec:order}）\\
+abclcp & \texttt{068bdcd} & 引数の型注釈 \verb|method m(x: T)| \\
+abclcp & \texttt{cbaa7bc} & アクターを引数で渡せるように（\S\ref{sec:actorarg}）\\
+abclcp & \texttt{47e3fa1} & \texttt{g9} から \texttt{typeof} を外す \\
+\midrule
+aios-claude & \texttt{2ac81b9} & 拡張子を \texttt{.aipl} へ（380本）\\
+aios-claude & \texttt{ce60fbd} & Py-I を最新仕様へ追随 \\
+aios-claude & \texttt{9ccc052} & \verb|+| を数値専用に、241本を移行 \\
+aios-claude & \texttt{85b6f2d} & reply 線形性と期限の検査 \\
+aios-claude & \texttt{9c7696c} & 期限検査がトップレベルを見ていなかった件 \\
+aios-claude & \texttt{e7b6295} & select の返信経路 \\
+\midrule
+drone-hil & \texttt{b78ec34} & 拡張子を \texttt{.aipl} へ（3本）\\
+drone-hil & \texttt{db7f5da} & JS-I を最新仕様へ追随 \\
+drone-hil & \texttt{bee8408} & \verb|+| を数値専用に \\
+drone-hil & \texttt{22c0569} & reply 線形性と期限の検査 \\
+drone-hil & \texttt{c2929f5} & select の返信経路 \\
+drone-hil & \texttt{4b6f2b5} & \texttt{wait} が \texttt{reply} を遅らせる \\
+drone-hil & \texttt{601dd38} & 引数の型注釈 \\
+\midrule
+aipl\_line\_simulator & \texttt{7856575} & 拡張子を \texttt{.aipl} へ（2本）\\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\noindent \texttt{abclcp} は push 済み。他の3リポジトリは作業中の feature
+ブランチ上にあるためコミットのみで push は保留している。
+
+\section{まとめ}
+
+\begin{enumerate}
+\item 拡張子を \texttt{.aipl} に統一した（4リポジトリ 478 本、参照 509 ファイル）。
+  型検査の結果が改名前と 93/93 で一致することを確認している。
+
+\item Py-I と JS-I を最新の言語仕様へ追随させた。ガイドのサンプルは
+  \textbf{0/8 $\to$ 8/8}、しかも3実装で\textbf{出力が一致}する。
+
+\item \verb|+| $\to$ \verb|++| の移行は\textbf{構文木で連鎖を判定}して行った
+  （238本5448箇所）。正規表現では優先順位のせいで意味が変わる。
+
+\item 揃える過程で\textbf{6つの不具合}が出た。うち3つは正であるはずの
+  OCaml 版のものだった ---- トップレベル送信の順序破壊、
+  アクターを引数で渡せない件（原因3つ）、そして \texttt{expr\_of\_value} が
+  真偽値まで文字列に潰していたこと。
+
+\item \texttt{g4\_select} の差を「スケジューリングの違い」で片付けず
+  \emph{どちらが正しいか}を測ったことが、連鎖的な発見の起点になった。
+  片付けていれば3つとも見つかっていない。
+
+\item 見つけ方は3つの型に集約できる ----
+  \textbf{3実装を並べて件数を比べる}、
+  \textbf{機械的な置換をせず構文木で判定する}、
+  \textbf{検査の指摘は件数でなく実物を開いて確かめる}。
+  3つ目は 62 件の指摘のうち 59 件が誤検出であることを暴いた。
+\end{enumerate}
+
+\section*{参考}
+
+\begin{itemize}
+\item \texttt{docs/aipl\_guide\_ja.pdf} --- AIPL ユーザーズガイド（26ページ）。
+  サンプル 8 本をソース全文と実行結果つきで解説。
+\item \texttt{docs/aipl\_soundness2\_ja.pdf} --- 型健全性と型安全性の第2版。
+  期限を必須にすると進行定理が二択になる。
+\item \texttt{docs/aipl\_reply\_inference\_ja.pdf} ---
+  \texttt{reply} からの戻り値型推論と注釈、線形性。
+\item \texttt{docs/samples/guide/g1..g9} --- 本レポートで参照したサンプル。
+\end{itemize}
+
+\end{document}
