@@ -480,14 +480,25 @@ let rec process_command line =
             let v = Eval_thread.eval_expr top_actor rhs in
             Hashtbl.replace top_actor.env name v;
             Eval_thread.set_var name v)
+      (* トップレベルの send は、宛先が既に生成されていれば「その場で」送る。
+         以前は無条件に pending_global_sends へ回して最後にまとめて送って
+         いたため、直後の `print(now a.m())` のような即実行される文に
+         追い越され、プログラム順と実行順がずれていた（同じアクターへの
+         send -> now が now 先行になる）。アクターのキュー自体は FIFO なので、
+         ずれの原因はここだけだった。
+         宛先がまだ無い場合（前方参照）だけ従来どおり後回しにする。 *)
       | Send (tgt, mname, args) -> (
-        pending_global_sends := (fun () ->
-          Eval_thread.send_message ~from:"<top>" (string_of_send_target tgt) (mk_stmt (CallStmt (mname, args)))
-          ) :: !pending_global_sends)
+        let target = string_of_send_target tgt in
+        let thunk () =
+          Eval_thread.send_message ~from:"<top>" target (mk_stmt (CallStmt (mname, args))) in
+        if Eval_thread.actor_exists target then thunk ()
+        else pending_global_sends := thunk :: !pending_global_sends)
       | UnsafeSend (tgt, mname, args) -> (
-        pending_global_sends := (fun () ->
-          Eval_thread.send_message ~from:"<top>" (string_of_send_target tgt) (mk_stmt (CallStmt (mname, args)))
-          ) :: !pending_global_sends)
+        let target = string_of_send_target tgt in
+        let thunk () =
+          Eval_thread.send_message ~from:"<top>" target (mk_stmt (CallStmt (mname, args))) in
+        if Eval_thread.actor_exists target then thunk ()
+        else pending_global_sends := thunk :: !pending_global_sends)
       | CallStmt (fname, args) -> (
           (* Top-level call (for prims like web_listen / web_expose / print) *)
           try
