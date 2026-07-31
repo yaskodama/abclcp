@@ -11,6 +11,11 @@ type expr = {
   | Call of string * expr list
   | Expr of expr
   | Var of string
+  (* アクターへの参照。メッセージ引数としてアクターを渡すために要る。
+     引数はいったん値から式へ戻して送るので、素の Var では受け手の環境で
+     解決できず、文字列に潰すとアクターでなくなってしまう。
+     アクターは大域表に名前で載っているので、名前だけ持てば復元できる。 *)
+  | ActorRef of string
   | New of string * expr list    (* new Line(10,20) *)
   | Array of expr list * Types.ty option
   (* now / await は期限と else 節を持てる: (ミリ秒, 期限切れ時の式)。
@@ -100,6 +105,7 @@ let rec string_of_expr (e:expr) : string =
   | Float f        -> Printf.sprintf "Float %g" f
   | Bool b         -> Printf.sprintf "Bool %b" b
   | String s       -> Printf.sprintf "String %S" s
+  | ActorRef n     -> Printf.sprintf "ActorRef %s" n
   | Binop (op,a,b) -> Printf.sprintf "Binop(%s, %s, %s)" op (string_of_expr a) (string_of_expr b)
   | Call (f,args)  -> let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "Call(%s, [%s])" f xs
@@ -178,6 +184,7 @@ let label_of_expr (e:expr) : string =
   | Float f        -> Printf.sprintf "Float %g" f
   | String s       -> Printf.sprintf "String %S" s
   | Bool b         -> Printf.sprintf "Bool %b" b
+  | ActorRef n     -> "ActorRef " ^ n
   | Binop (op,_,_) -> "Binop " ^ op
   | Call (f,_)     -> "Call " ^ f
   | Expr _         -> "Expr"
@@ -337,6 +344,7 @@ let rec pprint_expr ?(lvl=0) (e:expr) : string =
   | Bool b   -> string_of_bool b
   | String s -> Printf.sprintf "\"%s\"" s
   | Var x    -> x
+  | ActorRef n -> "<actor:" ^ n ^ ">"
   | Binop (op,a,b) ->
       Printf.sprintf "%s %s %s" (pprint_expr ~lvl a) op (pprint_expr ~lvl b)
   | Call (f,args) ->

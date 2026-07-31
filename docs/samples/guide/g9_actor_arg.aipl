@@ -1,0 +1,21 @@
+// g9: アクターをメッセージの引数として渡す
+//
+//     `method m(x: D)` と引数に型注釈を書くと、受け取ったアクターに
+//     そのまま send できる。注釈が無いと引数の型が決まらないので
+//     `send target is not actor` になる。
+//
+//     長らく動かなかった書き方で、原因は3つ重なっていた:
+//       1. expr_of_value が VActor を "<actor:d>" という文字列に潰していた
+//       2. トップレベルの send が引数を評価せず生の式のまま送っていた
+//       3. VActor が実体名を持たず、宛先を復元できなかった
+class D { method ping() : unit !{log} { print("pong"); } }
+class P {
+  method viaAnno(x: D) : unit !{log} {
+    print("typeof x = " ++ typeof(x));
+    send x.ping();
+    print("after send");
+  }
+}
+var d = new D();
+var p = new P();
+send p.viaAnno(d);

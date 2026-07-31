@@ -791,9 +791,14 @@ let expr_of_value = function
   | VInt n -> Int n
   | VFloat f  -> Float f
   | VString s -> String s
-  | VBool  b  -> String (if b then "true" else "false")  (* Bool/Unit の式型が無ければ文字列化でOK *)
+  | VBool  b  -> Bool b        (* Bool の式型ができたので文字列化しない *)
   | VUnit     -> String "()"
-  | VActor (n,_)  -> String ("<actor:" ^ n ^ ">")
+  | VActor (cls, tbl) ->
+      (* 実体名が入っていればそれを使う。無ければ第1要素で代用する
+         （名前とクラスが一致する古い作り方への保険）。 *)
+      (match Hashtbl.find_opt tbl "__actor_name" with
+       | Some (VString n) -> ActorRef n
+       | _ -> ActorRef cls)
   | VArray (a,_)  ->                                        (* 追加：簡易表示でOK *)
       let items =
         a |> Array.to_list
@@ -812,6 +817,13 @@ let expr_of_value = function
   | VFuture f -> String ("<future:" ^ f.fid ^ ">")
       
 (* === Value extractors === *)
+(* アクター値。第1要素はクラス名だが、実体名も表に入れて持ち回る。
+   VActor が実体名を持たないと、引数で渡されたときに宛先を復元できない。 *)
+let actor_value ~(name:string) ~(cls:string) : value =
+  let t = Hashtbl.create 1 in
+  Hashtbl.replace t "__actor_name" (VString name);
+  VActor (cls, t)
+
 let get_var_a (actor:actor) (x:string) : value =
   match Hashtbl.find_opt actor.env x with
   | Some v -> v
@@ -1822,7 +1834,23 @@ let find_actor_exn name =
 let actual_local_target (actor:actor) (tgt:string) : string =
   if tgt = "self" then actor.name
   else if tgt = "sender" then actor.last_sender
-  else tgt
+  else if Hashtbl.mem actor_table tgt then tgt
+  else
+    (* tgt がそのままアクター名でないなら、変数が保持しているアクターを見る。
+       引数で受け取ったアクター（`method m(x: D) { send x.ping(); }`）は
+       変数名 x と宛先名が一致しないので、これが無いと解決できず
+       「Actor x not found」で黙って落ちていた。 *)
+    match Hashtbl.find_opt actor.env tgt with
+    | Some (VActor (nm, tbl)) ->
+        let cand =
+          (match Hashtbl.find_opt tbl "__actor_name" with
+           | Some (VString n) -> [n; nm]
+           | _ -> [nm])
+        in
+        (match List.find_opt (fun n -> Hashtbl.mem actor_table n) cand with
+         | Some n -> n
+         | None   -> tgt)
+    | _ -> tgt
 
 let rec eval_expr (actor:actor) (e : expr) =
   match e.desc with
@@ -1831,6 +1859,17 @@ let rec eval_expr (actor:actor) (e : expr) =
   | Bool b   -> VBool b
   | String s -> VString s
   | Var x    -> get_var_a actor x
+  (* メッセージ引数として運ばれてきたアクター参照。大域表から復元する。
+     表に無ければ（消えた等）名前を文字列として返し、落とさない。 *)
+  | ActorRef n ->
+      (match Hashtbl.find_opt actor_table n with
+       | Some a ->
+           (* VActor の第1要素は場所によってクラス名として読まれたり
+              （typeof）実体名として読まれたり（resolve_actor_from_term）
+              していて一貫していない。既存の読み方を壊さないよう、
+              第1要素はクラス名にしつつ、実体名を表に入れておく。 *)
+           actor_value ~name:n ~cls:a.cls
+       | None   -> VString ("<actor:" ^ n ^ ">"))
   | Binop (op, e1, e2) ->
       let v1 = eval_expr actor e1 in
       let v2 = eval_expr actor e2 in
@@ -1921,7 +1960,7 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
               else
                 send_message ~from:"<new>" name (mk_stmt (CallStmt("init", args))))
           );
-          set_var_a actor name (VActor (cls, Hashtbl.create 0))
+          set_var_a actor name (actor_value ~name ~cls)
     | _ -> set_var_a actor name (eval_expr actor rhs))
   | If (cond, tbr, fbr) ->
       if to_bool (eval_expr actor cond)
@@ -2123,7 +2162,18 @@ and resolve_actor_from_term env recv_term =
   match recv_term with
   | Var id ->
       (match lookup_opt env id with
-       | Some (VActor (name,_)) -> find_actor_exn name
+       | Some (VActor (nm, tbl)) ->
+           (* 実体名が入っていればそれを最優先。次に第1要素、最後に変数名。
+              引数で受け取ったアクターは変数名が宛先名と一致しないので、
+              この順でないと解決できない。 *)
+           let cand =
+             (match Hashtbl.find_opt tbl "__actor_name" with
+              | Some (VString n) -> [n; nm; id]
+              | _ -> [nm; id])
+           in
+           (match List.find_opt (fun n -> Hashtbl.mem actor_table n) cand with
+            | Some n -> find_actor_exn n
+            | None   -> find_actor_exn nm)
        | _                  -> find_actor_exn id)
 
   | _ ->

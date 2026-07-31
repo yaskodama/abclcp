@@ -360,6 +360,7 @@ let rec string_of_expr (e : Ast.expr) =
   | String s -> s
   | Bool b -> string_of_bool b
   | Var v -> v
+  | ActorRef n -> "<actor:" ^ n ^ ">"
   | Binop (op, e1, e2) -> "(" ^ string_of_expr e1 ^ " " ^ op ^ " " ^ string_of_expr e2 ^ ")"
   | Call (fname, args) -> fname ^ "(" ^ String.concat ", " (List.map string_of_expr args) ^ ")"
   | Expr e -> (string_of_expr e)
@@ -475,7 +476,7 @@ let rec process_command line =
                 else
                   Eval_thread.send_message ~from:"<new>" name (mk_stmt (CallStmt ("init", args)))
 		  ));
-            Hashtbl.replace top_actor.env name (VActor (cls, Hashtbl.create 0))
+            Hashtbl.replace top_actor.env name (Eval_thread.actor_value ~name ~cls)
         | _ ->
             let v = Eval_thread.eval_expr top_actor rhs in
             Hashtbl.replace top_actor.env name v;
@@ -490,13 +491,22 @@ let rec process_command line =
       | Send (tgt, mname, args) -> (
         let target = string_of_send_target tgt in
         let thunk () =
-          Eval_thread.send_message ~from:"<top>" target (mk_stmt (CallStmt (mname, args))) in
+          (* 引数はトップレベルの環境で評価してから送る。
+             生の式のまま送ると、受け手の環境で `Var "d"` が解決できず
+             黙って落ちていた（アクターを引数で渡せなかった原因）。
+             値に落としてから expr_of_value で式に戻すと、アクターは
+             ActorRef として運ばれ、受け手側で大域表から復元される。 *)
+          let arg_vals = List.map (Eval_thread.eval_expr top_actor) args in
+          let arg_exprs = List.map (fun v -> mk_expr (Eval_thread.expr_of_value v)) arg_vals in
+          Eval_thread.send_message ~from:"<top>" target (mk_stmt (CallStmt (mname, arg_exprs))) in
         if Eval_thread.actor_exists target then thunk ()
         else pending_global_sends := thunk :: !pending_global_sends)
       | UnsafeSend (tgt, mname, args) -> (
         let target = string_of_send_target tgt in
         let thunk () =
-          Eval_thread.send_message ~from:"<top>" target (mk_stmt (CallStmt (mname, args))) in
+          let arg_vals = List.map (Eval_thread.eval_expr top_actor) args in
+          let arg_exprs = List.map (fun v -> mk_expr (Eval_thread.expr_of_value v)) arg_vals in
+          Eval_thread.send_message ~from:"<top>" target (mk_stmt (CallStmt (mname, arg_exprs))) in
         if Eval_thread.actor_exists target then thunk ()
         else pending_global_sends := thunk :: !pending_global_sends)
       | CallStmt (fname, args) -> (
