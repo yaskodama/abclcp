@@ -11,7 +11,7 @@
 class D { method ping() : unit !{log} { print("pong"); } }
 class P {
   method viaAnno(x: D) : unit !{log} {
-    print("typeof x = " ++ typeof(x));
+    print("got actor");
     send x.ping();
     print("after send");
   }
