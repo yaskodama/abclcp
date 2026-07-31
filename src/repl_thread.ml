@@ -418,7 +418,7 @@ let rec process_command line =
   else if String.trim line = "" then ()
   else if String.length line >= 4 && String.sub line 0 4 = "help" then begin
     repl_logln "Commands:";
-    repl_logln "  load <file.abcl>      - load a source file (shows tokens & AST; typechecks)";
+    repl_logln "  load <file.aipl>      - load a source file (shows tokens & AST; typechecks)";
     repl_logln "  compile               - build/spawn from the loaded program";
     repl_logln "  list                  - list active objects";
     repl_logln "  send obj.method(args) - send async message";

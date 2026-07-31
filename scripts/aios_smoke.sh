@@ -32,11 +32,11 @@ run_sample() {
 cd "$SRC"
 opam exec -- make
 
-run_sample "now_future.abcl" "future result = 30." "now/future message send"
-run_sample "aios_kernel.abcl" "ABCL/c+ AIOS kernel" "kernel introspection"
-run_sample "aios_services.abcl" "memory get = 42" "service registry"
-run_sample "aios_memory_store.abcl" "memory has answer = true" "kernel memory"
-run_sample "aios_task_manager.abcl" "status=done" "task manager"
-run_sample "aios_workflow_mock.abcl" "workflow.done:task-1" "offline mock workflow"
+run_sample "now_future.aipl" "future result = 30." "now/future message send"
+run_sample "aios_kernel.aipl" "ABCL/c+ AIOS kernel" "kernel introspection"
+run_sample "aios_services.aipl" "memory get = 42" "service registry"
+run_sample "aios_memory_store.aipl" "memory has answer = true" "kernel memory"
+run_sample "aios_task_manager.aipl" "status=done" "task manager"
+run_sample "aios_workflow_mock.aipl" "workflow.done:task-1" "offline mock workflow"
 
 printf '[aios-smoke] all passed\n'

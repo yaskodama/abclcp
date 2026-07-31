@@ -560,7 +560,7 @@ agent Assistant {
 
 現在の回帰基準:
 
-- `abclc/*.abcl` が全件 `load + compile` できる。
+- `abclc/*.aipl` が全件 `load + compile` できる。
 - SDL サンプルは headless 環境では以下を付けて検証する。
 
 ```sh
@@ -588,7 +588,7 @@ send c1.inc()
 - branch: `make-src-base`
 - commit base: `d69378a`
 - build: `cd src && opam exec -- make`
-- sample check: `abclc/*.abcl`
+- sample check: `abclc/*.aipl`
 
 ### Phase 1: Specification Stabilization
 
@@ -644,7 +644,7 @@ send c1.inc()
 8. `remote` は dynamic boundary とする。
 9. AI agent 専用構文はまだ追加しない。
 10. capability は primitive の分類から始める。
-11. 既存 `abclc/*.abcl` を互換性テストにする。
+11. 既存 `abclc/*.aipl` を互換性テストにする。
 
 ## 13. Open Questions
 
@@ -662,7 +662,7 @@ send c1.inc()
 ## 14. Next Work Items
 
 1. `docs/ABCLCP_CURRENT_SPEC.md` を作り、現行構文と型規則を実装ベースで記述する。
-2. `scripts/test_abclc_samples.sh` を作り、`abclc/*.abcl` の回帰テストを自動化する。
+2. `scripts/test_abclc_samples.sh` を作り、`abclc/*.aipl` の回帰テストを自動化する。
 3. `commands.bat` の古い REPL send 構文を修正する。
 4. primitive catalog を `docs/CAPABILITIES.md` として整理する。
 5. method 戻り値型、`now`、`future`、`await` の最小構文案を決める。

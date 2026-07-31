@@ -515,7 +515,7 @@ POST /api/x/<key>   -> send to exposed endpoint
 
 \subsection{既存コードの移行}
 
-コーパスで境界を開いているのは \texttt{web\_calc.abcl} 1 本だけだった。
+コーパスで境界を開いているのは \texttt{web\_calc.aipl} 1 本だけだった。
 \texttt{add} に注釈を付けて移行した。型は、注釈が無いときに推論が選んでいた
 \ty{float} をそのまま明示して、既存の型付けを変えないようにした。
 
@@ -904,7 +904,7 @@ case ごとに独立に検査する。
 ずれるので、置換はバイト列で行う必要がある。
 もうひとつは、この方法が\textbf{文字列連結以外の理由で失敗している
 \texttt{+} も書き換えてしまう}こと。実際サンプル
-\texttt{s2\_missing\_reply.abcl} の \texttt{print(x + 1)} は
+\texttt{s2\_missing\_reply.aipl} の \texttt{print(x + 1)} は
 「\texttt{x} が \ty{unit} だから」失敗する意図的な負例なのに
 \texttt{++} にされてしまった。意図的にエラーになるコードは手で確認が要る。
 \end{remark}
@@ -952,12 +952,12 @@ case ごとに独立に検査する。
 しかも落ちる 2 本はどちらも真陽性だった。
 
 \begin{itemize}
-\item \texttt{abclc/Hello.abcl} --- フィールドが
+\item \texttt{abclc/Hello.aipl} --- フィールドが
   \texttt{float count = 0.;} で \texttt{init(n) \{ count = n; \}} なので
   本体は $n : \ty{float}$ を要求する。しかし \texttt{new Hello(5)} は
   \ty{int} を渡していた。\textbf{本物の int/float 不整合}である
   （\texttt{new Hello(5.)} が正しい）。
-\item \texttt{s5\_overload\_ambiguity.abcl} --- 本体が \ty{float}、
+\item \texttt{s5\_overload\_ambiguity.aipl} --- 本体が \ty{float}、
   呼び出しが \ty{int}。principal type が無いことを示す負例なので当然。
 \end{itemize}
 
@@ -1061,7 +1061,7 @@ s6 が「正しいプログラムが通るようになった」、s3 が「誤�
 
 \subsection{退行試験}
 
-\texttt{abclc/*.abcl} 63 本について、\texttt{git HEAD} 版と修正版の
+\texttt{abclc/*.aipl} 63 本について、\texttt{git HEAD} 版と修正版の
 型検査結果を比較した。
 
 \begin{center}
@@ -1080,7 +1080,7 @@ s6 が「正しいプログラムが通るようになった」、s3 が「誤�
 
 \begin{lstlisting}[language={}]
 $ python3 scripts/type_runtime_diff.py --timeout 12 \
-    abclc/*.abcl docs/samples/reply_inference/s*.abcl
+    abclc/*.aipl docs/samples/reply_inference/s*.aipl
 対象 78 本 / 突き合わせできた 32 本 / 照合したペア 90 件
   (型変数・any のため判定せず 6 件)
 
@@ -1102,12 +1102,12 @@ $ python3 scripts/type_runtime_diff.py --timeout 12 \
 「残る食い違いは型検査器自身が曖昧と警告しているものに一致する」という
 性質が機械的に確認でき、それが\S\ref{sec:wiring}で
 「ならば警告ではなくエラーにすべきだ」という判断の根拠になった。
-\texttt{abclc/now\_future.abcl} も同じ形だったので \texttt{: int} を
+\texttt{abclc/now\_future.aipl} も同じ形だったので \texttt{: int} を
 注釈して静的・動的を揃えてある。
 
 \subsection{型検査の退行}
 
-変化した 1 本 \texttt{RotateThreeLines.abcl} は、
+変化した 1 本 \texttt{RotateThreeLines.aipl} は、
 \begin{lstlisting}[language=AIPL]
 x1 = cx - dx + x;   // cx, dx : float, x : method parameter
 \end{lstlisting}
@@ -1118,7 +1118,7 @@ x1 = cx - dx + x;   // cx, dx : float, x : method parameter
 \texttt{x} は正しく \ty{float} に束縛されて型検査を通る。
 すなわち退行ではなく改善である。
 
-曖昧警告が出た 2 本（\texttt{now\_future.abcl}, \texttt{web\_calc.abcl}）は
+曖昧警告が出た 2 本（\texttt{now\_future.aipl}, \texttt{web\_calc.aipl}）は
 いずれも \texttt{method add(a,b) \{ reply(a+b); \}} の形であり、
 真に principal type を持たない箇所である。
 
@@ -1206,12 +1206,12 @@ $ ocamlfind ocamlc -package unix -thread -linkpkg -w -a -I src -o tc \
     src/location.cmo src/types.cmo src/ast.cmo src/typing_env.cmo \
     src/infer.cmo src/typecheck.cmo src/parser.cmo src/lexer.cmo \
     docs/samples/reply_inference/tc_main.ml
-$ ./tc docs/samples/reply_inference/s1_ok.abcl
+$ ./tc docs/samples/reply_inference/s1_ok.aipl
 \end{lstlisting}
 
-\subsection{s1\_ok.abcl --- reply からの推論}
+\subsection{s1\_ok.aipl --- reply からの推論}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s1_ok.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s1_ok.aipl}
 
 \begin{lstlisting}[language={}]
 [OK] type check passed
@@ -1230,9 +1230,9 @@ class Calc
 \texttt{twice} は \ty{int}、\texttt{greet} は \ty{string} と推論され、
 \texttt{reply} を持たない \texttt{log} は \ty{unit} へ defaulting されている。
 
-\subsection{s2\_missing\_reply.abcl --- reply の書き忘れ}
+\subsection{s2\_missing\_reply.aipl --- reply の書き忘れ}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s2_missing_reply.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s2_missing_reply.aipl}
 
 \begin{lstlisting}[language={}]
 [Type error] line 12, col 9: no overload of + matches (unit, int)
@@ -1244,9 +1244,9 @@ class Calc
 「そもそも \texttt{bump} が値を返さない」という原因が読み取れなかった。
 現在は \ty{unit} と出るので、\texttt{reply} の欠落が直ちに分かる。
 
-\subsection{s3\_conflict.abcl --- 分岐ごとに異なる型を reply}
+\subsection{s3\_conflict.aipl --- 分岐ごとに異なる型を reply}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s3_conflict.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s3_conflict.aipl}
 
 \begin{lstlisting}[language={}]
 [Type error] line 5, col 37: reply type mismatch:
@@ -1260,9 +1260,9 @@ $\rho$ が 2 つの \texttt{reply} 地点を結ぶことで検出できるよう
 ただし \S\ref{sec:limits} のとおり、エラーが指すのは
 「2 番目に検査された \texttt{reply}」であって、どちらが誤りかは決められない。
 
-\subsection{s4\_chain.abcl --- アクターを跨いだ伝播}
+\subsection{s4\_chain.aipl --- アクターを跨いだ伝播}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s4_chain.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s4_chain.aipl}
 
 \begin{lstlisting}[language={}]
 [OK] type check passed
@@ -1281,9 +1281,9 @@ class Front
 さらに \texttt{Front.fetch} 自身の \texttt{reply} を経て \ty{string} に至る。
 $\rho$ が union-find 経由でアクター境界を越えて伝播していることが確認できる。
 
-\subsection{s5\_overload\_ambiguity.abcl --- principal type が無い例}
+\subsection{s5\_overload\_ambiguity.aipl --- principal type が無い例}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s5_overload_ambiguity.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s5_overload_ambiguity.aipl}
 
 \begin{lstlisting}[language={}]
 [warn] line 10, col 13: ambiguous overload of + for ('a, 'a):
@@ -1306,9 +1306,9 @@ TYPE_ERROR: line 10, col 13: ambiguous overload of + for ('a, 'a):
 表示されている \texttt{(int * int) -> float} は、引数側が呼び出し地点由来、
 戻り値側が本体由来の混成である（\S\ref{sec:limitations} の限界 2）。
 
-\subsection{s6\_usable\_result.abcl --- 通るようになった正しいプログラム}
+\subsection{s6\_usable\_result.aipl --- 通るようになった正しいプログラム}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s6_usable_result.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s6_usable_result.aipl}
 
 \begin{lstlisting}[language={}]
 [OK] type check passed
@@ -1322,9 +1322,9 @@ class Calc
 パッチ前は \texttt{line 13: no overload of + matches (any, int)} で落ちていた。
 \texttt{now} の結果が \ty{any} である限り、算術にも比較にも使えなかったためである。
 
-\subsection{s7\_annotation\_ok.abcl --- 注釈が推論を助ける}
+\subsection{s7\_annotation\_ok.aipl --- 注釈が推論を助ける}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s7_annotation_ok.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s7_annotation_ok.aipl}
 
 \begin{lstlisting}[language={}]
 [OK] type check passed
@@ -1345,9 +1345,9 @@ s5 と同じ \texttt{reply(a + b)} でありながら、曖昧警告は出ず
 宣言型が期待型として overload 解決へ流れた結果であり（\S\ref{sec:bidir}）、
 引数側・戻り値側の食い違い（\S\ref{sec:limitations} の限界 2）も同時に解消している。
 
-\subsection{s8\_annotation\_conflict.abcl --- 宣言と食い違う reply}
+\subsection{s8\_annotation\_conflict.aipl --- 宣言と食い違う reply}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s8_annotation_conflict.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s8_annotation_conflict.aipl}
 
 \begin{lstlisting}[language={}]
 [Type error] line 6, col 37: reply type mismatch:
@@ -1358,9 +1358,9 @@ s3（注釈なし）では「他の \texttt{reply} とここが食い違う」�
 どちらの分岐が誤りかを決められなかった。注釈があると
 「\emph{宣言}と食い違う」と言えるので、blame が正しい位置に出る。
 
-\subsection{s9\_missing\_path.abcl --- 全パス被覆検査}
+\subsection{s9\_missing\_path.aipl --- 全パス被覆検査}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s9_missing_path.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s9_missing_path.aipl}
 
 \begin{lstlisting}[language={}]
 [Type error] line 5, col 10: method check is declared to reply with int,
@@ -1371,9 +1371,9 @@ s3（注釈なし）では「他の \texttt{reply} とここが食い違う」�
 推論だけではこれを誤りと言えない（照合先が無い）。
 注釈を入れる最大の利得がこの検査である。
 
-\subsection{s10\_expose\_unannotated.abcl --- リモート境界での注釈必須}
+\subsection{s10\_expose\_unannotated.aipl --- リモート境界での注釈必須}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s10_expose_unannotated.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s10_expose_unannotated.aipl}
 
 \begin{lstlisting}[language={}]
 [Type error] line 24, col 1: actor Adder is reachable from outside this
@@ -1392,12 +1392,12 @@ s3（注釈なし）では「他の \texttt{reply} とここが食い違う」�
 [OK] type check passed
 \end{lstlisting}
 
-\subsection{s11\_service.abcl --- 追加機能を一通り使う}
+\subsection{s11\_service.aipl --- 追加機能を一通り使う}
 
 戻り値型注釈、全パス被覆検査、双方向型付け、\texttt{select} の $\rho$ 帰属、
 そして注釈を省いたメソッドの推論を 1 本にまとめたもの。
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s11_service.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s11_service.aipl}
 
 型検査の結果。\texttt{serve} が \ty{unit} のままであること
 （case 本体の \texttt{reply} が \texttt{place} に帰属していること）、
@@ -1429,7 +1429,7 @@ class Stock
 
 \begin{lstlisting}[language={}]
 $ cat run_s11.repl
-load docs/samples/reply_inference/s11_service.abcl
+load docs/samples/reply_inference/s11_service.aipl
 compile
 $ ./src/abclrepl_thread -q -f run_s11.repl
 [Defined class Stock]
@@ -1444,7 +1444,7 @@ twice = 42
 [stock] done
 \end{lstlisting}
 
-\subsection{s12\_service\_exposed.abcl --- 同じものを外部公開する}
+\subsection{s12\_service\_exposed.aipl --- 同じものを外部公開する}
 
 s11 に \texttt{web\_listen} と \texttt{web\_expose} を足しただけ。
 ローカルなら推論で済んでいた \texttt{twice} が、公開した途端に
@@ -1466,12 +1466,12 @@ web_expose("/stock", "stock");
 これが\S\ref{sec:limits} で述べた「推論はソースが手元にある場合しか
 カバーできない」ということの具体形である。
 
-\subsection{s13\_runtime\_mismatch.abcl --- 型検査器と評価器の食い違い}
+\subsection{s13\_runtime\_mismatch.aipl --- 型検査器と評価器の食い違い}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s13_runtime_mismatch.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s13_runtime_mismatch.aipl}
 
 \begin{lstlisting}[language={}]
-$ ./tc docs/samples/reply_inference/s13_runtime_mismatch.abcl
+$ ./tc docs/samples/reply_inference/s13_runtime_mismatch.aipl
 [OK] type check passed
 [method return types (inferred from reply)]
   T#f -> int
@@ -1482,18 +1482,18 @@ $ ./src/abclrepl_thread -q -f run_s13.repl
 
 修正前はここが \texttt{3.} だった（\S\ref{sec:runtime}）。
 
-\subsection{s14\_select\_pattern.abcl --- select パターンの照合}
+\subsection{s14\_select\_pattern.aipl --- select パターンの照合}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s14_select_pattern.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s14_select_pattern.aipl}
 
 \begin{lstlisting}[language={}]
 [Type error] line 17, col 22: select: case m binds 1 variable(s)
   but method m takes 2
 \end{lstlisting}
 
-\subsection{s15\_double\_reply.abcl --- reply の線形性}
+\subsection{s15\_double\_reply.aipl --- reply の線形性}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s15_double_reply.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s15_double_reply.aipl}
 
 \begin{lstlisting}[language={}]
 [Type error] line 11, col 10: method m may reply more than once on some path;
@@ -1516,9 +1516,9 @@ method m(k) : int { while k > 0 do { reply(k); } }
 method m(k) : int { if (k > 0) { reply(1); } else { reply(2); } }
 \end{lstlisting}
 
-\subsection{s16\_concat.abcl --- 文字列連結 \texttt{++} と数値 \texttt{+}}
+\subsection{s16\_concat.aipl --- 文字列連結 \texttt{++} と数値 \texttt{+}}
 
-\lstinputlisting[language=AIPL]{samples/reply_inference/s16_concat.abcl}
+\lstinputlisting[language=AIPL]{samples/reply_inference/s16_concat.aipl}
 
 \begin{lstlisting}[language={}]
 [OK] type check passed
@@ -1572,14 +1572,14 @@ REPL（SDL に依存する）を起動せずに型検査だけを走らせるた
 \item 文字列連結の \texttt{++} への分離（\S\ref{sec:concat}）---
   \texttt{lexer.mll}、\texttt{parser.mly}、\texttt{typing\_env.ml}、
   \texttt{infer.ml}、\texttt{eval\_thread.ml}。
-\item \texttt{abclc/*.abcl} ほか 38 ファイル / 255 箇所 --- \texttt{+} を
+\item \texttt{abclc/*.aipl} ほか 38 ファイル / 255 箇所 --- \texttt{+} を
   \texttt{++} へ移行。
 \item \texttt{src/infer.ml} --- 曖昧 overload を既定でエラーに、
   仮引数を署名へ結線（\S\ref{sec:wiring}）。
-\item \texttt{abclc/Hello.abcl} --- \texttt{new Hello(5)} $\to$
+\item \texttt{abclc/Hello.aipl} --- \texttt{new Hello(5)} $\to$
   \texttt{new Hello(5.)}（結線で露見した int/float 不整合）。
-\item \texttt{abclc/web\_calc.abcl}, \texttt{src/web\_calc.abcl},
-  \texttt{src/web\_calc1.abcl} --- 公開アクターに戻り値型注釈を付けて移行。
+\item \texttt{abclc/web\_calc.aipl}, \texttt{src/web\_calc.aipl},
+  \texttt{src/web\_calc1.aipl} --- 公開アクターに戻り値型注釈を付けて移行。
 \end{itemize}
 
 \section{参照}

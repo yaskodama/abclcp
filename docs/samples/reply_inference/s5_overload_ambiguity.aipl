@@ -7,7 +7,7 @@
 //     も持っていた。typing_env は overload を prepend で積むためリストの
 //     先頭が最後に登録されたものになり、a + b は問答無用で string に
 //     潰され、b も string に焼き付いていた。
-//     RotateThreeLines.abcl が誤ってエラーになっていたのもこれが原因。
+//     RotateThreeLines.aipl が誤ってエラーになっていたのもこれが原因。
 //
 //     文字列連結を ++ に分けたので string の候補は消えたが、
 //     (float * float) -> float と (int * int) -> int が残り、

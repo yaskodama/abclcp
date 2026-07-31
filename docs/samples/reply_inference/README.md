@@ -15,7 +15,7 @@ ocamlfind ocamlc -package unix -thread -linkpkg -w -a -I src -o tc \
   src/infer.cmo src/typecheck.cmo src/parser.cmo src/lexer.cmo \
   docs/samples/reply_inference/tc_main.ml
 
-for f in docs/samples/reply_inference/s*.abcl; do ./tc "$f"; done
+for f in docs/samples/reply_inference/s*.aipl; do ./tc "$f"; done
 ```
 
 `AIOS_STRICT_OVERLOAD=1` を付けると、曖昧なオーバーロードが警告ではなく
@@ -25,22 +25,22 @@ for f in docs/samples/reply_inference/s*.abcl; do ./tc "$f"; done
 
 | ファイル | 何を見るか | 期待される結果 |
 |---|---|---|
-| `s1_ok.abcl` | reply から戻り値型が推論されること。reply の無いメソッドが unit へ defaulting されること | OK。`twice:(int)->int`, `greet:(string)->string`, `log:('a)->unit` |
-| `s2_missing_reply.abcl` | reply を書き忘れたメソッドの結果を now で使う | 型エラー `(unit, int)`。パッチ前は `(any, int)` で原因が読めなかった |
-| `s3_conflict.abcl` | 分岐ごとに異なる型を reply する | 型エラー `reply type mismatch`。**パッチ前は素通りしていた** |
-| `s4_chain.abcl` | ρ がアクター境界を越えて伝播すること | OK。`Store#get->int` → `Front#fetch->string` |
-| `s5_overload_ambiguity.abcl` | `a + b` に principal type が無いこと | **型エラー**（ambiguous）。`AIOS_LAX_OVERLOAD=1` で警告に戻る |
-| `s6_usable_result.abcl` | now の結果を算術に使う | OK。**パッチ前は `no overload of + matches (any, int)` で落ちていた** |
-| `s7_annotation_ok.abcl` | 戻り値型注釈 `method m(x) : T`。期待型が overload 解決へ流れること | OK。`add : (int * int) -> int`。**s5 の曖昧性が注釈だけで解消する** |
-| `s8_annotation_conflict.abcl` | 宣言型と食い違う reply | 型エラー `declared to reply with int, but replies with string here` |
-| `s9_missing_path.abcl` | 全パス被覆検査 | 型エラー `some execution path does not reply`。**注釈が無ければ書けない検査** |
-| `s10_expose_unannotated.abcl` | リモート境界での注釈必須 | `web_expose` した Adder は型エラー、`web_listen` だけで届く Logger は警告 |
-| `s11_service.abcl` | **追加機能を一通り使う統合サンプル** | OK。`serve -> unit`（case の reply は place へ帰属）、注釈の無い `twice -> int` |
-| `s12_service_exposed.abcl` | s11 を外部公開した版 | 型エラー。ローカルなら推論で済む `twice` が公開すると宣言必須になる |
-| `s13_runtime_mismatch.abcl` | **型検査器と評価器の食い違い**（修正済の回帰テスト） | 型検査 `T#f -> int`、実行 `3`。修正前は `3.` |
-| `s14_select_pattern.abcl` | select パターンをメソッド署名に照合 | 型エラー `case m binds 1 variable(s) but method m takes 2` |
-| `s15_double_reply.abcl` | reply の線形性（高々一度） | 型エラー `may reply more than once on some path` |
-| `s16_concat.abcl` | 文字列連結 `++` と数値 `+` の分離 | OK。`label/both/plain -> string`, `sum -> int` |
+| `s1_ok.aipl` | reply から戻り値型が推論されること。reply の無いメソッドが unit へ defaulting されること | OK。`twice:(int)->int`, `greet:(string)->string`, `log:('a)->unit` |
+| `s2_missing_reply.aipl` | reply を書き忘れたメソッドの結果を now で使う | 型エラー `(unit, int)`。パッチ前は `(any, int)` で原因が読めなかった |
+| `s3_conflict.aipl` | 分岐ごとに異なる型を reply する | 型エラー `reply type mismatch`。**パッチ前は素通りしていた** |
+| `s4_chain.aipl` | ρ がアクター境界を越えて伝播すること | OK。`Store#get->int` → `Front#fetch->string` |
+| `s5_overload_ambiguity.aipl` | `a + b` に principal type が無いこと | **型エラー**（ambiguous）。`AIOS_LAX_OVERLOAD=1` で警告に戻る |
+| `s6_usable_result.aipl` | now の結果を算術に使う | OK。**パッチ前は `no overload of + matches (any, int)` で落ちていた** |
+| `s7_annotation_ok.aipl` | 戻り値型注釈 `method m(x) : T`。期待型が overload 解決へ流れること | OK。`add : (int * int) -> int`。**s5 の曖昧性が注釈だけで解消する** |
+| `s8_annotation_conflict.aipl` | 宣言型と食い違う reply | 型エラー `declared to reply with int, but replies with string here` |
+| `s9_missing_path.aipl` | 全パス被覆検査 | 型エラー `some execution path does not reply`。**注釈が無ければ書けない検査** |
+| `s10_expose_unannotated.aipl` | リモート境界での注釈必須 | `web_expose` した Adder は型エラー、`web_listen` だけで届く Logger は警告 |
+| `s11_service.aipl` | **追加機能を一通り使う統合サンプル** | OK。`serve -> unit`（case の reply は place へ帰属）、注釈の無い `twice -> int` |
+| `s12_service_exposed.aipl` | s11 を外部公開した版 | 型エラー。ローカルなら推論で済む `twice` が公開すると宣言必須になる |
+| `s13_runtime_mismatch.aipl` | **型検査器と評価器の食い違い**（修正済の回帰テスト） | 型検査 `T#f -> int`、実行 `3`。修正前は `3.` |
+| `s14_select_pattern.aipl` | select パターンをメソッド署名に照合 | 型エラー `case m binds 1 variable(s) but method m takes 2` |
+| `s15_double_reply.aipl` | reply の線形性（高々一度） | 型エラー `may reply more than once on some path` |
+| `s16_concat.aipl` | 文字列連結 `++` と数値 `+` の分離 | OK。`label/both/plain -> string`, `sum -> int` |
 
 ## 実際に処理系で走らせる
 
@@ -48,13 +48,13 @@ for f in docs/samples/reply_inference/s*.abcl; do ./tc "$f"; done
 
 ```sh
 cat > run.repl <<'EOF'
-load docs/samples/reply_inference/s11_service.abcl
+load docs/samples/reply_inference/s11_service.aipl
 compile
 EOF
 ./src/abclrepl_thread -q -f run.repl < /dev/null
 ```
 
-`-f` に `.abcl` を直接渡すと REPL コマンドとして 1 行ずつ解釈されるので、
+`-f` に `.aipl` を直接渡すと REPL コマンドとして 1 行ずつ解釈されるので、
 クラス定義は読まれない（`Actor stock not found` になる）。`load` + `compile` が正しい。
 
 ## 戻り値型注釈の構文
@@ -111,7 +111,7 @@ case 本体では `reply` を `add` の ρ に束縛する。`timeout` 本体は
 型検査が付けた戻り値型と、実行時に実際に reply された値の型を突き合わせる。
 
 ```sh
-python3 scripts/type_runtime_diff.py abclc/*.abcl docs/samples/reply_inference/s*.abcl
+python3 scripts/type_runtime_diff.py abclc/*.aipl docs/samples/reply_inference/s*.aipl
 ```
 
 処理系側は `AIOS_TYPE_TRACE=1` のとき reply のたびに
@@ -146,7 +146,7 @@ python3 scripts/type_runtime_diff.py abclc/*.abcl docs/samples/reply_inference/s
 
 **注意2点**: 列は**バイトオフセット**なので日本語を含む行では文字インデックスと
 ずれる（置換はバイト列で行う）。また、この方法は**文字列連結以外の理由で失敗している
-`+` も書き換えてしまう** — `s2_missing_reply.abcl` の `print(x + 1)` は
+`+` も書き換えてしまう** — `s2_missing_reply.aipl` の `print(x + 1)` は
 `x` が `unit` だから失敗する意図的な負例なので、手で戻した。
 
 string 由来の曖昧性は消えたが、`int`/`float` の曖昧性は残る。
@@ -168,7 +168,7 @@ var r = now c.m("hello");
   結線後: type mismatch
 ```
 
-影響は57本中2本で、どちらも真陽性だった。`abclc/Hello.abcl` は
+影響は57本中2本で、どちらも真陽性だった。`abclc/Hello.aipl` は
 `float count` に `new Hello(5)`（int）という本物の不整合で、`new Hello(5.)` に直した。
 
 注意: メソッドの引数は**単相**である。スキームの引数型変数は generalize されず

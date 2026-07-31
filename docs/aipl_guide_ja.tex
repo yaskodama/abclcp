@@ -159,7 +159,7 @@ REPL コマンドを書いたファイルを \texttt{-f} に渡す。
 
 \begin{term}
 cat > run.repl <<'EOF'
-load docs/samples/guide/g2_now_future.abcl
+load docs/samples/guide/g2_now_future.aipl
 compile
 EOF
 ./src/abclrepl_thread -q -f run.repl < /dev/null
@@ -171,19 +171,19 @@ awaited = 20
 v=7
 \end{term}
 
-\textbf{\texttt{-f} に \texttt{.abcl} を直接渡してはいけない。}
+\textbf{\texttt{-f} に \texttt{.aipl} を直接渡してはいけない。}
 REPL コマンドとして 1 行ずつ解釈されてクラス定義が読まれず、
 \texttt{Actor xxx not found} になる。必ず \texttt{load} と \texttt{compile} を書く。
 
 \subsection{型検査だけを走らせる}
 
 REPL は SDL に依存するので、型検査専用の小さなドライバを別に用意している
-（\S\ref{sec:tc}）。ビルドすると \texttt{./tc file.abcl} で
+（\S\ref{sec:tc}）。ビルドすると \texttt{./tc file.aipl} で
 戻り値型・効果・シグネチャの表が出る。
 
 \begin{term}
-$ ./tc docs/samples/guide/g6_effects.abcl
-=== g6_effects.abcl ===
+$ ./tc docs/samples/guide/g6_effects.aipl
+=== g6_effects.aipl ===
 [OK] type check passed
 [method return types (inferred from reply)]
   Counter#bump -> int
@@ -632,7 +632,7 @@ class Controller {
 \textbf{既知の穴。} \texttt{now} を \texttt{future} と \texttt{await} に
 分けて書くと、この検査を\emph{逃れる}。実装は \texttt{now} 送信の地点でしか
 伝播の辺を張らず、\texttt{await} では伝播させていないためである。
-再現は \texttt{docs/samples/}\allowbreak\texttt{soundness2\_effect\_gap.abcl}
+再現は \texttt{docs/samples/}\allowbreak\texttt{soundness2\_effect\_gap.aipl}
 にある。
 修正方針（\ty{future} の型に効果を載せる）は第 2 版の報告書に書いてある。
 \end{quote}
@@ -764,7 +764,7 @@ HTTP から渡される引数は文字列を \ty{int} $\to$ \ty{float} $\to$ \ty
 
 \section{g1: クラス・フィールド・\texttt{send}・文字列連結}
 
-\lstinputlisting{samples/guide/g1_hello.abcl}
+\lstinputlisting{samples/guide/g1_hello.aipl}
 
 \begin{term}
 hello, AIPL
@@ -784,7 +784,7 @@ tick 2
 
 \section{g2: \texttt{now} / \texttt{future} / \texttt{await} と注釈}
 
-\lstinputlisting{samples/guide/g2_now_future.abcl}
+\lstinputlisting{samples/guide/g2_now_future.aipl}
 
 \begin{term}
 twice = 43
@@ -806,7 +806,7 @@ v=7
 
 \section{g3: 複数アクターと、アクターを跨いだ \texttt{now}}
 
-\lstinputlisting{samples/guide/g3_actors.abcl}
+\lstinputlisting{samples/guide/g3_actors.aipl}
 
 \begin{term}
 ok, left=7
@@ -832,7 +832,7 @@ sold out
 \section{g4: \texttt{select} と \texttt{reply} の帰属}
 \label{sec:g4}
 
-\lstinputlisting{samples/guide/g4_select.abcl}
+\lstinputlisting{samples/guide/g4_select.aipl}
 
 \begin{term}
 direct:1
@@ -852,7 +852,7 @@ timed out
 
 \section{g5: 外部公開と注釈の必須化}
 
-\lstinputlisting{samples/guide/g5_web.abcl}
+\lstinputlisting{samples/guide/g5_web.aipl}
 
 このプログラムは型検査を通る。\texttt{say} の注釈を外すと次のようになる。
 
@@ -872,7 +872,7 @@ $ curl -s -X POST http://localhost:8080/api/x/echo \
 
 \section{g6: 効果注釈と伝播}
 
-\lstinputlisting{samples/guide/g6_effects.abcl}
+\lstinputlisting{samples/guide/g6_effects.aipl}
 
 \begin{term}
 1
@@ -899,7 +899,7 @@ n = 1
 
 \section{g7: 期限付き \texttt{now} / \texttt{await}}
 
-\lstinputlisting{samples/guide/g7_deadline.abcl}
+\lstinputlisting{samples/guide/g7_deadline.aipl}
 
 \begin{term}
 fast = 42
@@ -923,7 +923,7 @@ await = 10
 
 \section{g8: 等値比較・単項マイナス・真偽値リテラル}
 
-\lstinputlisting{samples/guide/g8_bool_equality.abcl}
+\lstinputlisting{samples/guide/g8_bool_equality.aipl}
 
 \begin{term}
 literal true ok
@@ -982,7 +982,7 @@ REPL コマンドを書いたファイルを \texttt{-f} に渡す。
 
 \begin{term}
 cat > run.repl <<'EOF'
-load docs/samples/guide/g7_deadline.abcl
+load docs/samples/guide/g7_deadline.aipl
 compile
 EOF
 ./src/abclrepl_thread -q -f run.repl < /dev/null
@@ -1003,7 +1003,7 @@ ocamlfind ocamlc -package unix -thread -linkpkg -w -a -I src -o tc \
   src/infer.cmo src/typecheck.cmo src/parser.cmo src/lexer.cmo \
   docs/samples/reply_inference/tc_main.ml
 
-./tc docs/samples/guide/g3_actors.abcl
+./tc docs/samples/guide/g3_actors.aipl
 \end{term}
 
 推論・宣言された戻り値型の表、メソッドごとの効果、
@@ -1015,7 +1015,7 @@ ocamlfind ocamlc -package unix -thread -linkpkg -w -a -I src -o tc \
 突き合わせるハーネスがある。
 
 \begin{term}
-python3 scripts/type_runtime_diff.py abclc/*.abcl docs/samples/guide/*.abcl
+python3 scripts/type_runtime_diff.py abclc/*.aipl docs/samples/guide/*.aipl
 \end{term}
 
 処理系側は \texttt{AIOS\_TYPE\_TRACE=1} のとき \texttt{reply} のたびに

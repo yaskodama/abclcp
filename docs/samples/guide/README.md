@@ -5,11 +5,11 @@
 
 | ファイル | 扱う内容 |
 |---|---|
-| `g1_hello.abcl` | クラス・フィールド・`init`・`send`・文字列連結 `++` |
-| `g2_now_future.abcl` | `now` / `future` / `await`、戻り値型注釈と推論 |
-| `g3_actors.abcl` | 複数アクター、アクターを跨いだ `now`、全パス被覆検査 |
-| `g4_select.abcl` | `select` / `case` / `timeout`、case の `reply` の帰属 |
-| `g5_web.abcl` | `web_listen` / `web_expose` と注釈の必須化 |
+| `g1_hello.aipl` | クラス・フィールド・`init`・`send`・文字列連結 `++` |
+| `g2_now_future.aipl` | `now` / `future` / `await`、戻り値型注釈と推論 |
+| `g3_actors.aipl` | 複数アクター、アクターを跨いだ `now`、全パス被覆検査 |
+| `g4_select.aipl` | `select` / `case` / `timeout`、case の `reply` の帰属 |
+| `g5_web.aipl` | `web_listen` / `web_expose` と注釈の必須化 |
 
 負例（通らないことを確認するもの）は `../reply_inference/` にある。
 
@@ -22,20 +22,20 @@ ocamlfind ocamlc -package unix -thread -linkpkg -w -a -I src -o tc \
   src/infer.cmo src/typecheck.cmo src/parser.cmo src/lexer.cmo \
   docs/samples/reply_inference/tc_main.ml
 
-for f in docs/samples/guide/g*.abcl; do ./tc "$f"; done
+for f in docs/samples/guide/g*.aipl; do ./tc "$f"; done
 ```
 
 ## 実行
 
 ```sh
 cat > run.repl <<'EOF'
-load docs/samples/guide/g2_now_future.abcl
+load docs/samples/guide/g2_now_future.aipl
 compile
 EOF
 ./src/abclrepl_thread -q -f run.repl < /dev/null
 ```
 
-`g5_web.abcl` は `web_listen(8080)` で待ち受けに入るので、別の端末から:
+`g5_web.aipl` は `web_listen(8080)` で待ち受けに入るので、別の端末から:
 
 ```sh
 curl -s -X POST http://localhost:8080/api/x/echo -d 'method=say&args=hi'

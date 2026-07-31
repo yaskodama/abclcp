@@ -6,7 +6,7 @@ ABCL/c+ AIOS から Gemini API を呼び出す最小経路。
 
 ## Key Handling
 
-API key はソースや `.abcl` サンプルに保存しない。
+API key はソースや `.aipl` サンプルに保存しない。
 実行時に環境変数 `GEMINI_API_KEY` から読む。
 
 ```sh
@@ -32,14 +32,14 @@ gemini_generate(prompt)  // string
 ```sh
 cd src
 opam exec -- make
-printf 'load ../abclc/gemini_single_ai.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/gemini_single_ai.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
 AIOS agent sample:
 
 ```sh
-printf 'load ../abclc/aios_gemini_agent.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_gemini_agent.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
@@ -49,7 +49,7 @@ printf 'load ../abclc/aios_gemini_agent.abcl\ncompile\nquit\n' | \
 Multi-AI sample:
 
 ```sh
-printf 'load ../abclc/aios_multi_gemini.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_multi_gemini.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
@@ -61,7 +61,7 @@ Free tier quota が厳しい場合は、1回の Gemini 呼び出しで複数AI�
 シミュレートするサンプルを使う。
 
 ```sh
-printf 'load ../abclc/aios_multi_gemini_onecall.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_multi_gemini_onecall.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 

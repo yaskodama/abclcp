@@ -6,7 +6,7 @@
 //   - select の rho 帰属   case place(k) の reply は serve ではなく place へ返る
 //   - reply からの推論     注釈の無い twice は従来どおり推論される (-> int)
 //
-// これを外部公開した版が s12_service_exposed.abcl。
+// これを外部公開した版が s12_service_exposed.aipl。
 
 class Stock {
   var n = 10;

@@ -23,7 +23,7 @@ Coq 形式化は [coq/AbclSoundness.v](/Users/kodamay/aios/abclcp/coq/AbclSoundn
 - `src/typing_env.ml`: primitive と overload を含む型環境。
 - `src/infer.ml`: 型推論・型検査本体。
 - `src/eval_thread.ml`: actor runtime、mailbox、future、reply、session protocol runtime。
-- `abclc/*.abcl`: サンプルプログラム。
+- `abclc/*.aipl`: サンプルプログラム。
 - `docs/AIOS_LANGUAGE_DESIGN.md`: AIOS 言語としての設計方針。
 
 現在の README は、ABCL/c+ を actor-first AI-OS 実装へ成長させる作業 baseline として位置づけている。特に `class` / `new` / `send` モデルを基礎に、kernel service、UI component、web endpoint、model adapter、memory service、tool adapter、agent を actor として統一する方針が示されている。

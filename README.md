@@ -10,7 +10,7 @@ AI-OS implementation.
 - REPL entry point: `src/repl_thread.ml`
 - Parser/lexer sources: `src/parser.mly`, `src/lexer.mll`
 - Checked-in generated parser/lexer baseline: `src/parser.ml`, `src/lexer.ml`
-- Existing samples: `abclc/*.abcl`
+- Existing samples: `abclc/*.aipl`
 - AI-OS design notes: `docs/AIOS_LANGUAGE_DESIGN.md`
 - AIOS kernel notes: `docs/AIOS_KERNEL.md`
 
@@ -71,42 +71,42 @@ opam exec -- make smoke
 ```sh
 cd src
 opam exec -- make
-printf 'load ../abclc/aios_kernel.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_kernel.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
 Service registry smoke test:
 
 ```sh
-printf 'load ../abclc/aios_services.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_services.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
 Standard services smoke test:
 
 ```sh
-printf 'load ../abclc/aios_standard_services.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_standard_services.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
 Agent loop smoke test:
 
 ```sh
-printf 'load ../abclc/aios_agent.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_agent.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
 Three actor cooperative solve:
 
 ```sh
-printf 'load ../abclc/aios_three_actor_solve.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_three_actor_solve.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread -q
 ```
 
 Larger Japanese cooperative solve:
 
 ```sh
-printf 'load ../abclc/aios_larger_problem_solve_ja.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_larger_problem_solve_ja.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread -q
 ```
 
@@ -178,21 +178,21 @@ sh scripts/run_remote_reviewer_client_ja.sh
 Kernel memory smoke test:
 
 ```sh
-printf 'load ../abclc/aios_memory_store.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_memory_store.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
 Task manager smoke test:
 
 ```sh
-printf 'load ../abclc/aios_task_manager.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_task_manager.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
 Quiet REPL smoke test:
 
 ```sh
-printf 'load ../abclc/aios_quiet_demo.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_quiet_demo.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread -q
 ```
 
@@ -200,7 +200,7 @@ Gemini single-AI smoke test:
 
 ```sh
 export GEMINI_API_KEY='...'
-printf 'load ../abclc/gemini_single_ai.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/gemini_single_ai.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
@@ -208,7 +208,7 @@ Gemini AIOS agent smoke test:
 
 ```sh
 export GEMINI_API_KEY='...'
-printf 'load ../abclc/aios_gemini_agent.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_gemini_agent.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
@@ -216,14 +216,14 @@ Model router smoke test:
 
 ```sh
 export GEMINI_API_KEY='...'
-printf 'load ../abclc/aios_model_router.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_model_router.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
 Offline workflow smoke test:
 
 ```sh
-printf 'load ../abclc/aios_workflow_mock.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_workflow_mock.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread -q
 ```
 
@@ -231,7 +231,7 @@ Gemini workflow smoke test:
 
 ```sh
 export GEMINI_API_KEY='...'
-printf 'load ../abclc/aios_workflow_gemini.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_workflow_gemini.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread -q
 ```
 
@@ -239,7 +239,7 @@ Multi-Gemini AIOS smoke test:
 
 ```sh
 export GEMINI_API_KEY='...'
-printf 'load ../abclc/aios_multi_gemini.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_multi_gemini.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
@@ -247,7 +247,7 @@ Quota-saving one-call multi-agent smoke test:
 
 ```sh
 export GEMINI_API_KEY='...'
-printf 'load ../abclc/aios_multi_gemini_onecall.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_multi_gemini_onecall.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
@@ -255,7 +255,7 @@ OpenAI single-AI smoke test:
 
 ```sh
 export OPENAI_API_KEY='...'
-printf 'load ../abclc/openai_single_ai.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/openai_single_ai.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 

@@ -1,0 +1,755 @@
+% アクター指向言語における「1アクター = 1実行担体」モデルの対応表
+%   lualatex -interaction=nonstopmode actor_process_models_ja.tex   （2回）
+\documentclass[11pt,a4paper]{ltjsarticle}
+\usepackage{amsmath,amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{pdflscape}
+\usepackage[hidelinks]{hyperref}
+\geometry{margin=20mm}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{gray},
+  breaklines=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  commentstyle=\itshape\color{gray!130},
+}
+\lstnewenvironment{term}{\lstset{language={},basicstyle=\ttfamily\footnotesize}}{}
+
+\newcommand{\dg}{\textsuperscript{\dag}}
+\newcommand{\yes}{\textbf{○}}
+\newcommand{\no}{×}
+
+\title{アクター指向言語における\\「1 アクター $=$ 1 実行担体」モデルの対応表\\
+{\large ---\ Erlang の「プロセス」・OS スレッド・軽量プロセスの区別と、
+AIPL/ABCL$^{c}$+ の位置づけ ---}}
+\author{ABCL$^{c}$+ / AIOS 処理系（\texttt{yaskodama/abclcp}）}
+\date{2026年07月31日}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+「Erlang などのアクター言語に、アクター 1 つにつきプロセス 1 つに限定した
+モデルはあるか」という問いに答える。結論を先に書くと、
+\textbf{ある。ただし「プロセス」の語が指すものを 3 層に分けないと問いが定まらない。}
+Erlang は確かに「1 アクター $=$ 1 プロセス」だが、その\emph{プロセス}は
+OS のプロセスでもスレッドでもなく BEAM の軽量プロセスである。
+一方、\textbf{1 アクターを 1 本の OS スレッドに固定する}処理系も、
+\textbf{1 アクターを 1 個の OS プロセスに固定する}処理系も実在する。
+前者の代表は Celluloid・Pykka・AmbientTalk・本処理系 AIPL、
+後者の代表は Ray と Thespian である。
+Akka と CAF は既定では多重化しつつ、\emph{オプトインで}1 対 1 に切り替えられる。
+
+本書は主要なアクター指向言語・処理系を横断して、
+(1) アクターが載る実行担体、(2) 1 対 1 に専有するか、
+(3) アクター本体がブロックできるか、(4) 実用上のアクター数、
+の 4 点で対応表を作る（\S\ref{sec:table}）。
+そのうえで、なぜ 1 対 1 の OS スレッド束縛が稀なのか（コスト、\S\ref{sec:cost}）、
+それでもなぜ選ぶのか（同期待ちが書けること、\S\ref{sec:why}）を述べ、
+最後に AIPL の設計上の位置づけを示す（\S\ref{sec:aipl}）。
+
+AIPL は 1 アクターにつき 1 本の OS スレッドを生成する。
+本書のために実測したところ、
+\textbf{4000 アクターまでは生成でき、5000 で \texttt{Thread.create:
+Resource temporarily unavailable} で失敗した}。
+上限は macOS の \texttt{kern.num\_taskthreads} $=4096$ である。
+この数字がこのモデルの代償を端的に表している。
+\end{abstract}
+
+\tableofcontents
+
+\section{問いの整理 --- 「プロセス」は 3 層ある}
+
+アクター言語の文献で「プロセス」と呼ばれるものには、
+コストが 3 桁以上違う 3 つの層がある。この区別をしないと
+「1 アクター 1 プロセス」という言明は意味を持たない。
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{3.4cm}p{5.0cm}p{4.4cm}l@{}}
+\toprule
+層 & 何か & 1 個あたりの費用 & 実用上の個数 \\
+\midrule
+OS プロセス
+  & 独立したアドレス空間。カーネルが管理
+  & 数 MB $\sim$、生成 ms オーダー & $10^{2}$ \\
+OS スレッド (pthread)
+  & アドレス空間を共有。カーネルが管理・プリエンプト
+  & スタック 512\,KB (macOS) $\sim$ 8\,MB (Linux) & $10^{3}$ \\
+軽量プロセス／ グリーンスレッド
+  & 言語ランタイムが管理する私有スタック。M:N で OS スレッドへ載せる
+  & BEAM で 326 語（$\approx$2.6\,KB）& $10^{6}$ \\
+ターン（スタックを 持たない）
+  & 「1 メッセージ $=$ 1 関数呼び出し」。実行の間だけプールのスレッドを借りる
+  & Pony のアクターで $\approx$240\,B & $10^{6\sim7}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Erlang の「プロセス」は 3 段目である。}
+Erlang は確かに「1 アクター $=$ 1 プロセス」を厳密に守るが、
+それは OS から見れば何でもない。BEAM はコア数と同じだけの
+スケジューラスレッドを立て、その上に $10^{6}$ 個の軽量プロセスを
+M:N で載せる。したがって
+「Erlang はアクターごとにプロセスを持つから重いのでは」という直感は誤りで、
+むしろ\emph{軽いからこそ}1 対 1 を貫ける。
+
+問いを言い直すと、次の 2 つになる。
+
+\begin{enumerate}
+\item \textbf{OS の実行資源（スレッド／プロセス）を 1 アクターに専有させる
+  処理系はあるか。} $\rightarrow$ ある（\S\ref{sec:oneone}）。
+\item \textbf{それを言語の既定にしている処理系はあるか。} $\rightarrow$
+  ごく少数だが、ある。AIPL はその 1 つである。
+\end{enumerate}
+
+\section{対応表の読み方}
+
+対応表では次の 4 軸で分類する。
+
+\begin{description}
+\item[実行担体] アクターが実行されるとき、何の上で走るか。
+  OS プロセス／OS スレッド／軽量プロセス／プールのターン。
+\item[1 対 1 か] その担体をアクターが\emph{専有}するか、
+  多数のアクターで多重化するか。\yes\ は専有、\no\ は多重化。
+\item[ブロック可] アクターのメソッド本体の\emph{途中}で
+  同期的に待てるか。待つには私有スタックが要る。
+  待てない処理系（run-to-completion）では、
+  同期呼び出しは継続・コールバック・\texttt{await} に書き換える必要がある。
+\item[実用規模] 1 ノードで無理なく作れるアクター数の桁。
+\end{description}
+
+この 4 軸を選んだのは、\textbf{第 3 軸が他の 3 つを決めてしまう}からである。
+アクター本体の途中で待てるようにすると、待っている間の呼び出し状態を
+保持する場所が要る。その場所として OS スレッドのスタックを使えば
+第 1 軸と第 2 軸が「OS スレッド・専有」に決まり、
+その結果として第 4 軸がカーネルの上限で頭打ちになる。
+逆に待てない設計（run-to-completion）にすれば担体を専有する必要が無くなり、
+アクターは単なるオブジェクトになって $10^{6}$ 個作れる。
+つまりこの表は、実質的には\textbf{「同期的に待てるか」という 1 つの設計判断が
+どこまで波及するか}の一覧である。この点は \S\ref{sec:why} で改めて述べる。
+
+なお「メールボックスの選択受信ができるか」「監視ツリーがあるか」
+「メッセージ順序をどこまで保証するか」といった軸もありうるが、
+これらは担体の選択とは概ね独立に決められるので、本表では扱わない
+（AIPL と Erlang の比較としては \S\ref{sec:aipl} の末尾に挙げた）。
+
+\begin{quote}\small
+凡例：\dg\ を付けた行は、標準的な文献・処理系の知識にもとづく記述で、
+本書の作成にあたって一次資料での再確認を\emph{していない}ものである。
+\dg\ の無い行は \S\ref{sec:src} に挙げた資料で確認した。
+AIPL の行は実装のソースと実測による。
+\end{quote}
+
+\begin{landscape}
+\section{対応表}
+\label{sec:table}
+
+\subsection{アクターが言語の構文である言語}
+
+\begin{longtable}{@{}p{3.3cm}p{4.6cm}>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{1.5cm}p{6.0cm}@{}}
+\toprule
+言語（初出） & 実行担体 & 1 対 1 か & ブロック可 & 実用規模 & 備考 \\
+\midrule
+\endfirsthead
+\toprule
+言語（初出） & 実行担体 & 1 対 1 か & ブロック可 & 実用規模 & 備考 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+
+Act1 / Act2 / Act3 (1981--)\dg
+  & 概念上のみ。実装は Lisp 上のスケジューラ
+  & ---
+  & ---
+  & ---
+  & 理論的なアクターモデルの原型。担体の議論をしていない \\
+
+ABCL/1 (1986)\dg
+  & 「各オブジェクトが固有の活動を持つ」。実装は Lisp の軽量プロセス
+  & 概念上 \yes
+  & \yes\ (\texttt{now})
+  & $10^{3}$
+  & \texttt{past}/\texttt{now}/\texttt{future} の 3 送信。AIPL の直接の祖先 \\
+
+Concurrent Smalltalk (1987)\dg
+  & 処理系の軽量プロセス
+  & \no
+  & \yes
+  & $10^{4}$
+  & \\
+
+\textbf{Erlang} (1986/98)
+  & \textbf{BEAM 軽量プロセス}。コア数個のスケジューラスレッドへ M:N
+  & \yes\ （軽量プロセスと）
+  & \yes\ (\texttt{receive})
+  & $10^{6}$
+  & 新規プロセスは 326 語。既定の上限 \texttt{+P 262144}。選択的受信あり。
+    \textbf{問いの「1 アクター 1 プロセス」はここでは成立するが、
+    プロセス $=$ 軽量プロセス} \\
+
+Elixir / Gleam / LFE\dg
+  & 同上（BEAM を共有）
+  & \yes
+  & \yes
+  & $10^{6}$
+  & 実行モデルは Erlang と同一 \\
+
+E (1997)
+  & \textbf{vat} $=$ 1 OS スレッド。1 つの vat に多数のオブジェクトが載る
+  & \no
+  & \no
+  & ---
+  & 1 vat に $N$ 個のオブジェクトが載るので、担体はアクター単位ではない。
+    非同期送信のみで、同期呼び出しと構文で区別する \\
+
+AmbientTalk (2006)
+  & アクター $=$ イベントループ $=$ 1 JVM スレッド
+  & \yes
+  & \no
+  & $10^{2\sim3}$
+  & E の vat モデルを継承。
+    \textbf{1 アクター 1 OS スレッドの言語レベルの例} \\
+
+SALSA (1999)
+  & 初期は 1 アクター 1 Java スレッド。SALSA Lite で
+    ステージ（スレッド）に多数のアクターを載せる方式へ
+  & 初期 \yes\ $\rightarrow$ \no
+  & \yes\dg
+  & $10^{3}\rightarrow10^{5}$
+  & \textbf{同一言語がスレッド専有から多重化へ移った実例} \\
+
+Scala Actors (2006, 2.11 で非推奨)
+  & \texttt{receive} $=$ スレッドを占有 /
+    \texttt{react} $=$ 継続クロージャのみ
+  & \textbf{選べる}
+  & \texttt{receive} なら \yes
+  & \texttt{react} で $10^{5}$
+  & \textbf{同じ言語の中に両モデルが並置された唯一に近い例}。
+    Haller \& Odersky「Actors that Unify Threads and Events」 \\
+
+Io (2002)\dg
+  & コルーチン（言語ランタイムが管理）
+  & \yes\ （コルーチンと）
+  & \yes
+  & $10^{4}$
+  & オブジェクトが動的にアクター化する \\
+
+Pony (2015)
+  & 担体を持たない。behaviour は run-to-completion で
+    コア数個のスケジューラが work-stealing
+  & \no
+  & \no
+  & $10^{6\sim7}$
+  & ブロックを設計として禁じている。空アクター $\approx$240\,B。
+    参照能力型でデータ競合が起こらないことを保証 \\
+
+Encore (2015)\dg
+  & Pony ランタイム上の active object
+  & \no
+  & \no\ (future)
+  & $10^{6}$
+  & 能力型 $+$ 並列コンビネータ \\
+
+Swift \texttt{actor} (2021)
+  & Executor 上の Job。既定は協調スレッドプール（コア数程度）
+  & \no
+  & \no\ (\texttt{await})
+  & $10^{6}$
+  & カスタム executor でスレッド固定は\emph{可能}だが既定ではない。
+    再入（reentrancy）を許す \\
+
+Motoko (2019)
+  & canister $=$ アクター。1 メッセージずつ処理
+  & \yes\ (canister)
+  & \no\ (\texttt{await})
+  & ---
+  & \texttt{await} がメッセージを分割し commit point になる。
+    待ちが状態のコミット境界になるという珍しい意味論 \\
+
+Rebeca (2001)\dg
+  & モデル検査用。各 rebec が固有の制御を持つ
+  & 概念上 \yes
+  & ---
+  & ---
+  & 実行より検証が目的。Timed Rebeca は時間も持つ \\
+
+D \texttt{std.concurrency} (2010)\dg
+  & \texttt{spawn} が \textbf{OS スレッド}を作る
+  & \yes
+  & \yes\ (\texttt{receive})
+  & $10^{3}$
+  & 標準ライブラリだが言語と密着。
+    \textbf{1 アクター 1 OS スレッドの例} \\
+
+\textbf{AIPL / ABCL$^{c}$+} (2025--26)
+  & \textbf{OS スレッド (pthread)}。\texttt{new} ごとに \texttt{Thread.create}
+  & \textbf{\yes（既定かつ唯一）}
+  & \textbf{\yes\ (\texttt{now})}
+  & \textbf{実測 4096}
+  & OCaml 5.1 の \texttt{Thread}。同一ドメイン内なので
+    \emph{並行だが並列ではない}。\S\ref{sec:aipl} \\
+\end{longtable}
+
+\subsection{ライブラリ・フレームワーク}
+
+\begin{longtable}{@{}p{3.3cm}p{4.6cm}>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{1.5cm}p{6.0cm}@{}}
+\toprule
+処理系（言語） & 実行担体 & 1 対 1 か & ブロック可 & 実用規模 & 備考 \\
+\midrule
+\endfirsthead
+\toprule
+処理系（言語） & 実行担体 & 1 対 1 か & ブロック可 & 実用規模 & 備考 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+
+Akka / Akka.NET (JVM/.NET)
+  & 既定は共有スレッドプール（dispatcher、8--64 スレッド）。
+    \textbf{\texttt{PinnedDispatcher} でアクター専用スレッド}
+  & 既定 \no ／可 \yes
+  & \no\ (\texttt{ask})
+  & $10^{6}$
+  & run-to-completion なので待てない。同期呼び出しは \texttt{ask} が返す
+    Future で書く。「重要なアクターに専用スレッドを与える」
+    「バルクヘッドを作る」ための機能として 1 対 1 が用意されている \\
+
+CAF (C++)
+  & 既定は協調スケジューリング（数百バイト）。
+    \textbf{\texttt{spawn<detached>} で専有スレッド}
+  & 既定 \no ／可 \yes
+  & detached なら \yes
+  & $10^{6}$
+  & ブロッキング I/O を呼ぶアクターを他から隔離する用途。
+    \textbf{「ブロックしたいなら専有スレッド」という対応関係が明示的} \\
+
+Orleans (.NET)\dg
+  & 仮想アクター（grain）。ターン単位でスレッドプール上に活性化
+  & \no
+  & \no\ (\texttt{await})
+  & $10^{6}$
+  & 使われていない grain は非活性化される。担体を持たないので当然 \\
+
+Proto.Actor / Dapr Actors\dg
+  & 同上（ターンベース）
+  & \no
+  & \no
+  & $10^{6}$
+  & \\
+
+Actix (Rust)\dg
+  & Arbiter（$=$1 スレッド）に多数のアクター。
+    専用 Arbiter を与えれば 1 対 1
+  & 既定 \no ／可 \yes
+  & \no
+  & $10^{6}$
+  & \\
+
+Ractor / Bastion (Rust)\dg
+  & tokio タスク／ランタイムの軽量プロセス
+  & \no
+  & \no
+  & $10^{6}$
+  & Bastion は Erlang の監視ツリーを模す \\
+
+Cloud Haskell\dg
+  & \texttt{forkIO} 軽量スレッド（HEC へ M:N）
+  & \yes\ （軽量スレッドと）
+  & \yes
+  & $10^{6}$
+  & Erlang に最も近い構図 \\
+
+\textbf{Ray} (Python)
+  & \textbf{1 アクター $=$ 1 専有 OS プロセス（ワーカー）}
+  & \textbf{\yes（OS プロセス）}
+  & \yes
+  & $10^{2\sim3}$／ノード
+  & タスクと違いワーカーを再利用しない。
+    \textbf{問いに対する最も直接的な「はい」} \\
+
+\textbf{Thespian} (Python)
+  & \texttt{multiprocTCPBase} 等では \textbf{1 アクター 1 OS プロセス}。
+    \texttt{simpleSystemBase} は単一プロセス
+  & \textbf{選べる}
+  & \yes
+  & $10^{2}$
+  & 同一のアクターコードのまま担体だけ差し替えられる設計 \\
+
+\textbf{Pykka} (Python)
+  & \textbf{\texttt{ThreadingActor} $=$ 1 \texttt{threading.Thread}}
+  & \textbf{\yes}
+  & \yes
+  & $10^{3}$
+  & 「各 ThreadingActor は通常のスレッドで実行される」 \\
+
+\textbf{Celluloid} (Ruby)
+  & \textbf{1 アクター $=$ 1 Ruby スレッド}。
+    メソッド呼び出しごとに Fiber で待ちを退避
+  & \textbf{\yes}
+  & \yes
+  & $10^{3}$
+  & 「2000 個以上のアクターが作れない」という報告が実際にある。
+    \textbf{このモデルの代償がそのまま現れた例} \\
+
+Nact / Comedy (JS)\dg
+  & 単一のイベントループ
+  & \no
+  & \no
+  & $10^{5}$
+  & \\
+\end{longtable}
+
+\subsection{参考：アクターではないが対比される仕組み}
+
+\begin{longtable}{@{}p{3.3cm}p{4.6cm}>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{1.5cm}p{6.0cm}@{}}
+\toprule
+ & 実行担体 & 1 対 1 か & ブロック可 & 実用規模 & 備考 \\
+\midrule
+\endfirsthead
+\endhead
+\bottomrule
+\endfoot
+
+Go (goroutine $+$ channel)\dg
+  & goroutine（初期スタック 2\,KB、M:N）
+  & 慣用的に \yes
+  & \yes
+  & $10^{6}$
+  & CSP であってアクターではない（宛先が名前でなくチャネル）。
+    「1 状態 $=$ 1 goroutine」の書き方が事実上アクター \\
+
+Vert.x (JVM)\dg
+  & verticle をイベントループスレッドに固定。1 loop : $N$ verticle
+  & \no
+  & \no
+  & $10^{5}$
+  & \\
+
+Java 21 virtual threads\dg
+  & JVM 管理の軽量スレッド
+  & ---
+  & \yes
+  & $10^{6}$
+  & \textbf{「1 アクター 1 スレッド」の経済性を変える}。
+    \S\ref{sec:why} \\
+\end{longtable}
+\end{landscape}
+
+\section{「1 アクター $=$ 1 OS 実行資源」を採る処理系（抽出）}
+\label{sec:oneone}
+
+対応表から該当するものだけを抜き出すと、次のようになる。
+
+\begin{center}
+\small
+\begin{tabular}{@{}llp{7.4cm}@{}}
+\toprule
+ & 担体 & 処理系 \\
+\midrule
+\textbf{既定でそう} & OS プロセス & Ray（Python）、Thespian（multiproc 系） \\
+                    & OS スレッド & \textbf{AIPL/ABCL$^{c}$+}、AmbientTalk、
+                                    Celluloid（Ruby）、Pykka \texttt{ThreadingActor}、
+                                    D \texttt{std.concurrency}\dg、
+                                    初期の SALSA \\
+\midrule
+\textbf{オプトインで} & OS スレッド & Akka \texttt{PinnedDispatcher}、
+                                      CAF \texttt{spawn<detached>}、
+                                      Actix の専用 Arbiter\dg、
+                                      旧 Scala Actors の \texttt{receive}、
+                                      Swift のカスタム executor \\
+\midrule
+\textbf{軽量プロセスと 1 対 1} & 言語ランタイム
+                    & Erlang / Elixir / Gleam / LFE、Cloud Haskell\dg、Io\dg \\
+\midrule
+\textbf{担体を専有しない} & プールのターン
+                    & Pony、Encore、Swift（既定）、Akka（既定）、CAF（既定）、
+                      Orleans、Proto.Actor、Dapr、Nact \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+読み取れることは 3 つある。
+
+\begin{enumerate}
+\item \textbf{OS スレッド専有は、言語の既定としては少数派である。}
+  該当するのは研究用言語（AmbientTalk、初期 SALSA、AIPL）と、
+  動的言語のライブラリ（Celluloid、Pykka）に偏る。
+\item \textbf{大規模実用系はすべてオプトインにしている。}
+  Akka と CAF は、既定では多重化しつつ
+  「ブロッキング I/O を呼ぶアクターだけ隔離する」ために
+  専有スレッドを用意している。つまり\emph{専有は例外的な道具}という位置づけである。
+\item \textbf{分散フレームワークでは 1 アクター 1 OS プロセスが主流になる。}
+  Ray と Thespian がそうで、これは並列性（GIL の回避）と
+  障害隔離のためであって、アクターモデルの要請ではない。
+\end{enumerate}
+
+\section{なぜ稀か --- コスト}
+\label{sec:cost}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{6.2cm}l@{}}
+\toprule
+担体 & 1 個あたり & 出典・備考 \\
+\midrule
+BEAM 軽量プロセス & 326 語（初期ヒープ 233 語を含む）
+  & Erlang 効率化ガイド \\
+Pony のアクター & $\approx$240\,B（64bit の空アクター）
+  & Pony FAQ \\
+goroutine & 初期スタック 2\,KB\dg & \\
+OS スレッド & スタック 512\,KB (macOS) $\sim$ 8\,MB (Linux)、
+              加えてカーネル側の資源 & \\
+OS プロセス & 数 MB $\sim$ & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+差は容量よりも\textbf{カーネルが管理する資源には上限がある}ことに現れる。
+本書のために AIPL で実測した結果を挙げる。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+アクター数 & 生成の所要時間（プロセス起動込み） & 結果 \\
+\midrule
+1\,000  & 0.32 秒 & 成功 \\
+2\,000  & 1.03 秒 & 成功 \\
+3\,000  & 2.14 秒 & 成功 \\
+4\,000  & 3.66 秒 & 成功 \\
+5\,000  & --- & \textbf{\texttt{Thread.create: Resource temporarily unavailable}} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{term}
+$ sysctl kern.num_taskthreads
+kern.num_taskthreads: 4096
+\end{term}
+
+上限は明らかに OS のプロセスあたりスレッド数上限である。
+すなわち\textbf{このモデルではアクター数の上限が言語ではなくカーネルで決まる}。
+所要時間も超線形に伸びている（1000 個で 0.32 秒、4000 個で 3.66 秒）。
+
+同じ現象は他の処理系でも観測されていて、Celluloid には
+「自分のマシンでは 2000 個以上のアクター／スレッドを作れない」という
+報告がそのまま issue として残っている。
+Erlang が既定で $2^{18}=262\,144$ プロセスを許し、
+実測で $10^{6}$ を扱えるのとは 2 桁以上違う。
+
+\section{ではなぜ選ぶのか --- ブロックできること}
+\label{sec:why}
+
+コストが 2 桁以上不利なのに 1 アクター 1 スレッドを選ぶ理由は 1 つである。
+\textbf{アクター本体の途中で同期的に待てるようにするため}である。
+
+メソッドの途中で待つには、待っている間の\emph{呼び出し状態}をどこかに
+置かねばならない。置き場所は 3 つしかない。
+
+\begin{enumerate}
+\item \textbf{OS スレッドのスタック} --- 何も書き換えずに待てる。
+  代わりにアクター数が $10^{3}$ で頭打ちになる。
+  AIPL、Celluloid、Pykka、CAF の detached、Akka の PinnedDispatcher。
+\item \textbf{言語ランタイムの軽量プロセスのスタック} --- 待てて、かつ安い。
+  ただしランタイムを自前で持つ必要がある。Erlang、Go、Java 21 の virtual thread。
+\item \textbf{継続（クロージャ）} --- スタックを持たない。
+  代わりに\emph{待つ構文を書けない}ので、
+  \texttt{await} やコールバックへの書き換えが必要になる。
+  Pony、Swift、Akka、Orleans、Motoko。
+\end{enumerate}
+
+この三択が同じ言語の中に並置された例が、旧 Scala Actors の
+\texttt{receive}（スレッドを占有して待つ）と
+\texttt{react}（継続だけ残して待つ）である。
+Haller と Odersky の「Actors that Unify Threads and Events」は
+まさにこの選択を統一しようとした仕事で、
+「アクターはフルのスレッドスタックで中断することも、
+継続クロージャだけで中断することもできる」と述べている。
+第 1 の形がスレッドベース、第 2 の形がイベントベースである。
+
+CAF の \texttt{detached} も同じ対応関係を明示している。
+「ブロッキングなシステムコールを使うアクターはスレッドを止めて
+不均衡や飢餓を招くので、協調スケジューリングから外す」という説明で、
+\textbf{ブロックしたいなら専有スレッド}という交換条件がそのまま書かれている。
+
+\begin{quote}\small
+\textbf{Java 21 の virtual thread は、この経済性を変えつつある。}
+選択肢 2 が JVM の標準機能として使えるようになったので、
+「待てる」ことと「安い」ことが両立する。
+同じことは Go では以前から成り立っていた。
+OS スレッド専有が正当化される場面は、
+今後は「ランタイムを持たない／持てない言語」に限られていく可能性が高い。
+\end{quote}
+
+\section{AIPL / ABCL$^{c}$+ の位置づけ}
+\label{sec:aipl}
+
+\subsection{何をしているか}
+
+AIPL は \texttt{new C(...)} のたびに \texttt{Thread.create} を呼び、
+アクターごとに 1 本の OCaml スレッドを立てる
+（\texttt{src/eval\_thread.ml}）。
+アクターループはメールボックスからメッセージを取り出して逐次に処理し、
+\texttt{now} での待ちは条件変数でブロックする。
+
+\begin{lstlisting}[language={}]
+ignore (Thread.create (fun () -> actor_loop actor_inst) ());
+\end{lstlisting}
+
+正確には次の 2 点に注意が要る。
+
+\begin{itemize}
+\item OCaml 5.1 の \texttt{Thread} は\textbf{本物の OS スレッド}である。
+  したがってアクター数の上限は OS のスレッド数上限になる（実測 4096）。
+\item ただし本処理系は \texttt{Domain} を使っていないので、
+  すべてのスレッドが単一ドメインに属する。
+  OCaml のランタイムロックにより、\textbf{同時に OCaml コードを実行できるのは
+  1 本だけ}である。すなわち AIPL のアクターは
+  \emph{並行 (concurrent) だが並列 (parallel) ではない}。
+  コストは OS スレッドのぶん払っているが、
+  マルチコアの利得は現状では得ていない。
+\end{itemize}
+
+\subsection{なぜこの設計なのか}
+
+AIPL は ABCL/1 の \texttt{now}（同期送信）を言語の中心に据えている。
+
+\begin{lstlisting}[language={}]
+var left = now stock.take(k) timeout 100 else 0;
+if (left > 0) { reply("ok, left=" ++ left); } else { reply("sold out"); }
+\end{lstlisting}
+
+これは\textbf{メソッド本体の途中で待つ}構文である。
+\S\ref{sec:why} の三択でいえば選択肢 1 を採ったことになり、
+だから 1 アクター 1 OS スレッドになる。
+Pony や Swift のように継続へ分割する方式を採れば安くなるが、
+そのときは \texttt{now} という構文自体が書けなくなる
+（\texttt{await} と継続に置き換わる）。
+
+\subsection{代償が言語仕様に現れている}
+
+このモデルの代償は、AIPL では 2 か所に見える形で現れている。
+
+\begin{enumerate}
+\item \textbf{期限付きの待ちを導入せざるを得なかった。}
+  アクターが 1 台 1 スレッドで、待ちがそのスレッドをブロックする以上、
+  返信が来なければそのアクターは永久に停止する。
+  そこで \texttt{now ... timeout $n$ else $e$} を入れ、
+  待ちに上限を置いた。期限付きの待ちだけを使うプログラムでは
+  デッドロック自由が定理として言える。
+  \textbf{これは実行モデルの制約が型システムの設計を決めた例である。}
+\item \textbf{\texttt{now self.m()} を文法で禁止した。}
+  自分自身への同期送信は、自分がそのメソッドを処理中である以上
+  返信を作る主体がいないので必ず自己デッドロックになる。
+  1 アクター 1 スレッドだからこそ確実にそうなるので、構文として書けなくした。
+\end{enumerate}
+
+\subsection{他との比較でどこに立つか}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & AIPL & 対照 \\
+\midrule
+担体          & OS スレッド専有 & Erlang: 軽量プロセス専有 \\
+待てるか      & \yes（\texttt{now}）& Pony/Swift: \no \\
+上限          & 4096（カーネル）& Erlang: $10^{6}$ \\
+並列性        & \no（単一ドメイン）& Erlang/Pony: \yes（コア数） \\
+選択的受信    & \yes（\texttt{select}）& Akka: \no（stash で代用）\\
+待ちの期限    & \yes（言語機能）& 多くは API レベル（\texttt{ask} のタイムアウト）\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+対応表の中で AIPL に最も近いのは
+\textbf{AmbientTalk（1 アクター 1 JVM スレッド）}と
+\textbf{Celluloid（1 アクター 1 Ruby スレッド）}だが、
+両者と違って AIPL は\emph{同期待ちを言語の一級の構文として持ち、
+かつその期限を型検査で見る}。
+「1 アクター 1 OS スレッド」＋「同期待ちが書ける」＋
+「待ちの期限が静的に検査される」という組み合わせは、
+調べた範囲では他に見当たらない。
+
+\section{まとめ}
+
+\begin{enumerate}
+\item 「1 アクター $=$ 1 プロセス」は Erlang で成立するが、
+  その\emph{プロセス}は BEAM の軽量プロセスであって OS の資源ではない。
+\item OS の実行資源を 1 アクターに専有させるモデルは実在する。
+  OS プロセス単位では Ray と Thespian、
+  OS スレッド単位では AmbientTalk・Celluloid・Pykka・初期 SALSA・
+  D \texttt{std.concurrency}・AIPL。
+  Akka と CAF はオプトインとして持っている。
+\item 言語の\emph{既定}としてそうしている例は少数で、
+  研究用言語と動的言語のライブラリに偏る。
+  理由は単純にコストで、アクター数の上限がカーネルで決まってしまう
+  （AIPL の実測で 4096）。
+\item それでも選ぶ理由は「メソッド本体の途中で同期的に待てる」ことに尽きる。
+  待ち状態の置き場所がスレッドスタック／軽量プロセス／継続の三択であり、
+  ランタイムを持たない処理系は第 1 の選択肢しか採れない。
+\item AIPL はこの第 1 の選択肢を採った。その代償が
+  「待ちに期限を書かせる」という言語仕様として表に出ている。
+\end{enumerate}
+
+\section{出典}
+\label{sec:src}
+
+本文中で確認に用いた資料。
+
+\begin{itemize}\small
+\item Erlang System Documentation, \emph{Efficiency Guide --- Processes}（初期ヒープ 233 語、
+  新規プロセス 326 語）\\
+  \url{https://www.erlang.org/doc/system/eff_guide_processes.html}
+\item Ray Documentation, \emph{Actors}（各アクターが専有 Python プロセスで動く）\\
+  \url{https://docs.ray.io/en/latest/ray-core/actors.html}
+\item Akka Documentation, \emph{Dispatchers}（\texttt{PinnedDispatcher} は
+  アクターごとに 1 スレッドのプールを持つ）\\
+  \url{https://doc.akka.io/libraries/akka-core/current/typed/dispatchers.html}
+\item CAF Documentation, \emph{Actors}（協調スケジューリングと \texttt{detached}）\\
+  \url{https://actor-framework.readthedocs.io/en/stable/core/Actors.html}
+\item P. Haller, M. Odersky, \emph{Actors that Unify Threads and Events}, 2007
+  （\texttt{receive} と \texttt{react}、スレッドスタックと継続クロージャ）\\
+  \url{https://infoscience.epfl.ch/bitstreams/1b9cd67f-c907-4fac-8cfd-b0829b000dcf/download}
+\item Swift Concurrency（Executor と協調スレッドプール、再入）\\
+  \url{https://wwdcnotes.com/documentation/wwdc21-10254-swift-concurrency-behind-the-scenes/}
+\item Internet Computer Documentation, \emph{Actors and async data}
+  （canister $=$ アクター、\texttt{await} が commit point）\\
+  \url{https://internetcomputer.org/docs/motoko/main/writing-motoko/actors-async}
+\item AmbientTalk Tutorial, \emph{Concurrent Programming with Actors}
+  （E の vat モデル、イベントループスレッド）\\
+  \url{https://soft.vub.ac.be/amop/at/tutorial/actors}
+\item Pony FAQ, \emph{Runtime}（スケジューラはコア数、空アクター $\approx$240--256\,B）\\
+  \url{https://www.ponylang.io/faq/runtime/}
+\item Pykka Documentation, \emph{Threading}（\texttt{ThreadingActor} は
+  \texttt{threading.Thread} で実行される）\\
+  \url{https://pykka.readthedocs.io/en/release-2.x/runtimes/threading/}
+\item Thespian Documentation, \emph{Using Thespian}（system base による
+  プロセス／スレッドの違い）\\
+  \url{https://thespianpy.com/doc/using.html}
+\item Celluloid（各アクターは専用スレッド、メソッド呼び出しは Fiber）\\
+  \url{https://celluloid.io/} ／
+  \url{https://github.com/celluloid/celluloid/issues/116}（2000 個で頭打ちの報告）
+\item T. Desell, C. Varela, \emph{SALSA Lite: A Hash-Based Actor Runtime for
+  Efficient Local Concurrency}, 2014（ステージ方式への移行）\\
+  \url{https://link.springer.com/chapter/10.1007/978-3-662-44471-9_7}
+\item AIPL: 本リポジトリ \texttt{src/eval\_thread.ml}（\texttt{Thread.create}）、
+  および本書のための実測（macOS 26.5.2, OCaml 5.1.1,
+  \texttt{kern.num\_taskthreads} $=4096$）
+\end{itemize}
+
+\end{document}

@@ -7,8 +7,8 @@ preservation の破れを機械的に見つけるためのハーネス。
 
 使い方（リポジトリのルートから）:
 
-    python3 scripts/type_runtime_diff.py abclc/*.abcl
-    python3 scripts/type_runtime_diff.py --verbose docs/samples/reply_inference/s11_service.abcl
+    python3 scripts/type_runtime_diff.py abclc/*.aipl
+    python3 scripts/type_runtime_diff.py --verbose docs/samples/reply_inference/s11_service.aipl
 
 仕組み:
   1. 型検査ドライバ tc を走らせ、Class#method -> 型 の表を得る

@@ -111,7 +111,7 @@ var value = await f;
 ```sh
 cd src
 opam exec -- make
-printf 'load ../abclc/aios_kernel.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_kernel.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
@@ -127,7 +127,7 @@ kernel future = echo: future-ready
 Service registry smoke test:
 
 ```sh
-printf 'load ../abclc/aios_services.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_services.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
@@ -143,7 +143,7 @@ memory get = 42.
 Standard services smoke test:
 
 ```sh
-printf 'load ../abclc/aios_standard_services.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_standard_services.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 
@@ -160,7 +160,7 @@ tool.run = tool echo: done
 Agent smoke test:
 
 ```sh
-printf 'load ../abclc/aios_agent.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/aios_agent.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 

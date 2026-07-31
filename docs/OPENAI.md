@@ -6,7 +6,7 @@ ABCL/c+ AIOS から OpenAI API を呼び出す最小経路。
 
 ## Key Handling
 
-API key はソースや `.abcl` サンプルに保存しない。
+API key はソースや `.aipl` サンプルに保存しない。
 実行時に環境変数 `OPENAI_API_KEY` から読む。
 
 ```sh
@@ -32,7 +32,7 @@ openai_generate(prompt)  // string
 ```sh
 cd src
 opam exec -- make
-printf 'load ../abclc/openai_single_ai.abcl\ncompile\nquit\n' | \
+printf 'load ../abclc/openai_single_ai.aipl\ncompile\nquit\n' | \
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread
 ```
 

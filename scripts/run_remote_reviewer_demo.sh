@@ -29,5 +29,5 @@ done
 
 cd "$SRC"
 opam exec -- make
-printf 'load ../abclc/aios_remote_reviewer_solve.abcl\ncompile\nquit\n' |
+printf 'load ../abclc/aios_remote_reviewer_solve.aipl\ncompile\nquit\n' |
   SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software opam exec -- ./abclrepl_thread -q
