@@ -96,7 +96,10 @@ methods:
 
 method_decl:
   | METHOD ID LPAREN param_list RPAREN opt_ret opt_eff LBRACE stmts RBRACE
-    { { mname = $2; params = $4; ret = $6; eff = $7;
+    { { mname = $2;
+        params = List.map fst $4;
+        param_tys = List.map snd $4;
+        ret = $6; eff = $7;
         body = mk_stmt1 2 (Seq $9) } }
 
 opt_ret:
@@ -113,10 +116,15 @@ ret_ann:
   | FLOAT { Types.TFloat }              /* float は予約語なので別扱い */
   | ID    { ty_of_name (loc_of_rhs 1) $1 }
 
+/* 引数は `x` でも `x: T` でも書ける。(名前, 型 option) の並びを返す。 */
 param_list:
   |    { [] }
-  | ID { [$1] }
-  | ID COMMA param_list { $1::$3 }
+  | param                    { [$1] }
+  | param COMMA param_list   { $1::$3 }
+
+param:
+  | ID              { ($1, None) }
+  | ID COLON ret_ann { ($1, Some $3) }
 
 send_target:
     ID                                                { LocalTarget $1 }

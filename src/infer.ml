@@ -860,6 +860,28 @@ let check_decl (env:env) = function
               | _ -> fresh_params ())
          | None -> fresh_params ());
 
+        (* 引数の型注釈 `method m(x: T)` を反映する。
+           注釈が無い引数はこれまでどおり推論に任せる。
+           注釈と推論が食い違えば、ここで単一化が失敗して型エラーになる。 *)
+        (if List.length m.Ast.param_tys = List.length m.params then
+           List.iter2 (fun p ty_opt ->
+             match ty_opt with
+             | None -> ()
+             | Some declared ->
+                 (match find_all env_m p with
+                  | sch :: _ ->
+                      let actual = Types.instantiate sch in
+                      (try unify actual declared
+                       with _ ->
+                         failwith
+                           (Printf.sprintf
+                              "parameter %s of %s.%s is declared %s but used as %s"
+                              p c.Ast.cname m.mname
+                              (Types.string_of_ty declared)
+                              (Types.string_of_ty (repr actual))))
+                  | [] -> set env_m p (Forall ([], declared)))
+           ) m.params m.Ast.param_tys);
+
         (* ★ reply をこのメソッド専用に単相で束縛し、
            グローバルの reply : forall a. a -> unit を隠す。
            これで body 中の reply(v) が ρ を単一化するようになる。 *)

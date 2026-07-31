@@ -50,6 +50,10 @@ and select_case = {
 type method_decl = {
    mname : string;
    params : string list;
+   (* 引数の型注釈 `method m(x: T)`。params と同じ長さで、注釈が無い引数は
+      None。params を string list のまま残したのは、既存の参照箇所を
+      壊さないため（型は必要な所だけ param_tys を見る）。 *)
+   param_tys : Types.ty option list;
    (* 省略可能な戻り値型注釈: method m(x) : int { ... }
       None なら reply から推論する。Some t なら t が正で、
       本体の reply はすべて t に照合され、全パス被覆も検査される。 *)
