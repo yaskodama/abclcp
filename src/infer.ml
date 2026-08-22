@@ -1624,25 +1624,6 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
                       c.Ast.cname m.Ast.mname)) c.Ast.methods
          | _ -> ()) p
      end);
-    (* ★ 義務レベル。now/await は厳密に大きいレベルにしか向かえない。
-       両端に注釈があるときだけ検査する（明示宣言のみの段階）。
-       これが全メソッドに付けば、待ちのグラフは構成的に非巡回になる。 *)
-    (let lv = Hashtbl.create 32 in
-     List.iter (function
-       | Ast.Class c ->
-           List.iter (fun (m : Ast.method_decl) ->
-             match m.Ast.level with
-             | Some n -> Hashtbl.replace lv (Types.eff_key c.Ast.cname m.Ast.mname) n
-             | None -> ()) c.Ast.methods
-       | _ -> ()) p;
-     List.iter (fun (caller, callee) ->
-       match Hashtbl.find_opt lv caller, Hashtbl.find_opt lv callee with
-       | Some a, Some b when b <= a ->
-           Types.type_error ~loc:Location.dummy
-             (Printf.sprintf
-                "obligation level: %s (@%d) waits on %s (@%d); a wait must go to a strictly higher level"
-                caller a callee b)
-       | _ -> ()) !Types.now_edges);
     (match Types.wait_cycle () with
      | Some cyc ->
          let msg =
@@ -1652,6 +1633,51 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
          if strict_wait () then Types.type_error ~loc:Location.dummy msg
          else Printf.eprintf "[warn] %s\n%!" msg
      | None -> ());
+    (* ★ 義務レベル。now/await は厳密に大きいレベルにしか向かえない。
+       注釈が無いメソッドには\textbf{レベルを推論する} ----
+       待ちの辺 (a, b) を見て level(b) <= level(a) なら b を押し上げる、を
+       不動点まで繰り返す。明示注釈は固定点で、押し上げが要るのに動かせなければ
+       そこが矛盾である。閉路があれば収束しないが、閉路は別に弾いている。
+       これで、片方にしか注釈が無い辺も検査できる
+       （注釈だけの段階では、付け忘れた組が素通りしていた）。 *)
+    (let lv = Hashtbl.create 32 in
+     let fixed = Hashtbl.create 32 in
+     List.iter (function
+       | Ast.Class c ->
+           List.iter (fun (m : Ast.method_decl) ->
+             let k = Types.eff_key c.Ast.cname m.Ast.mname in
+             Hashtbl.replace lv k (match m.Ast.level with Some n -> n | None -> 0);
+             (match m.Ast.level with
+              | Some _ -> Hashtbl.replace fixed k ()
+              | None -> ())) c.Ast.methods
+       | _ -> ()) p;
+     let get k = match Hashtbl.find_opt lv k with Some n -> n | None -> 0 in
+     let changed = ref true and guard = ref 0 in
+     while !changed && !guard < 1000 do
+       changed := false; incr guard;
+       List.iter (fun (caller, callee) ->
+         let a = get caller and b = get callee in
+         if b <= a then begin
+           if Hashtbl.mem fixed callee then
+             Types.type_error ~loc:Location.dummy
+               (Printf.sprintf
+                  "obligation level: %s (@%d) waits on %s (@%d); a wait must go to a strictly higher level"
+                  caller a callee b)
+           else begin Hashtbl.replace lv callee (a + 1); changed := true end
+         end) !Types.now_edges
+     done;
+     if !guard >= 1000 then
+       Types.type_error ~loc:Location.dummy
+         "obligation levels do not converge; the wait graph has a cycle";
+     (* 推論したレベルを見せる（AIOS_SHOW_LEVELS=1） *)
+     if Sys.getenv_opt "AIOS_SHOW_LEVELS" = Some "1" then begin
+       let items = Hashtbl.fold (fun k v acc -> (k, v) :: acc) lv [] in
+       let items = List.sort (fun (_, a) (_, b) -> compare a b) items in
+       List.iter (fun (k, v) ->
+         Printf.eprintf "[level] %-28s @%d%s\n%!" k v
+           (if Hashtbl.mem fixed k then " (declared)" else "")) items
+     end);
+
     (* ★ 資源の使用順序（acquire / release の対）。効果集合では表せない性質。 *)
     List.iter (function
       | Ast.Class c ->

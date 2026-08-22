@@ -1,0 +1,7 @@
+// 期待: 明示した義務レベルが、実際の待ちのグラフと矛盾している。
+// 呼ぶ側が高く、呼ばれる側が低い。推論では動かせない（どちらも宣言済み）。
+class Src2 { method get(i) : int @ 1 !{} { reply(i); } }
+class Mid2 {
+  var s = new Src2();
+  method at(i) : int @ 9 !{} { reply(now s.get(i) timeout 100 else 0); }
+}
