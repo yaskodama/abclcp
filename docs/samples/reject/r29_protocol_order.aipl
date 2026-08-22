@@ -1,0 +1,13 @@
+// 期待: セッションの手順を取り違えている（step2 を飛ばして step3 を送った）。
+// AIPL は実行時のセッションプロトコルを持っている（Coq 検証済み）。
+// これはそれを型検査の側へ持ち上げたもの ---- 走らせる前に順序を見る。
+class SA { method step1(x) : int !{} { reply(x); } }
+class SB { method step2(x) : int !{} { reply(x); } }
+class SC { method step3(x) : int !{} { reply(x); } }
+var a = new SA(); var b = new SB(); var c = new SC();
+protocol_define("P29", "a.step1 -> b.step2 -> c.step3");
+var sid = protocol_start("P29");
+print(now a.step1(1) timeout 100 else 0);
+print(now c.step3(3) timeout 100 else 0);
+print(now b.step2(2) timeout 100 else 0);
+protocol_end(sid);

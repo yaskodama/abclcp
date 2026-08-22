@@ -1,0 +1,27 @@
+// s18: セッション型 ---- やり取りの順序を約束として書く
+//
+//      AIPL には既に実行時のセッションプロトコルがある
+//      （protocol_define / protocol_start / protocol_end、Coq で検証済み）。
+//      s18 はそれを型検査の側へ持ち上げたもの ----
+//      同じ宣言を読み、送信の順序が約束どおりかを走らせる前に見る。
+//
+//      手順を取り違えると型エラーになる（順序を入れ替えて試すとよい）。
+//      セッションがアクターをまたぐ場合は、静的には追えないので
+//      実行時の検査に任せる。
+class Fetch  { method get(k)   : int !{} { reply(k * 10); } }
+class Refine { method scale(v) : int !{} { reply(v + 1); } }
+class Store  { method put(v)   : int !{} { reply(v); } }
+
+var f = new Fetch();
+var r = new Refine();
+var st = new Store();
+
+protocol_define("Pipeline", "f.get -> r.scale -> st.put");
+var sid = protocol_start("Pipeline");
+
+var a = now f.get(4)    timeout 200 else 0;
+var b = now r.scale(a)  timeout 200 else 0;
+var c = now st.put(b)   timeout 200 else 0;
+protocol_end(sid);
+
+print("pipeline = " ++ c);

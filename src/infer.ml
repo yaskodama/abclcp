@@ -1569,6 +1569,165 @@ let check_reply_linearity (cls : string) (m : Ast.method_decl) : unit =
       Printf.sprintf "method %s.%s returns without answering %s"
         cls m.Ast.mname (String.concat ", " (SSet.elements left))))
 
+
+(* ============================================================ *)
+(*  セッション型 ---- プロトコルを静的に検査する                *)
+(* ============================================================ *)
+(* AIPL には既に実行時のセッションプロトコルがある
+   （protocol_define / protocol_start / protocol_end、Coq で検証済み）。
+   ここではそれを型検査の側へ持ち上げる ----
+   同じ宣言を読み、送信の順序が約束どおりかを走らせる前に見る。
+
+   対象は「protocol_start と protocol_end が同じ文の並びにある」場合に限る。
+   セッションがアクターをまたぐ場合は実行時の検査に任せる。
+   ここで見るのは「書き間違い」---- 順序を取り違えた、一段飛ばした、
+   終える前に抜けた、という形である。 *)
+
+(* "a.m -> b.n -> c.p" を [("a","m"); ("b","n"); ("c","p")] にする *)
+let parse_protocol_spec (spec : string) : (string * string) list =
+  let parts =
+    let n = String.length spec in
+    let rec go i start acc =
+      if i + 1 < n && spec.[i] = '-' && spec.[i+1] = '>' then
+        go (i+2) (i+2) (String.sub spec start (i-start) :: acc)
+      else if i >= n then List.rev (String.sub spec start (n-start) :: acc)
+      else go (i+1) start acc
+    in go 0 0 []
+  in
+  List.filter_map (fun p ->
+    let p = String.trim p in
+    match String.index_opt p '.' with
+    | Some i ->
+        Some (String.sub p 0 i,
+              String.sub p (i+1) (String.length p - i - 1))
+    | None -> None) parts
+
+(* 文の並びから、送信を (宛先, メソッド) の順に取り出す。
+   aios_now("a","m",...) のような文字列で宛先を指す形も拾う。 *)
+let rec sends_of_stmt (st : Ast.stmt) : (string * string) list =
+  match st.Ast.sdesc with
+  | Ast.Seq ss -> List.concat_map sends_of_stmt ss
+  | Ast.Send (Ast.LocalTarget t, m, _) | Ast.UnsafeSend (Ast.LocalTarget t, m, _) ->
+      [(t, m)]
+  | Ast.VarDecl (_, e) | Ast.Assign (_, e) -> sends_of_expr e
+  | Ast.CallStmt (f, args) ->
+      sends_of_expr { Ast.desc = Ast.Call (f, args); loc = st.Ast.sloc }
+  | Ast.If (c, a, b) -> sends_of_expr c @ sends_of_stmt a @ sends_of_stmt b
+  | Ast.While (c, b) -> sends_of_expr c @ sends_of_stmt b
+  | _ -> []
+
+and sends_of_expr (e : Ast.expr) : (string * string) list =
+  match e.Ast.desc with
+  | Ast.NowSend (Ast.LocalTarget t, m, args, _) ->
+      List.concat_map sends_of_expr args @ [(t, m)]
+  | Ast.FutureSend (Ast.LocalTarget t, m, args) ->
+      List.concat_map sends_of_expr args @ [(t, m)]
+  (* aios_now("actor", "method", ...) ---- 文字列で宛先を指す形 *)
+  | Ast.Call (("aios_now" | "aios_send" | "remote_now"),
+              ({ Ast.desc = Ast.String t; _ } :: { Ast.desc = Ast.String m; _ } :: rest)) ->
+      List.concat_map sends_of_expr rest @ [(t, m)]
+  | Ast.Call (_, args) | Ast.New (_, args) -> List.concat_map sends_of_expr args
+  | Ast.Binop (_, a, b) -> sends_of_expr a @ sends_of_expr b
+  | Ast.Await (e1, _) -> sends_of_expr e1
+  | Ast.Expr e1 -> sends_of_expr e1
+  | _ -> []
+
+(* トップレベルの文の並びを、宣言・開始・送信・終了の順に見る *)
+let check_protocols (p : Ast.program) : unit =
+  let defs : (string, (string * string) list) Hashtbl.t = Hashtbl.create 8 in
+  (* 1) 宣言を集める *)
+  List.iter (function
+    | Ast.Global { Ast.sdesc =
+          Ast.CallStmt ("protocol_define",
+            [ { Ast.desc = Ast.String name; _ }; { Ast.desc = Ast.String spec; _ } ]); _ } ->
+        Hashtbl.replace defs name (parse_protocol_spec spec)
+    | _ -> ()) p;
+  if Hashtbl.length defs = 0 then () else begin
+    (* トップレベルの並びが行う送信をすべて集めておく。
+       手順のどれかがここに現れないなら、そのセッションは
+       アクターをまたいでいる（続きは受け手の中で進む）。
+       静的には追えないので、その場合は実行時の検査に任せて何もしない。
+       実測でこれを入れる前は、そういう例題を 7 本落としていた。 *)
+    let top_sends =
+      List.concat_map (function
+        | Ast.Global st -> sends_of_stmt st
+        | _ -> []) p in
+    let covered steps =
+      List.for_all (fun (a, m) -> List.mem (a, m) top_sends) steps in
+    (* 2) start から end までの間の送信を順に照合する *)
+    let cur : (string * string) list ref = ref [] in   (* 残りの手順 *)
+    let active = ref None in
+    (* この並びの中に手順が全部現れるか。現れないなら、セッションは
+       アクターをまたいでいる可能性がある（続きは受け手の中で進む）。
+       その場合、順序の違反は依然として誤りだが、
+       「まだやっていない」は誤りだと言い切れない。 *)
+    let full = ref false in
+    let loc = ref Location.dummy in
+    List.iter (function
+      | Ast.Global st ->
+          (match st.Ast.sdesc with
+           | Ast.VarDecl (_, { Ast.desc =
+                 Ast.Call ("protocol_start", [ { Ast.desc = Ast.String n; _ } ]); _ })
+           | Ast.CallStmt ("protocol_start", [ { Ast.desc = Ast.String n; _ } ]) ->
+               (match Hashtbl.find_opt defs n with
+                | Some steps ->
+                    active := Some n; cur := steps; loc := st.Ast.sloc;
+                    full := covered steps
+                | None ->
+                    Types.type_error ~loc:st.Ast.sloc
+                      ("protocol_start: unknown protocol " ^ n))
+           | Ast.CallStmt ("protocol_end", _) ->
+               (match !active with
+                | Some n when !cur <> [] ->
+                    let (a, m) = List.hd !cur in
+                    let msg =
+                      Printf.sprintf
+                        "protocol %s is incomplete at protocol_end; next expected %s.%s"
+                        n a m in
+                    (* 手順が全部この並びに現れているなら、やり残しは誤りである。
+                       そうでなければ、続きが受け手の中で進んでいるかもしれない ----
+                       言い切れないので、既定では黙る。 *)
+                    if !full then Types.type_error ~loc:st.Ast.sloc msg
+                    else if Sys.getenv_opt "AIOS_STRICT_PROTOCOL" = Some "1" then
+                      Printf.eprintf "[warn] %s: %s (the rest may run inside another actor)\n%!"
+                        (Location.to_string st.Ast.sloc) msg;
+                    active := None; cur := []
+                | _ -> active := None; cur := [])
+           | _ ->
+               (match !active with
+                | None -> ()
+                | Some n ->
+                    let all_steps =
+                      match Hashtbl.find_opt defs n with Some x -> x | None -> [] in
+                    List.iter (fun (t, m) ->
+                      (* 手順に無い宛先への送信は、このセッションとは無関係。
+                         宛先の綴りが手順と違うだけで誤検出していた
+                         （手順が "main_thread.run" でプログラムは "main" へ送る等）。 *)
+                      if List.mem (t, m) all_steps then begin
+                        match !cur with
+                        | [] -> ()   (* 手順は終わっている。余分は実行時に任せる *)
+                        | (ea, em) :: rest ->
+                            if ea = t && em = m then cur := rest
+                            else
+                              Types.type_error ~loc:st.Ast.sloc
+                                (Printf.sprintf
+                                   "protocol %s: expected %s.%s but the program sends %s.%s here"
+                                   n ea em t m)
+                      end)
+                      (sends_of_stmt st)))
+      | _ -> ()) p;
+    (* 3) end を書かずに終わった場合 *)
+    (match !active with
+     | Some n when !cur <> [] ->
+         let (a, m) = List.hd !cur in
+         let msg =
+           Printf.sprintf "protocol %s is never completed; next expected %s.%s" n a m in
+         if !full then Types.type_error ~loc:!loc msg
+         else if Sys.getenv_opt "AIOS_STRICT_PROTOCOL" = Some "1" then
+           Printf.eprintf "[warn] %s: %s\n%!" (Location.to_string !loc) msg
+     | _ -> ())
+  end
+
 let check_effect_annotations (p : Ast.program) : unit =
   List.iter
     (function
@@ -1621,6 +1780,7 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
     List.iter (check_decl env0) p;          (* それから通常どおりトップレベルを検査 *)
     Types.propagate_effects ();             (* ★ now の連鎖に沿って効果を伝播 *)
     check_effect_annotations p;             (* ★ 宣言と本体の効果を照合 *)
+    check_protocols p;                      (* ★ セッションの手順を静的に照合 *)
     (* ★ 循環待ちの検査。now / await の辺に閉路があれば、
        期限が無ければ確実に詰まる。既定は警告、
        AIOS_STRICT_WAIT=1 でエラーに昇格する（期限の扱いと同じ形）。 *)
