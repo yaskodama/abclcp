@@ -864,6 +864,12 @@ let () =
          | None -> failwith ("source_of: no source for class " ^ cls))
     | _ -> failwith "source_of(class): a class name is expected");
 
+  add_prim ~capability:"Core" ~psig:"(string, int) -> unit"
+    ~description:"declare the obligation level floor of a mesh node" "node_level" (function
+    | [Eval_thread.VString node; Eval_thread.VInt n] ->
+        Eval_thread.set_node_level node n; Eval_thread.VUnit
+    | _ -> failwith "node_level(node, n): a string and an integer are expected");
+
   add_prim ~capability:"Core" ~psig:"(string, string) -> unit"
     ~description:"declare which effects a mesh node accepts" "node_allow" (function
     | [Eval_thread.VString node; Eval_thread.VString effs] ->
@@ -906,6 +912,22 @@ let () =
                failwith (Printf.sprintf
                  "deploy: node %s does not accept effect(s) {%s} required by %s"
                  node (String.concat ", " (Types.SSet.elements over)) cls));
+        (* 義務レベルの照合：配るクラスのレベルがノードの下限以上か。
+           下限より低いレベルのコードを置くと、そのノードへの待ちが
+           上へ向かうという約束が破れる。 *)
+        (match Eval_thread.level_of_node node with
+         | None -> ()
+         | Some floor ->
+             List.iter (function
+               | Ast.Class c when c.Ast.cname = cls ->
+                   List.iter (fun (m : Ast.method_decl) ->
+                     match m.Ast.level with
+                     | Some n when n < floor ->
+                         failwith (Printf.sprintf
+                           "deploy: %s.%s is @%d but node %s has floor @%d"
+                           cls m.Ast.mname n node floor)
+                     | _ -> ()) c.Ast.methods
+               | _ -> ()) decls);
         (* 相手先でクラスを登録して実体化する *)
         List.iter (function
           | Ast.Class c -> Eval_thread.register_class c

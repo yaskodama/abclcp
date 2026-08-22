@@ -589,7 +589,11 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
         (* リモート宛先は本体が別ノードにあり推論できない。
            ここは宣言（インタフェース）でしか埋まらない場所なので any のまま。
            ただし★ノード外へ出る通信なので net 効果は確定する。 *)
-        | RemoteTarget (_hostport, _actor_name) -> add_eff ["net"]; TAny
+        | RemoteTarget (hostport, _actor_name) ->
+            add_eff ["net"];
+            (* ★ 遠隔への待ち。宛先の実体は見えないので、ノード単位で記録する。 *)
+            if !current_key <> "" then Types.add_remote_wait !current_key hostport;
+            TAny
         | LocalTarget vname when vname = "sender" -> TAny
         | LocalTarget vname ->
             let t_actor = infer_expr env (mk_var vname) in
@@ -1669,6 +1673,26 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
      if !guard >= 1000 then
        Types.type_error ~loc:Location.dummy
          "obligation levels do not converge; the wait graph has a cycle";
+     (* ★ ノード間のレベル。プログラム中の node_level("n", k) を読み、
+        そのノードへの待ちが上へ向かうことを要求する。
+        宛先の実体は別ノードにあり見えないので、ノード単位の階層で近似する。 *)
+     (let floors = Hashtbl.create 8 in
+      List.iter (function
+        | Ast.Global { Ast.sdesc =
+              Ast.CallStmt ("node_level",
+                [ { Ast.desc = Ast.String n; _ }; { Ast.desc = Ast.Int k; _ } ]); _ } ->
+            Hashtbl.replace floors n k
+        | _ -> ()) p;
+      List.iter (fun (caller, node) ->
+        match Hashtbl.find_opt floors node with
+        | Some f ->
+            let a = get caller in
+            if f <= a then
+              Types.type_error ~loc:Location.dummy
+                (Printf.sprintf
+                   "obligation level: %s (@%d) waits on node %s (floor @%d); a wait across nodes must go up"
+                   caller a node f)
+        | None -> ()) !Types.remote_waits);
      (* 推論したレベルを見せる（AIOS_SHOW_LEVELS=1） *)
      if Sys.getenv_opt "AIOS_SHOW_LEVELS" = Some "1" then begin
        let items = Hashtbl.fold (fun k v acc -> (k, v) :: acc) lv [] in

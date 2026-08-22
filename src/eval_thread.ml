@@ -1878,6 +1878,13 @@ let set_node_policy (node : string) (effs : string list) : unit =
 let policy_of_node (node : string) : Types.SSet.t option =
   Hashtbl.find_opt node_policy node
 
+(* ノード名 -> 義務レベルの下限。そのノードへの待ちは必ず上へ向かう。 *)
+let node_levels : (string, int) Hashtbl.t = Hashtbl.create 8
+let set_node_level (node : string) (n : int) : unit =
+  Hashtbl.replace node_levels node n
+let level_of_node (node : string) : int option =
+  Hashtbl.find_opt node_levels node
+
 (* 実行時に保持している資源。検査は静的に行うが、
    実行時にも二重取得・未取得の解放を捕まえられるようにしておく。 *)
 let held_res : (string, unit) Hashtbl.t = Hashtbl.create 8
@@ -2005,8 +2012,16 @@ let rec eval_expr (actor:actor) (e : expr) =
       | LocalTarget tgt ->
           send_message ~msg_id:f.fid ~from:actor.name (actual_local_target actor tgt)
             (mk_stmt (CallStmt (meth, arg_exprs)))
-      | RemoteTarget (_hostport, _tgt) ->
-          reject_future f.fid "future remote send is not implemented"
+      | RemoteTarget (hostport, tgt) ->
+          (* 同じ機械でノードを模しているときは、配備先が "node/actor" で
+             局所表にいる。そこへ回せば now / future が遠隔にも効く。
+             実機の Xinu メッシュでは、ここが本物の転送になる。 *)
+          (match mesh_local_name hostport tgt with
+           | Some n ->
+               send_message ~msg_id:f.fid ~from:actor.name n
+                 (mk_stmt (CallStmt (meth, arg_exprs)))
+           | None ->
+               reject_future f.fid "future remote send is not implemented")
       end;
       VFuture f
   | NowSend (target, meth, args, dl) ->

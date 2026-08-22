@@ -58,7 +58,7 @@ let () =
   (* 配備はノード外へ出て、相手に割り付けさせる *)
   set_eff [ "deploy" ] ["net"; "mem"];
   set_eff [ "source_of" ] [];
-  set_eff [ "node_allow" ] [];
+  set_eff [ "node_allow"; "node_level" ] [];
   (* 資源の取得と解放は状態を変える *)
   set_eff [ "acquire"; "release" ] ["mut"];
   (* Console / AIOS.Kernel / AIOS.Event / Protocol.Session / Actor.Introspection *)
@@ -131,6 +131,8 @@ let prelude () : env =
      deploy は外へ出て相手に割り付けさせるので net と mem を持つ。 *)
   add_mono e "source_of" (TFun ([TString], TString));
   add_mono e "node_allow" (TFun ([TString; TString], TUnit));
+  (* ノードのレベル下限。そのノードへの待ちは必ず上へ向かう。 *)
+  add_mono e "node_level" (TFun ([TString; TInt], TUnit));
   add_mono e "deploy" (TFun ([TString; TString; TString], TString));
 
   (* 資源の取得と解放。型は string -> unit だが、

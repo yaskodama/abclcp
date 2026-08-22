@@ -1,0 +1,21 @@
+// s16: ノードをまたぐ義務レベル ---- メッシュでも待ちを一方向にする
+//
+//      宛先の実体は別ノードにあり、静的には見えない。
+//      そこでノードごとにレベルの下限を宣言し、
+//      そのノードへの待ちは必ず上へ向かうことを要求する。
+//      効果を node_allow で国境で照合しているのと同じ形。
+node_level("rt0", 10);              // 実時間ノードは葉（高いレベル）
+node_allow("rt0", "mut, log, time");
+
+class Servo {
+  var pos = 0;
+  method step(d) : int @ 12 !{mut, log} { pos = pos + d; print("pos=" ++ pos); reply(pos); }
+}
+class Controller {
+  method drive(d) : int @ 2 !{net} {          // 上位は低いレベル
+    reply(now remote("rt0","servo1").step(d) timeout 200 else -1);
+  }
+}
+deploy("rt0", "Servo", "servo1");
+var c = new Controller();
+print("drive = " ++ (now c.drive(3) timeout 600 else -1));

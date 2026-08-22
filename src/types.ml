@@ -190,6 +190,15 @@ let lookup_method_eff (cls : string) (m : string) : SSet.t =
   | Some r -> !r
   | None -> SSet.empty
 
+(* 遠隔ノードへの待ち。(待つ側のメソッド, ノード名)。
+   宛先の実体は別ノードにあり静的に見えないので、ノード単位で階層化する ----
+   ノードにレベルの下限を宣言し、そこへの待ちは必ず上へ向かうことを要求する。
+   効果を node_allow で国境で照合しているのと同じ形。 *)
+let remote_waits : (string * string) list ref = ref []
+let add_remote_wait (caller : string) (node : string) : unit =
+  if not (List.mem (caller, node) !remote_waits) then
+    remote_waits := (caller, node) :: !remote_waits
+
 let add_now_edge (caller : string) (callee : string) : unit =
   if not (List.mem (caller, callee) !now_edges) then
     now_edges := (caller, callee) :: !now_edges
@@ -246,7 +255,7 @@ let wait_cycle () : string list option =
   !found
 
 let reset_effects () : unit =
-  Hashtbl.reset method_effs; now_edges := []
+  Hashtbl.reset method_effs; now_edges := []; remote_waits := []
 
 let rec repr (t : ty) : ty =
   match t with
@@ -345,6 +354,11 @@ let rec unify ?(loc = Location.dummy) (t1 : ty) (t2 : ty) : unit =
   | TBool,   TBool
   | TString, TString
   | TUnit,   TUnit -> ()
+  (* any はどの型とも合う。これが無いと、戻り値型が静的に分からない
+     遠隔送信（remote 宛の now）に else 節を書けなかった ----
+     `now remote(n,a).m(x) timeout 100 else 0` が type mismatch になる。
+     any は「型が分からない」の印であって、合わない印ではない。 *)
+  | TAny, _ | _, TAny -> ()
   (* アクター型は名前で区別する。
      "?" は実行時の値から作られた未知のクラスなので、どちらとも合わせる
      （ActorRef から作られる TActor ("?", [])）。
