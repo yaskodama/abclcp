@@ -16,6 +16,15 @@ try {
     const r = tc.checkReplyAndDeadlines(ast, {}) || [];
     issues = issues.concat(r.map(x => typeof x === 'string' ? x : (x.message || JSON.stringify(x))));
   }
+  if (tc.checkSelect) {
+    issues = issues.concat(tc.checkSelect(ast) || []);
+  }
+  if (tc.checkReplyTotality) {
+    issues = issues.concat(tc.checkReplyTotality(ast) || []);
+  }
+  if (tc.checkLevels) {
+    issues = issues.concat(tc.checkLevels(ast) || []);
+  }
   if (tc.checkReplyLinearity) {
     issues = issues.concat(tc.checkReplyLinearity(ast) || []);
   }

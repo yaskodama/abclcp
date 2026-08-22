@@ -119,6 +119,11 @@ let rec replies_on_all_paths (s : Ast.stmt) : bool =
    すでに待ち手が受け取ったあとなので黙って捨てられる。 *)
 let cap2 n = if n > 2 then 2 else n
 
+(* select の case が待っているメッセージ（クラス名, メソッド名, 位置）。
+   プログラムを全部見終わってから「誰かが送っているか」を照合する。
+   先に照合すると、あとで現れる送信を見落とす。 *)
+let selected_msgs : (string * string * Location.t) list ref = ref []
+
 (* 本体が replyto を使っているか。
    使っていれば「返信の義務」は線形性の検査（check_reply_linearity）が担うので、
    reply の回数・被覆の構文検査は適用しない。 *)
@@ -612,6 +617,7 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
                            (* ★ 戻り値はスキーム側（量化で切れている）ではなく
                               ρ 表から取る。これが reply 地点と繋がっている唯一の経路。 *)
                            record_now_edge cls mname;
+                           Types.add_sent cls mname;
                            method_ret_ty cls mname
                        | ty ->
                            Types.type_error ~loc:e.loc
@@ -827,6 +833,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
                          if List.length param_tys <> List.length actuals then
                            raise (Type_error (s.sloc, "arity mismatch in send"));
                          List.iter2 (Types.unify ~loc:s.sloc) param_tys actuals;
+                         Types.add_sent cls mname;
                          (* AIOS_SEND_EFFECTS=1 のとき、send も呼ばれる側の効果を負う。
                             既定は off（送るだけで待たないので負わない）。
                             Py-I / JS-I は既定で負う側なので、ここは仕様の判断待ち。 *)
@@ -857,6 +864,7 @@ let rec check_stmt (env:env) (s:stmt) : unit =
                          if List.length param_tys <> List.length actuals then
                            raise (Type_error (s.sloc, "arity mismatch in send"));
                          List.iter2 (Types.unify ~loc:s.sloc) param_tys actuals;
+                         Types.add_sent cls mname;
                          (* AIOS_SEND_EFFECTS=1 のとき、send も呼ばれる側の効果を負う。
                             既定は off（送るだけで待たないので負わない）。
                             Py-I / JS-I は既定で負う側なので、ここは仕様の判断待ち。 *)
@@ -878,7 +886,13 @@ let rec check_stmt (env:env) (s:stmt) : unit =
      | (Some _, Some to_stmt) ->
          check_stmt env to_stmt
      | (None, None) ->
-         ()
+         (* ★ 期限の無い select は、来ないメッセージを永久に待ちうる。
+            now / await と同じ扱いにする ---- 既定は警告、
+            AIOS_STRICT_DEADLINE=1 でエラーに昇格。 *)
+         let msg =
+           "select without a timeout waits forever; write `timeout <ms> -> { ... }`" in
+         if !strict_deadline then Types.type_error ~loc:s.sloc msg
+         else Printf.eprintf "[warn] %s: %s\n%!" (Location.to_string s.sloc) msg
      | _ ->
          Types.type_error ~loc:s.sloc
            "select: timeout requires both milliseconds and a body");
@@ -893,6 +907,10 @@ let rec check_stmt (env:env) (s:stmt) : unit =
     in
     List.iter
       (fun (c:Ast.select_case) ->
+        (* 誰かがこのメッセージを送っているかは、全部見終わってから照合する *)
+        (match self_cls with
+         | Some cls -> selected_msgs := (cls, c.Ast.pat.Ast.meth, s.sloc) :: !selected_msgs
+         | None -> ());
         let env' : Typing_env.env = Hashtbl.copy env in
         (* ★ case パターンを、受け取るメッセージ（= 同じクラスのメソッド）の
            シグネチャに照合する。arity と引数型をここで検査しないと、
@@ -1628,6 +1646,31 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
                       c.Ast.cname m.Ast.mname)) c.Ast.methods
          | _ -> ()) p
      end);
+    (* ★ select が待っているメッセージを、誰かが送っているか。
+       送る側がどこにも無ければ、その case は永久に発火しない。
+       閉路でも返信漏れでもない三つ目の詰まり方。
+       送信が動的（sender 経由・遠隔）だと見えないので、既定は警告。
+       AIOS_STRICT_SELECT=1 でエラーに昇格。 *)
+    (* 外から送られてくる場合は見えない。web_expose / web_listen があれば
+       そのプログラムは外部の送り手を持つので、この検査は当てにならない。
+       遠隔（remote / deploy）も同様。実測でも、警告が出た 2 本は
+       どちらも web_expose で外へ公開している例題であった。 *)
+    let has_external_sender =
+      List.exists (function
+        | Ast.Global { Ast.sdesc = Ast.CallStmt (f, _); _ } ->
+            f = "web_expose" || f = "web_listen" || f = "deploy"
+        | _ -> false) p
+      || !Types.remote_waits <> [] in
+    List.iter (fun (cls, m, loc) ->
+      if (not has_external_sender) && not (Types.was_sent cls m) then begin
+        let msg =
+          Printf.sprintf
+            "select waits for %s.%s but nothing in this program sends it" cls m in
+        if Sys.getenv_opt "AIOS_STRICT_SELECT" = Some "1" then
+          Types.type_error ~loc msg
+        else Printf.eprintf "[warn] %s: %s\n%!" (Location.to_string loc) msg
+      end) !selected_msgs;
+    selected_msgs := [];
     (match Types.wait_cycle () with
      | Some cyc ->
          let msg =

@@ -21,7 +21,7 @@ if [ ! -x "$TC" ] || [ "$ABCLCP/src/infer.cmo" -nt "$TC" ]; then
 fi
 
 # 期待: reject / warn（期限は既定で警告）
-expect_of() { case "$1" in r3_*) echo warn ;; *) echo reject ;; esac; }
+expect_of() { case "$1" in r3_*|r27_*|r28_*) echo warn ;; *) echo reject ;; esac; }
 
 mark() { [ "$1" = "$2" ] && echo "○" || echo "×"; }
 
@@ -38,12 +38,14 @@ for f in "$DIR"/r*.aipl; do
   p=$(cd "$PYI" && timeout 40 python3 aipl_main.py --type-check "$f" 2>&1)
   n=$(printf '%s' "$p" | sed -n 's/^\[type\] \([0-9]*\) issue(s).*/\1/p' | head -1)
   if [ "${n:-0}" -ge 1 ] 2>/dev/null; then
-    if printf '%s' "$p" | grep -q '期限が無い'; then P=warn; else P=reject; fi
+    # 警告として出るもの（期限まわり）は warn に分類する
+    if printf '%s' "$p" | grep -qE '期限が無い|期限の無い select|誰も送っていない'; then P=warn
+    else P=reject; fi
   else P=pass; fi
 
   j=$(timeout 40 node "$ABCLCP/tools/js_check.mjs" "$f" "$JSI" 2>&1)
   if printf '%s' "$j" | grep -q '0 issue(s)'; then J=pass
-  elif printf '%s' "$j" | grep -q '期限が無い'; then J=warn
+  elif printf '%s' "$j" | grep -qE '期限が無い|期限の無い select|誰も送っていない'; then J=warn
   else J=reject; fi
 
   printf '%-24s %-6s %-8s %-8s %-8s\n' "$b" "$exp" \

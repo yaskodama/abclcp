@@ -194,6 +194,15 @@ let lookup_method_eff (cls : string) (m : string) : SSet.t =
    宛先の実体は別ノードにあり静的に見えないので、ノード単位で階層化する ----
    ノードにレベルの下限を宣言し、そこへの待ちは必ず上へ向かうことを要求する。
    効果を node_allow で国境で照合しているのと同じ形。 *)
+(* 送られたメッセージの集合（"クラス名#メソッド名"）。
+   select の case が「誰も送らないメッセージ」を待っていないかを見る。
+   来ないメッセージを待つのは、閉路でも返信漏れでもない三つ目の詰まり方。 *)
+let sent_msgs : (string, unit) Hashtbl.t = Hashtbl.create 64
+let add_sent (cls : string) (m : string) : unit =
+  Hashtbl.replace sent_msgs (cls ^ "#" ^ m) ()
+let was_sent (cls : string) (m : string) : bool =
+  Hashtbl.mem sent_msgs (cls ^ "#" ^ m)
+
 let remote_waits : (string * string) list ref = ref []
 let add_remote_wait (caller : string) (node : string) : unit =
   if not (List.mem (caller, node) !remote_waits) then
@@ -255,7 +264,8 @@ let wait_cycle () : string list option =
   !found
 
 let reset_effects () : unit =
-  Hashtbl.reset method_effs; now_edges := []; remote_waits := []
+  Hashtbl.reset method_effs; now_edges := []; remote_waits := [];
+  Hashtbl.reset sent_msgs
 
 let rec repr (t : ty) : ty =
   match t with

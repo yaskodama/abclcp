@@ -1,0 +1,11 @@
+// 期待（警告）: 誰も送らないメッセージを待っている。
+// 閉路でも返信漏れでもない三つ目の詰まり方。
+// 外部からの送り手（web_expose / deploy / remote）があれば検査しない。
+class W2 {
+  method ghost(k) : string { reply(k); }        // どこからも送られない
+  method serve() : unit !{log} {
+    select { case ghost(k) -> { reply(k); } timeout 500 -> { print("idle"); } }
+  }
+}
+var w = new W2();
+send w.serve();

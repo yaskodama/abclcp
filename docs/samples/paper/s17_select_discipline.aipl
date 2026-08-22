@@ -1,0 +1,22 @@
+// s17: select の規律 ---- 来ないメッセージを待たない
+//
+//      待ちが返らなくなる三つ目の経路は select である。
+//      閉路でも返信漏れでもなく、「誰も送らない」だけで詰まる。
+//      二つの規律で受け止める:
+//        1. 期限を書く（書かなければ警告。now / await と同じ）
+//        2. 待つメッセージを誰かが送っているか（送り手が無ければ警告）
+//      外部から送られてくる場合（web_expose / deploy / remote）は検査しない。
+class Worker3 {
+  method job(k) : string { reply("done:" ++ k); }
+
+  method serve() : unit !{log} {
+    print("waiting");
+    select {
+      case job(k) -> { print("got " ++ k); reply("via select:" ++ k); }
+      timeout 500 -> { print("timed out"); }
+    }
+  }
+}
+var w = new Worker3();
+send w.serve();
+print(now w.job(7) timeout 800 else "?");
