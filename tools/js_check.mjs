@@ -16,6 +16,9 @@ try {
     const r = tc.checkReplyAndDeadlines(ast, {}) || [];
     issues = issues.concat(r.map(x => typeof x === 'string' ? x : (x.message || JSON.stringify(x))));
   }
+  if (tc.checkProtocols) {
+    issues = issues.concat(tc.checkProtocols(ast) || []);
+  }
   if (tc.checkSelect) {
     issues = issues.concat(tc.checkSelect(ast) || []);
   }
