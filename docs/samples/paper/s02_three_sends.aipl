@@ -1,0 +1,12 @@
+// s02: ABCL/1 から継承した三種の送信 ---- send / now / future+await
+class Calc {
+  method twice(x) : int { reply(x * 2); }     // 戻り値型は reply から推論もできる
+  method slow(x)  : int { reply(x + 100); }
+}
+
+var c = new Calc();
+
+send c.twice(1);                                       // past 型：送って待たない
+print("now    = " ++ (now c.twice(21) timeout 100 else 0));    // now 型：待つ
+var f = future c.slow(5);                              // future 型：引換券
+print("future = " ++ (await f timeout 100 else 0));    // あとで受け取る

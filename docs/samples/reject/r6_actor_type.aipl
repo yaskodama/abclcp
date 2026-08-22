@@ -1,0 +1,11 @@
+// 期待: Alpha を要求する引数に Beta のアクターを渡している ---- 弾かれるべき
+// クラス名を2文字以上にしてあるのは、Py-I が1文字の大文字を
+// 「型変数」として読むため（r8 を参照）。
+class Alpha { method a() : unit !{log} { print("a"); } }
+class Beta  { method b() : unit !{log} { print("b"); } }
+class Use {
+  method f(x: Alpha) : unit !{log} { send x.a(); }
+}
+var u = new Use();
+var b = new Beta();
+send u.f(b);

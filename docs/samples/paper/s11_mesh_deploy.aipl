@@ -1,0 +1,17 @@
+// s11: メッシュへの配備 ---- ソースを送り、相手先で JIT して動かす
+//
+//      実時間ノードは ai も net も受け付けない、と宣言しておく。
+//      その方針に反するコードを配ろうとすると配備が失敗する。
+class Servo {
+  var pos = 0;
+  method step(d) : int !{mut, log} { pos = pos + d; print("pos=" ++ pos); reply(pos); }
+}
+class Planner {
+  method plan(g) : string !{ai, net} { reply(ai_call("plan " ++ g)); }
+}
+
+node_allow("rt0", "mut, log, time");     // 実時間ノードが許す効果
+node_allow("edge0", "mut, log, ai, net");
+
+var h = deploy("rt0", "Servo", "servo1");   // 方針に合う。配備できる
+print("deployed as " ++ h);

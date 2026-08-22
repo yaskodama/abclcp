@@ -1,0 +1,13 @@
+// ABCL/1 の script は where で「在庫があるときだけ受理」と書けた。
+// AIPL には where が無いので、受理してから本体で分岐する。
+// 違いは、受理してしまう点にある（送り主は返信を受け取ってしまう）。
+class Shop {
+  var stock = 2;
+  method buy(n) : string !{mut} {
+    if (stock >= n) { stock = stock - n; reply("ok, left=" ++ stock); }
+    else { reply("sold out"); }
+  }
+}
+var s = new Shop();
+print(now s.buy(1) timeout 200 else "?");
+print(now s.buy(5) timeout 200 else "?");

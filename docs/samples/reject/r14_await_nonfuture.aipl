@@ -1,0 +1,2 @@
+// 期待: future でないものを await している
+class C3 { method f(x) : int { var v = await 42 timeout 10 else 0; reply(v); } }

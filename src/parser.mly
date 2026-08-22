@@ -39,7 +39,7 @@ let ty_of_name (loc : Location.t) (s : string) : Types.ty =
 %token SELECT CASE TIMEOUT
 %token ARROW /* -> */
 %token EOF NEW
-%token VAR EQ DOT BECOME
+%token VAR EQ DOT
 %token COLON /* : ... 戻り値型注釈 */
 %token PLUSPLUS /* ++ ... 文字列連結 */
 %token BANG /* ! ... 効果注釈 !{...} */
@@ -153,8 +153,6 @@ stmt:
   | VAR ID ASSIGN expr SEMICOLON { mk_stmt1 2 (VarDecl($2, $4)) }
   | VAR ID ASSIGN NEW ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (VarDecl($2, mk_expr1 4 (New($5,$7)))) }
   | ID LPAREN args RPAREN SEMICOLON { mk_stmt1 1 (CallStmt ($1, $3)) }
-  | BECOME ID LPAREN args RPAREN SEMICOLON { mk_stmt1 2 (Become ($2, $4)) } 
-  | BECOME ID LPAREN RPAREN SEMICOLON { mk_stmt1 2 (Become ($2, [])) }
   | SELECT LBRACE select_cases select_timeout_opt RBRACE { mk_stmt1 3 (Select($3, $4)) }
 
 select_cases:
@@ -215,10 +213,15 @@ expr:
   | NOW send_target DOT ID LPAREN args RPAREN
       { mk_expr1 1 (NowSend ($2, $4, $6, None)) }
   | NOW send_target DOT ID LPAREN args RPAREN TIMEOUT INTLIT ELSE expr
-      { mk_expr1 1 (NowSend ($2, $4, $6, Some ($9, $11))) }
+      { mk_expr1 1 (NowSend ($2, $4, $6, Some ($9, Some $11))) }
+  (* else を書かない形。値は result<τ> になり、成功したかどうかを型で持つ。
+     従来この形は構文エラーだったので、既存プログラムの意味は変わらない。 *)
+  | NOW send_target DOT ID LPAREN args RPAREN TIMEOUT INTLIT
+      { mk_expr1 1 (NowSend ($2, $4, $6, Some ($9, None))) }
   | FUTURE send_target DOT ID LPAREN args RPAREN { mk_expr1 1 (FutureSend ($2, $4, $6)) }
   | AWAIT expr { mk_expr1 1 (Await ($2, None)) }
-  | AWAIT expr TIMEOUT INTLIT ELSE expr { mk_expr1 1 (Await ($2, Some ($4, $6))) }
+  | AWAIT expr TIMEOUT INTLIT ELSE expr { mk_expr1 1 (Await ($2, Some ($4, Some $6))) }
+  | AWAIT expr TIMEOUT INTLIT             { mk_expr1 1 (Await ($2, Some ($4, None))) }
   | ID LPAREN args RPAREN { mk_expr1 1 (Call ($1, $3)) }
   | expr EQ expr { mk_expr1 2 (Binop ("==", $1, $3)) }
   | expr NE expr { mk_expr1 2 (Binop ("!=", $1, $3)) }

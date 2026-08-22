@@ -1,0 +1,4 @@
+// 期待: 宛先のクラスに無いメソッドへの send
+class Dev { method a() : unit !{log} { print("a"); } }
+class Use3 { method f(x: Dev) : unit !{log} { send x.nosuch(); } }
+var d = new Dev(); var u = new Use3(); send u.f(d);

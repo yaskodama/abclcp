@@ -1,0 +1,17 @@
+// s01: アクターの基本 ---- クラス・フィールド・init・send・文字列連結
+class Greeter {
+  var count = 0;                  // フィールド。int で初期化される
+
+  method init(name) {             // new のときに自動で呼ばれる
+    print("hello, " ++ name);     // ++ は文字列連結。+ は数値専用
+  }
+
+  method tick() : unit !{mut, log} {
+    count = count + 1;            // フィールドへの代入は mut 効果
+    print("tick " ++ count);
+  }
+}
+
+var g = new Greeter("AIPL");
+send g.tick();                    // 非同期。返信を待たない
+send g.tick();

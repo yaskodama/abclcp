@@ -1,0 +1,9 @@
+// 期待: now の辺に閉路がある（自分自身を now で待つ）。期限が無ければ確実に詰まる。
+class Peer2 {
+  method bounce(p: Peer2, n) : int !{} {
+    if (n > 0) { reply(now p.bounce(p, n - 1) timeout 300 else -1); }
+    else { reply(0); }
+  }
+}
+var p = new Peer2();
+print(now p.bounce(p, 2) timeout 900 else -999);

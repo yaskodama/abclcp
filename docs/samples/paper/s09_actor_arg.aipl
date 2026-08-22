@@ -1,0 +1,11 @@
+// s09: アクターを引数として渡す ---- 引数に型注釈を書くとクラスが決まる
+class Device { method ping() : unit !{log} { print("pong"); } }
+class Driver {
+  method attach(d: Device) : unit !{log} {   // Device 以外を渡すと型エラー
+    print("attached");
+    send d.ping();
+  }
+}
+var dev = new Device();
+var drv = new Driver();
+send drv.attach(dev);

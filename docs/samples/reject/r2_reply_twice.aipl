@@ -1,0 +1,2 @@
+// 期待: reply の線形性違反 ---- 高々一度に反する
+class C { method f(x) : int { reply(1); reply(2); } }

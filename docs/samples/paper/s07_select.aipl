@@ -1,0 +1,19 @@
+// s07: select ---- 来たメッセージから処理する（ABCL/1 の script の縮小版）
+//      case で受けられるのは、そのクラスが持つメソッドに限られる。
+class Worker {
+  method job(k) : string { reply("direct:" ++ k); }   // 直接呼ばれたとき
+
+  method serve() : unit !{log} {
+    print("waiting");
+    select {
+      case job(k) -> {
+        print("got " ++ k);
+        reply("via select:" ++ k);   // この reply は job への返信になる
+      }
+      timeout 500 -> { print("timed out"); }
+    }
+  }
+}
+var w = new Worker();
+send w.serve();
+print(now w.job(1) timeout 800 else "?");

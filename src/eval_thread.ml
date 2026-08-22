@@ -14,6 +14,9 @@ type value =
   | VActor of string * (string, value) Hashtbl.t
   | VArray of value array * Types.ty option
   | VFuture of future_state
+  (* result<τ>。期限つきの待ちで else を書かなかったときの値。
+     VResult (Some v) が成功、VResult None が期限切れ。 *)
+  | VResult of value option
 
 and future_state = {
   fid : string;
@@ -42,6 +45,13 @@ type actor = {
 }
 
 let actor_table : (string, actor) Hashtbl.t = Hashtbl.create 32
+
+(* いま処理中のメッセージ数。キューが空でも、取り出したメッセージを
+   実行している最中ということがあるので、静止の判定に要る。 *)
+let in_flight = ref 0
+let in_flight_mu = Mutex.create ()
+let bump_in_flight d =
+  Mutex.lock in_flight_mu; in_flight := !in_flight + d; Mutex.unlock in_flight_mu
 
 (* sid -> (id counter, (id * line) list) *)
 let sid_log_mu = Mutex.create ()
@@ -468,6 +478,8 @@ let rec string_of_value v =
       in
       "[" ^ items ^ "]"
   | VFuture f -> "<future:" ^ f.fid ^ ">"
+  | VResult None -> "<timedout>"
+  | VResult (Some v) -> "<ok:" ^ string_of_value v ^ ">"
 
 let pp_recv = function
   | Var id -> id
@@ -482,6 +494,7 @@ let type_name_of_value = function
   | VActor _  -> "actor"
   | VArray _  -> "array"
   | VFuture _ -> "future"
+  | VResult _ -> "result"
 
 let lookup_opt (env : (string, 'a) Hashtbl.t) (k : string) : 'a option =
   Hashtbl.find_opt env k
@@ -681,6 +694,7 @@ let to_bool = function
   | VActor _   -> failwith "actor is not allowed as condition"
   | VArray (_,_)   -> failwith "array is not allowed as condition"
   | VFuture _ -> failwith "future is not allowed as condition"
+  | VResult _ -> failwith "result is not allowed as condition (use is_ok)"
   | VInt i -> i <> 0
 
 let as_bool = function
@@ -691,6 +705,7 @@ let as_bool = function
   | VActor _  -> failwith "actor is not allowed as condition"
   | VArray (_,_)   -> failwith "array is not allowed as condition"
   | VFuture _ -> failwith "future is not allowed as condition"
+  | VResult _ -> failwith "result is not allowed as condition (use is_ok)"
   | VInt i -> i <> 0
 
 let as_float (v : value) : float =
@@ -727,7 +742,9 @@ let to_string_plain = function
                 | VUnit     -> "()"
                 | VActor (n,_)  -> "<actor:" ^ n ^ ">"
                 | VArray (_,_)  -> "<array>"
-                | VFuture f -> "<future:" ^ f.fid ^ ">")
+                | VFuture f -> "<future:" ^ f.fid ^ ">"
+                | VResult None -> "<timedout>"
+                | VResult (Some _) -> "<ok>")
           |> String.concat ", "
       in
       "[" ^ items ^ "]"
@@ -810,11 +827,15 @@ let expr_of_value = function
                 | VUnit     -> "()"
                 | VActor (n,_)  -> "<actor:" ^ n ^ ">"
                 | VArray (_,_)  -> "<array>"
-                | VFuture f -> "<future:" ^ f.fid ^ ">")
+                | VFuture f -> "<future:" ^ f.fid ^ ">"
+                | VResult None -> "<timedout>"
+                | VResult (Some _) -> "<ok>")
           |> String.concat ", "
       in
       String ("[" ^ items ^ "]")
   | VFuture f -> String ("<future:" ^ f.fid ^ ">")
+  | VResult None -> String "<timedout>"
+  | VResult (Some _) -> String "<ok>"
       
 (* === Value extractors === *)
 (* アクター値。第1要素はクラス名だが、実体名も表に入れて持ち回る。
@@ -1470,7 +1491,7 @@ let rec type_of_value = function
   | VString _ -> Types.TString
   | VArray (_, Some t) -> Types.TArray t
   | VArray (_, None) -> Types.TArray Types.TUnit
-  | VFuture _ -> Types.TFuture Types.TAny
+  | VFuture _ -> Types.TFuture (Types.TAny, ref Types.SSet.empty)
   | VUnit -> Types.TUnit
   | _ -> Types.TUnit
 
@@ -1615,7 +1636,8 @@ let prim_table : (string, value list -> value) Hashtbl.t =
             | VString _ -> "string" | VInt _ -> "int" | VFloat _ -> "float"
             | VBool _ -> "bool" | VArray _ -> "array" | VUnit -> "unit"
             | VActor (c,_) -> "actor("^c^")"
-            | VFuture _ -> "future"));
+            | VFuture _ -> "future"
+            | VResult _ -> "result"));
            VUnit
        | _ -> failwith "actor_dump(x): arity 1 expected"));
     ("capabilities",
@@ -1823,6 +1845,41 @@ let call_prim name args =
       Hashtbl.iter (fun k _ -> print_endline ("  - " ^ k)) prim_table; *)
       failwith ("Unknown function: " ^ name)
 
+(* ---- メッシュ配備のための表 ----------------------------------- *)
+(* クラス名 -> そのクラスを定義したソース原文。
+   pprint_class で組み立て直すと select が落ちるので、原文を持つ。
+   これがネットワークへ送る荷物になる。 *)
+let unit_src : (string, string) Hashtbl.t = Hashtbl.create 16
+let register_unit_source (cls : string) (src : string) : unit =
+  Hashtbl.replace unit_src cls src
+let source_of_class (cls : string) : string option =
+  Hashtbl.find_opt unit_src cls
+
+(* ノード名 -> そのノードが許す効果の集合。
+   実時間ノードに ai や net を持つコードを配ってはならない、を機械的に止める。 *)
+let node_policy : (string, Types.SSet.t) Hashtbl.t = Hashtbl.create 8
+let set_node_policy (node : string) (effs : string list) : unit =
+  Hashtbl.replace node_policy node (Types.eff_of_list effs)
+let policy_of_node (node : string) : Types.SSet.t option =
+  Hashtbl.find_opt node_policy node
+
+(* 実行時に保持している資源。検査は静的に行うが、
+   実行時にも二重取得・未取得の解放を捕まえられるようにしておく。 *)
+let held_res : (string, unit) Hashtbl.t = Hashtbl.create 8
+let held_mu = Mutex.create ()
+let acquire_res (r : string) : unit =
+  Mutex.lock held_mu;
+  let dup = Hashtbl.mem held_res r in
+  if not dup then Hashtbl.replace held_res r ();
+  Mutex.unlock held_mu;
+  if dup then failwith ("acquire: resource already held: " ^ r)
+let release_res (r : string) : unit =
+  Mutex.lock held_mu;
+  let had = Hashtbl.mem held_res r in
+  if had then Hashtbl.remove held_res r;
+  Mutex.unlock held_mu;
+  if not had then failwith ("release: resource not held: " ^ r)
+
 let add_prim ?(capability="Dynamic") ?(psig="any") ?(description="runtime primitive") name fn =
   Hashtbl.replace prim_table name fn;
   register_dynamic_primitive ~capability ~psig ~description name
@@ -1830,6 +1887,32 @@ let add_prim ?(capability="Dynamic") ?(psig="any") ?(description="runtime primit
 let find_actor_exn name =
   try Hashtbl.find actor_table name
   with Not_found -> failwith ("send: unknown actor: " ^ name)
+
+(* すべてのアクターのメールボックスが空になるまで待つ。
+   スクリプトを流し終えた直後に REPL が抜けると、まだ処理されていない
+   メッセージの出力が丸ごと落ちる。実測では 20 回中 7 回、行が欠けていた。
+   静止（どのキューも空）が続けて数回観測できたら落ち着いたとみなす。
+   上限は 3 秒。無限ループのプログラムで止まらなくなるのを避けるため。 *)
+let drain_actors ?(max_ms = 3000) () : unit =
+  let pending () =
+    Hashtbl.fold (fun _ a n -> n + Queue.length a.queue) actor_table 0
+    + !in_flight in
+  let quiet = ref 0 in
+  let waited = ref 0 in
+  while !quiet < 5 && !waited < max_ms do
+    if pending () = 0 then incr quiet else quiet := 0;
+    Thread.delay 0.02;
+    waited := !waited + 20
+  done;
+  flush stdout
+
+(* remote(node, actor) の宛先を解決する。
+   同じ機械の上で複数ノードを模しているときは、配備先が "node/actor" という
+   名前で局所表にいる。そこにいれば局所送信でよく、いなければ本物の遠隔送信になる。
+   実機の Xinu メッシュでは後者だけが使われる。 *)
+let mesh_local_name (node : string) (actor_name : string) : string option =
+  let n = node ^ "/" ^ actor_name in
+  if Hashtbl.mem actor_table n then Some n else None
 
 let actual_local_target (actor:actor) (tgt:string) : string =
   if tgt = "self" then actor.name
@@ -1909,7 +1992,10 @@ let rec eval_expr (actor:actor) (e : expr) =
        | VFuture f ->
            (match dl with
             | None -> await_future f            (* 期限なし: 従来どおり無期限に待つ *)
-            | Some (ms, alt) ->
+            | Some (ms, None) ->
+                (* else 無し: 成功したかどうかを値に持たせる *)
+                VResult (await_future_timeout f ms)
+            | Some (ms, Some alt) ->
                 (match await_future_timeout f ms with
                  | Some v -> v
                  | None   -> eval_expr actor alt))   (* 期限切れ -> else 節 *)
@@ -1919,7 +2005,8 @@ let rec eval_expr (actor:actor) (e : expr) =
        | VFuture f ->
            (match dl with
             | None -> await_future f
-            | Some (ms, alt) ->
+            | Some (ms, None) -> VResult (await_future_timeout f ms)
+            | Some (ms, Some alt) ->
                 (match await_future_timeout f ms with
                  | Some v -> v
                  | None   -> eval_expr actor alt))
@@ -1929,38 +2016,8 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
   | Assign (x, e) -> set_var_a actor x (eval_expr actor e)
   | VarDecl (name, rhs) -> (
     match rhs.desc with
-    | New (cls, args) -> (
-    let cobj = find_class_exn cls in
-      register_instance_source name cobj;
-      let obj  = { cobj with cname = cls } in
-      let actor_inst = create_actor obj.cname cls in
-        List.iter
-        (fun (st:Ast.stmt) ->
-          match st.sdesc with
-        | VarDecl (k, init) ->
-          let v = eval_expr actor_inst init in
-            Hashtbl.replace actor_inst.env k v
-        | _ -> ()
-        ) obj.fields;
-        List.iter (fun (m:method_decl) ->
-          Hashtbl.replace actor_inst.methods m.mname m
-        ) obj.methods;
-        Hashtbl.add actor_table name actor_inst;
-        ignore (Thread.create (fun () -> actor_loop actor_inst) ());
-        let init_opt = List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods in
-          (match init_opt with
-          | None ->
-            Printf.printf "[Actor] %s: no init; skipped\n%!" name;
-            ()
-          | Some m ->
-            let need = List.length m.params and got  = List.length args in
-              if need <> got then
-                Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
-                  name need got
-              else
-                send_message ~from:"<new>" name (mk_stmt (CallStmt("init", args))))
-          );
-          set_var_a actor name (actor_value ~name ~cls)
+    | New (cls, args) ->
+        set_var_a actor name (spawn_new_actor ~name ~cls ~args ~caller:actor)
     | _ -> set_var_a actor name (eval_expr actor rhs))
   | If (cond, tbr, fbr) ->
       if to_bool (eval_expr actor cond)
@@ -2053,12 +2110,11 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
           (mk_stmt (CallStmt (meth, arg_exprs)))
 
     | RemoteTarget (hostport, tgt) ->
-        Remote_client.remote_send
-          ~hostport
-          ~to_actor:tgt
-          ~meth
-          ~args:arg_exprs
-          ~from:actor.name
+        (match mesh_local_name hostport tgt with
+         | Some n -> send_message ~from:actor.name n (mk_stmt (CallStmt (meth, arg_exprs)))
+         | None ->
+             Remote_client.remote_send
+               ~hostport ~to_actor:tgt ~meth ~args:arg_exprs ~from:actor.name)
     end
   | UnsafeSend (target, meth, args) ->
     let arg_vals = List.map (eval_expr actor) args in
@@ -2068,12 +2124,11 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
         send_message ~from:actor.name (actual_local_target actor tgt)
           (mk_stmt (CallStmt (meth, arg_exprs)))
     | RemoteTarget (hostport, tgt) ->
-        Remote_client.remote_send
-          ~hostport
-          ~to_actor:tgt
-          ~meth
-          ~args:arg_exprs
-          ~from:actor.name
+        (match mesh_local_name hostport tgt with
+         | Some n -> send_message ~from:actor.name n (mk_stmt (CallStmt (meth, arg_exprs)))
+         | None ->
+             Remote_client.remote_send
+               ~hostport ~to_actor:tgt ~meth ~args:arg_exprs ~from:actor.name)
     end
   | Select (cases, (to_ms_opt, to_body_opt)) ->
     let start = Unix.gettimeofday () in
@@ -2122,6 +2177,51 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
                loop ())
     in
     loop ()
+(* アクターを一体作って走らせる。
+   フィールドの初期化からも呼ぶので、独立した関数にしてある。
+   以前はこの処理が VarDecl の枝に直書きされていて、
+   フィールド初期化は eval_expr を呼んでいた。ところが eval_expr の New は
+   failwith するので、`var x = new Inner();` をフィールドに書くと
+   アクターの生成そのものが例外で止まり、そのアクターは
+   メッセージを一つも処理しないまま黙って消えていた。 *)
+and spawn_new_actor ~(name:string) ~(cls:string) ~(args:Ast.expr list)
+                        ~(caller:actor) : value =
+  ignore caller;
+  let cobj = find_class_exn cls in
+  register_instance_source name cobj;
+  let obj = { cobj with cname = cls } in
+  let actor_inst = create_actor obj.cname cls in
+  List.iter
+    (fun (st:Ast.stmt) ->
+      match st.sdesc with
+      | VarDecl (k, init) ->
+          let v =
+            (match init.desc with
+             (* ★ フィールドが new のときは、ここで子アクターを作る。
+                名前は親と欄の名前から作って一意にする。 *)
+             | New (cls2, args2) ->
+                 spawn_new_actor ~name:(name ^ "#" ^ k) ~cls:cls2 ~args:args2
+                   ~caller:actor_inst
+             | _ -> eval_expr actor_inst init)
+          in
+          Hashtbl.replace actor_inst.env k v
+      | _ -> ())
+    obj.fields;
+  List.iter (fun (m:method_decl) ->
+    Hashtbl.replace actor_inst.methods m.mname m) obj.methods;
+  Hashtbl.replace actor_table name actor_inst;
+  ignore (Thread.create (fun () -> actor_loop actor_inst) ());
+  (match List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods with
+   | None -> ()
+   | Some m ->
+       let need = List.length m.params and got = List.length args in
+       if need <> got then
+         Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
+           name need got
+       else
+         send_message ~from:"<new>" name (mk_stmt (CallStmt("init", args))));
+  actor_value ~name ~cls
+
 and actor_loop actor = (
   while true do
     Mutex.lock actor.mutex;
@@ -2130,6 +2230,7 @@ and actor_loop actor = (
     done;
     let msg = Queue.pop actor.queue in
     Mutex.unlock actor.mutex;
+    bump_in_flight 1;
     let prev_actor_name = get_current_actor_name () in
     let prev_msg_id = get_current_msg_id () in
     let prev_session_id = get_current_session_id () in
@@ -2157,6 +2258,7 @@ and actor_loop actor = (
     set_current_session_id prev_session_id;
     set_current_actor_name prev_actor_name;
     set_current_method_name None;
+    bump_in_flight (-1);
     done)
 and resolve_actor_from_term env recv_term =
   match recv_term with

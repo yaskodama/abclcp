@@ -1,0 +1,4 @@
+// 期待: 引数の数が合わない send
+class Dev2 { method a(x) : unit !{log} { print(x); } }
+class Use4 { method f(y: Dev2) : unit !{log} { send y.a(1, 2); } }
+var d = new Dev2(); var u = new Use4(); send u.f(d);

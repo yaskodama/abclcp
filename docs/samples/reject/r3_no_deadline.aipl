@@ -1,0 +1,4 @@
+// 期待: 期限のない now（既定は警告 / AIOS_STRICT_DEADLINE=1 で型エラー）
+class C { method f(x) : int { reply(x); } }
+var c = new C();
+print(now c.f(1));

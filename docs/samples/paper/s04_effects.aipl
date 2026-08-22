@@ -1,0 +1,11 @@
+// s04: 効果注釈 ---- メソッドが世界に及ぼす作用を宣言する
+class Store {
+  var n = 0;
+  method bump()  : int !{mut}  { n = n + 1; reply(n); }   // 自分の状態を変える
+  method peek()  : int !{}     { reply(n); }              // 純粋。自由に複製できる
+  method show()  : unit !{log} { print("n=" ++ n); }      // print は log
+}
+var s = new Store();
+print(now s.bump() timeout 100 else -1);
+print(now s.peek() timeout 100 else -1);
+send s.show();

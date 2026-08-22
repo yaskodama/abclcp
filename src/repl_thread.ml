@@ -338,6 +338,11 @@ let load_file (fname : string) : Ast.program option =
     end;
 
     if Typecheck.run decls then begin
+      (* ★ メッシュへ配る荷物として、このファイルの原文をクラス名で引けるようにする。
+         組み立て直すのではなく原文を持つ（select が落ちないように）。 *)
+      List.iter (function
+        | Ast.Class c -> Eval_thread.register_unit_source c.Ast.cname src
+        | _ -> ()) decls;
       Printf.printf "[Loaded] %s\n%!" fname;
       Some decls
     end else begin
@@ -371,13 +376,15 @@ let rec string_of_expr (e : Ast.expr) =
       "now " ^ string_of_send_target tgt ^ "." ^ meth ^ "(" ^
       String.concat ", " (List.map string_of_expr args) ^ ")"
       ^ (match dl with None -> ""
-         | Some (ms, a) -> Printf.sprintf " timeout %d else %s" ms (string_of_expr a))
+         | Some (ms, None) -> Printf.sprintf " timeout %d" ms
+         | Some (ms, Some a) -> Printf.sprintf " timeout %d else %s" ms (string_of_expr a))
   | FutureSend (tgt, meth, args) ->
       "future " ^ string_of_send_target tgt ^ "." ^ meth ^ "(" ^
       String.concat ", " (List.map string_of_expr args) ^ ")"
   | Await (e, dl) -> "await " ^ string_of_expr e
       ^ (match dl with None -> ""
-         | Some (ms, a) -> Printf.sprintf " timeout %d else %s" ms (string_of_expr a))
+         | Some (ms, None) -> Printf.sprintf " timeout %d" ms
+         | Some (ms, Some a) -> Printf.sprintf " timeout %d else %s" ms (string_of_expr a))
   
 let rec string_of_stmt (st: Ast.stmt) =
   match st.sdesc with
@@ -448,35 +455,15 @@ let rec process_command line =
       match s.sdesc with
       | VarDecl (name, rhs) -> (
         match rhs.desc with
-        | New (cls, args) -> (
-          let cobj = Eval_thread.find_class_exn cls in
-            Eval_thread.register_instance_source name cobj;
-            let obj  = { cobj with cname = cls } in
-            let actor_inst = Eval_thread.create_actor name cls in
-            List.iter (fun (st:Ast.stmt) ->
-              match st.sdesc with
-              | VarDecl (k, init) ->
-                let v = Eval_thread.eval_expr actor_inst init in
-                Hashtbl.replace actor_inst.env k v
-              | _ -> ()
-            ) obj.fields;
-            List.iter (fun (m:method_decl) -> Hashtbl.replace actor_inst.methods m.mname m
-            ) obj.methods;
-            Hashtbl.add Eval_thread.actor_table name actor_inst;
-            ignore (Thread.create (fun () -> Eval_thread.actor_loop actor_inst) ());
-            let init_opt = List.find_opt (fun (m:Ast.method_decl) -> m.mname = "init") obj.methods in
-            (match init_opt with
-            | None ->
-              Printf.printf "[Actor] %s: no init; skipped\n%!" name; ()
-            | Some m ->
-              let need = List.length m.params and got  = List.length args in
-                if need <> got then
-                  Printf.printf "[Actor] %s.init arity mismatch: expected %d but %d given — skipped\n%!"
-                    name need got
-                else
-                  Eval_thread.send_message ~from:"<new>" name (mk_stmt (CallStmt ("init", args)))
-		  ));
-            Hashtbl.replace top_actor.env name (Eval_thread.actor_value ~name ~cls)
+        | New (cls, args) ->
+          (* アクターの生成は Eval_thread.spawn_new_actor に一本化する。
+             ここに同じ処理の写しがもう一つあり、フィールドの初期化を
+             eval_expr で行っていた。eval_expr の New は failwith するので、
+             `var x = new Inner();` をフィールドに書いたクラスは
+             生成の途中で例外になり、メッセージを一つも処理しなかった。
+             （文法規則が2箇所にあるのと同じ型の罠。片方だけ直しても直らない。） *)
+          let v = Eval_thread.spawn_new_actor ~name ~cls ~args ~caller:top_actor in
+            Hashtbl.replace top_actor.env name v
         | _ ->
             let v = Eval_thread.eval_expr top_actor rhs in
             Hashtbl.replace top_actor.env name v;
@@ -489,7 +476,14 @@ let rec process_command line =
          ずれの原因はここだけだった。
          宛先がまだ無い場合（前方参照）だけ従来どおり後回しにする。 *)
       | Send (tgt, mname, args) -> (
-        let target = string_of_send_target tgt in
+        (* remote(node, actor) は、同じ機械で模したノードなら "node/actor" にいる *)
+        let target =
+          (match tgt with
+           | Ast.RemoteTarget (node, a) ->
+               (match Eval_thread.mesh_local_name node a with
+                | Some n -> n
+                | None -> string_of_send_target tgt)
+           | _ -> string_of_send_target tgt) in
         let thunk () =
           (* 引数はトップレベルの環境で評価してから送る。
              生の式のまま送ると、受け手の環境で `Var "d"` が解決できず
@@ -502,7 +496,14 @@ let rec process_command line =
         if Eval_thread.actor_exists target then thunk ()
         else pending_global_sends := thunk :: !pending_global_sends)
       | UnsafeSend (tgt, mname, args) -> (
-        let target = string_of_send_target tgt in
+        (* remote(node, actor) は、同じ機械で模したノードなら "node/actor" にいる *)
+        let target =
+          (match tgt with
+           | Ast.RemoteTarget (node, a) ->
+               (match Eval_thread.mesh_local_name node a with
+                | Some n -> n
+                | None -> string_of_send_target tgt)
+           | _ -> string_of_send_target tgt) in
         let thunk () =
           let arg_vals = List.map (Eval_thread.eval_expr top_actor) args in
           let arg_exprs = List.map (fun v -> mk_expr (Eval_thread.expr_of_value v)) arg_vals in
@@ -808,6 +809,14 @@ let run_repl () =
    | Some f ->
        Printf.printf "[script] %s\n%!" f;
        process_command ("script " ^ f);
+       (* ★ スクリプトを流し終えたら、アクターが落ち着くまで待ってから抜ける。
+          これが無いと、まだ処理していないメッセージの出力が丸ごと落ちる。 *)
+       (* アクターが落ち着くまで待ってから抜ける。
+          ここで flush_logs_to_repl / flush_replies_to_repl も呼ぶと、
+          すでに出した行をもう一度出してしまい、出力が二重になる。
+          必要なのは「待つ」ことだけ。 *)
+       Eval_thread.drain_actors ();
+       flush stdout;
        script_file := None
    | None -> ());
   start_repl ()  (* 既存の対話ループ *)
@@ -842,6 +851,100 @@ let () =
   (match !script_file with
    | Some f -> Printf.printf "[info] -f: %s\n%!" f
    | None   -> Printf.printf "[info] -f: (none)\n%!");
+
+  (* ---- メッシュ配備 ------------------------------------------------
+     アクターのソースを他ノードへ送り、相手先で構文解析・型検査してから
+     実体化する。ここでは輸送を同一プロセス内で模しているが、
+     言語から見える形（何を送り、相手が何を検査するか）は実機と同じである。 *)
+
+  add_prim ~capability:"Core" ~psig:"string -> string"
+    ~description:"the source text that defines a class" "source_of" (function
+    | [Eval_thread.VString cls] ->
+        (match Eval_thread.source_of_class cls with
+         | Some src -> Eval_thread.VString src
+         | None -> failwith ("source_of: no source for class " ^ cls))
+    | _ -> failwith "source_of(class): a class name is expected");
+
+  add_prim ~capability:"Core" ~psig:"(string, string) -> unit"
+    ~description:"declare which effects a mesh node accepts" "node_allow" (function
+    | [Eval_thread.VString node; Eval_thread.VString effs] ->
+        let parts =
+          String.split_on_char ',' effs
+          |> List.map String.trim |> List.filter (fun x -> x <> "") in
+        Eval_thread.set_node_policy node parts;
+        Eval_thread.VUnit
+    | _ -> failwith "node_allow(node, \"eff1,eff2\"): two strings are expected");
+
+  add_prim ~capability:"Net" ~psig:"(string, string, string) -> string"
+    ~description:"ship a class source to a node, compile it there and start it"
+    "deploy" (function
+    | [Eval_thread.VString node; Eval_thread.VString cls; Eval_thread.VString aname] ->
+        let src =
+          match Eval_thread.source_of_class cls with
+          | Some s -> s
+          | None -> failwith ("deploy: no source for class " ^ cls) in
+        (* --- 相手先での処理（JIT）。ここが実機では Xinu ノード側になる --- *)
+        let lb = Lexing.from_string src in
+        let decls =
+          try Parser.program Lexer.token lb
+          with _ -> failwith ("deploy: the shipped source does not parse at " ^ node) in
+        if not (Typecheck.run decls) then
+          failwith ("deploy: the shipped source does not type-check at " ^ node);
+        (* 受け入れ方針の照合：クラスが必要とする効果がノードの許す範囲か *)
+        (match Eval_thread.policy_of_node node with
+         | None -> ()
+         | Some allowed ->
+             let need =
+               List.fold_left (fun acc d ->
+                 match d with
+                 | Ast.Class c when c.Ast.cname = cls ->
+                     List.fold_left (fun acc (m : Ast.method_decl) ->
+                       Types.SSet.union acc (Types.lookup_method_eff cls m.Ast.mname))
+                       acc c.Ast.methods
+                 | _ -> acc) Types.SSet.empty decls in
+             let over = Types.SSet.diff need allowed in
+             if not (Types.SSet.is_empty over) then
+               failwith (Printf.sprintf
+                 "deploy: node %s does not accept effect(s) {%s} required by %s"
+                 node (String.concat ", " (Types.SSet.elements over)) cls));
+        (* 相手先でクラスを登録して実体化する *)
+        List.iter (function
+          | Ast.Class c -> Eval_thread.register_class c
+          | _ -> ()) decls;
+        let handle = node ^ "/" ^ aname in
+        let top = Eval_thread.create_actor "<deploy>" "<deploy>" in
+        ignore (Eval_thread.spawn_new_actor ~name:handle ~cls ~args:[] ~caller:top);
+        Printf.printf "[deploy] %s -> %s (compiled at destination)\n%!" cls handle;
+        Eval_thread.VString handle
+    | _ -> failwith "deploy(node, class, name): three strings are expected");
+
+  (* 資源の取得と解放。実行時は保持集合を持つだけで、
+     対になっているかの検査は型検査の側で行う。 *)
+  add_prim ~capability:"Core" ~psig:"string -> unit"
+    ~description:"acquire a named resource" "acquire" (function
+    | [Eval_thread.VString r] -> Eval_thread.acquire_res r; Eval_thread.VUnit
+    | _ -> failwith "acquire(name): a string is expected");
+  add_prim ~capability:"Core" ~psig:"string -> unit"
+    ~description:"release a named resource" "release" (function
+    | [Eval_thread.VString r] -> Eval_thread.release_res r; Eval_thread.VUnit
+    | _ -> failwith "release(name): a string is expected");
+
+  (* result<τ> を扱う組込み。期限つきの待ちで else を書かないと result<τ> が返る。 *)
+  add_prim ~capability:"Core" ~psig:"result<a> -> bool"
+    ~description:"true if the timed wait succeeded" "is_ok" (function
+    | [Eval_thread.VResult r] -> Eval_thread.VBool (r <> None)
+    | _ -> failwith "is_ok(r): a result is expected");
+
+  add_prim ~capability:"Core" ~psig:"result<a> -> bool"
+    ~description:"true if the timed wait ran out of time" "timed_out" (function
+    | [Eval_thread.VResult r] -> Eval_thread.VBool (r = None)
+    | _ -> failwith "timed_out(r): a result is expected");
+
+  add_prim ~capability:"Core" ~psig:"(result<a>, a) -> a"
+    ~description:"the value of a result, or the given default" "value" (function
+    | [Eval_thread.VResult (Some v); _] -> v
+    | [Eval_thread.VResult None; d] -> d
+    | _ -> failwith "value(r, default): a result and a default are expected");
 
   add_prim ~capability:"Core.Array" ~psig:"() -> any[]" ~description:"create an empty array" "array_empty" (function
     | [] -> make_array [||]

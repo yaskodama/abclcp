@@ -20,9 +20,11 @@ type expr = {
   | Array of expr list * Types.ty option
   (* now / await は期限と else 節を持てる: (ミリ秒, 期限切れ時の式)。
      None は期限なし（当面は警告。AIOS_STRICT_DEADLINE=1 でエラー）。 *)
-  | NowSend of send_target * string * expr list * (int * expr) option
+  (* 期限は (ミリ秒, else の式)。else が無い場合は None で、
+     そのときの値は result<τ> になる（成功したかどうかを型で持つ）。 *)
+  | NowSend of send_target * string * expr list * (int * expr option) option
   | FutureSend of send_target * string * expr list
-  | Await of expr * (int * expr) option
+  | Await of expr * (int * expr option) option
 
 and send_target =
   | LocalTarget of string
@@ -202,9 +204,9 @@ let children_of_expr (e:expr) : ('a list) =
   | Call (_,arg)  -> arg
   | Expr e        -> [e]
   | New (_, args)              -> args                 (* ★ 追加 *)
-  | NowSend (_, _, args, d)    -> args @ (match d with None -> [] | Some (_,a) -> [a])
+  | NowSend (_, _, args, d)    -> args @ (match d with None -> [] | Some (_, None) -> [] | Some (_, Some a) -> [a])
   | FutureSend (_, _, args)    -> args
-  | Await (e, d)               -> e :: (match d with None -> [] | Some (_,a) -> [a])
+  | Await (e, d)               -> e :: (match d with None -> [] | Some (_, None) -> [] | Some (_, Some a) -> [a])
   | _             -> []
 
 let rec dump_expr ?(prefix="") ?(is_last=true) (e : expr) =
@@ -359,14 +361,16 @@ let rec pprint_expr ?(lvl=0) (e:expr) : string =
       Printf.sprintf "now %s.%s(%s)%s" (string_of_send_target tgt) meth
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
         (match d with None -> ""
-         | Some (ms,a) -> Printf.sprintf " timeout %d else %s" ms (pprint_expr ~lvl a))
+         | Some (ms, None) -> Printf.sprintf " timeout %d" ms
+         | Some (ms, Some a) -> Printf.sprintf " timeout %d else %s" ms (pprint_expr ~lvl a))
   | FutureSend (tgt, meth, args) ->
       Printf.sprintf "future %s.%s(%s)" (string_of_send_target tgt) meth
         (String.concat ", " (List.map (pprint_expr ~lvl) args))
   | Await (e, d) ->
       "await " ^ pprint_expr ~lvl e
       ^ (match d with None -> ""
-         | Some (ms,a) -> Printf.sprintf " timeout %d else %s" ms (pprint_expr ~lvl a))
+         | Some (ms, None) -> Printf.sprintf " timeout %d" ms
+         | Some (ms, Some a) -> Printf.sprintf " timeout %d else %s" ms (pprint_expr ~lvl a))
 
 let rec pprint_stmt ?(lvl=0) (s:stmt) : string =
   let indent = String.make (lvl*2) ' ' in

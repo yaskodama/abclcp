@@ -1,0 +1,2 @@
+// 期待: 宣言した戻り値型と reply の型が違う
+class C2 { method f(x) : int { reply("not an int"); } }

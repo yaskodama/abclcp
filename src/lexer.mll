@@ -29,7 +29,11 @@ rule token = parse
 | "true"       { TRUE }
 | "false"      { FALSE }
 | "class"      { CLASS }
-| "become"     { BECOME }
+(* become は 2026-08-22 に言語から外した。
+   ABCL/1 に無く、543 本の実プログラムで一つも使われておらず、
+   型を守るために課した制限（置換先が全メッセージを受ける）を満たすと
+   状態フィールドと分岐で書くのとほぼ同じになるため。
+   状態の置き換えは、メッシュでは deploy による配備で表す。 *)
 | "method"     { METHOD }
 | "float"      { FLOAT }
 | "call"       { CALL }

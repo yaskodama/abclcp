@@ -1,0 +1,11 @@
+// 期待: ai と net を宣言していない ---- 弾かれる（現状も弾ける。r5 の対照）
+class Planner {
+  method plan(g) : string !{ai, net} { reply(ai_call("plan " ++ g)); }
+}
+class Ctrl {
+  var p = new Planner();
+  method viaNow() : unit !{time, log} {
+    var r = now p.plan("x") timeout 100 else "";
+    print(r);
+  }
+}

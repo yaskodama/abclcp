@@ -1,0 +1,13 @@
+// 期待: r4 と同じ理由で弾かれるべき ---- ai と net を宣言していない
+// 現状: 通ってしまう（効果伝播の穴。now 版は弾かれるのに future+await では逃げる）
+class Planner {
+  method plan(g) : string !{ai, net} { reply(ai_call("plan " ++ g)); }
+}
+class Ctrl {
+  var p = new Planner();
+  method viaFutureAwait() : unit !{time, log} {
+    var f = future p.plan("x");
+    var r = await f timeout 100 else "";
+    print(r);
+  }
+}

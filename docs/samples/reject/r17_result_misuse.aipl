@@ -1,0 +1,5 @@
+// 期待: else を書かない待ちは result<int> になる。int としては使えない。
+class S4 { method f(x) : int { reply(x); } }
+var s = new S4();
+var r = now s.f(1) timeout 100;
+print(r + 1);

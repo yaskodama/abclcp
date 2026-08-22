@@ -1,0 +1,6 @@
+// 期待: reply の被覆漏れ ---- 全経路で reply しない
+class C {
+  method f(x) : int {
+    if (x > 0) { reply(1); }
+  }
+}

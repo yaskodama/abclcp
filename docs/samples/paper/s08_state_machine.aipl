@@ -1,0 +1,22 @@
+// s08: 状態機械 ---- become を使わずに状態フィールドで書く
+//
+//      become は 2026-08-22 に言語から外した。
+//      型を守るために「置換先は置換前の全メッセージを受けること」を
+//      課すと、結局すべての状態がすべてのメッセージを受けることになり、
+//      下の書き方とほぼ同じになる。しかもこちらは
+//      アクター型が実行時に変わらないので、外から見た型が嘘にならない。
+class Door {
+  var open = false;
+
+  method state() : unit !{log} {
+    if (open) { print("opened"); } else { print("closed"); }
+  }
+  method toggle() : unit !{mut, log} {
+    if (open) { print("closing"); open = false; }
+    else      { print("opening"); open = true; }
+  }
+}
+var d = new Door();
+send d.state();
+send d.toggle();
+send d.state();

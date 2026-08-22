@@ -1,0 +1,5 @@
+// 期待: 効果注釈と本体の食い違い ---- mut を宣言していない
+class C {
+  var n = 0;
+  method f(x) : int !{log} { n = n + 1; reply(n); }
+}

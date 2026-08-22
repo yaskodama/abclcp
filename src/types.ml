@@ -1,6 +1,10 @@
 (* types.ml *)
 open Location
 
+(* 効果の名前と、メソッドの効果キー（"クラス名#メソッド名"）を入れる集合。
+   ty が TFuture で参照するので、型定義より前に置く。 *)
+module SSet = Set.Make(String)
+
 type tvar = { id: int; mutable link : ty option }
 and ty =
   | TVar of tvar ref
@@ -12,7 +16,15 @@ and ty =
   | TFun of ty list * ty
   | TActor of string * (string * ty) list
   | TArray of ty
-  | TFuture of ty
+  (* future<τ ! ε>。ε は「この future を await した側が負う効果」で、
+     呼ばれる側のメソッド（"クラス名#メソッド名"）の集合として持つ。
+     実効果は method_effs 側で本体検査中に育つので、ここでは名前で参照し、
+     await の地点で now と同じ辺を張る。集合にしてあるのは、
+     別々の呼び出し由来の future が単一化されうるため。 *)
+  | TFuture of ty * SSet.t ref
+  (* result<τ>。期限つきの待ちで else を書かなかったときの型。
+     成功した値か、期限切れかを区別する。組込みの is_ok / value で取り出す。 *)
+  | TResult of ty
   | TAny
   | TRecord of (string * ty) list
 and scheme = Forall of int list * ty
@@ -142,7 +154,7 @@ let reset_method_rets () : unit = Hashtbl.reset method_ret_tys
 
    ai と net を分けるのが要点。オンデバイス推論は {ai} だけを持ち
    net を持たないので、「AI を使うが機外へは出ない」がシグネチャに現れる。 *)
-module SSet = Set.Make(String)
+(* SSet は ty の定義より前に置いてある（future が効果キー集合を持つため） *)
 
 let all_effects = ["mut"; "time"; "io"; "mem"; "net"; "ai"; "fs"; "log"]
 
@@ -197,6 +209,39 @@ let propagate_effects () : unit =
       !now_edges
   done
 
+(* now / await の辺（待つ側 -> 待たれる側）に閉路があれば、
+   循環待ち＝デッドロックの可能性がある。
+   この辺集合は効果の伝播のために既に作ってあるので、閉路検査はほぼ只である。
+   保守的な検査であることに注意 ---- メソッド単位で見るので、
+   別々の実体どうしなら実際には循環しない場合も拾う。
+   遠隔配備先（deploy / remote）は見えないので、そこは守れない。 *)
+let wait_cycle () : string list option =
+  let succ = Hashtbl.create 32 in
+  List.iter (fun (a, b) ->
+    let cur = try Hashtbl.find succ a with Not_found -> [] in
+    Hashtbl.replace succ a (b :: cur)) !now_edges;
+  let state = Hashtbl.create 32 in     (* 0 未訪問 / 1 探索中 / 2 済み *)
+  let found = ref None in
+  let rec dfs path n =
+    if !found <> None then () else
+    match Hashtbl.find_opt state n with
+    | Some 1 ->
+        (* n から始まる閉路。path は逆順に積んである *)
+        let rec take acc = function
+          | [] -> acc
+          | x :: _ when x = n -> n :: acc
+          | x :: r -> take (x :: acc) r in
+        found := Some (take [] path)
+    | Some 2 -> ()
+    | _ ->
+        Hashtbl.replace state n 1;
+        List.iter (dfs (n :: path))
+          (try Hashtbl.find succ n with Not_found -> []);
+        Hashtbl.replace state n 2
+  in
+  Hashtbl.iter (fun k _ -> if !found = None then dfs [] k) succ;
+  !found
+
 let reset_effects () : unit =
   Hashtbl.reset method_effs; now_edges := []
 
@@ -244,7 +289,11 @@ let rec string_of_ty (t : ty) : string =
       in
       "{" ^ fs ^ "}"
   | TArray t1 -> Printf.sprintf "%s array" (string_of_ty t1)
-  | TFuture t1 -> Printf.sprintf "future %s" (string_of_ty t1)
+  | TResult t1 -> Printf.sprintf "result %s" (string_of_ty t1)
+  | TFuture (t1, ks) ->
+      if SSet.is_empty !ks then Printf.sprintf "future %s" (string_of_ty t1)
+      else Printf.sprintf "future %s ! {%s}" (string_of_ty t1)
+             (String.concat ", " (SSet.elements !ks))
   | TFun (ps, r) ->
     let ps_s =
       match ps with
@@ -265,9 +314,17 @@ let rec occurs (v : tvar ref) (t : ty) : bool =
   match repr t with
   | TVar v'      -> v == v'
   | TArray t1    -> occurs v t1
-  | TFuture t1   -> occurs v t1
+  | TFuture (t1, _) -> occurs v t1
+  | TResult t1 -> occurs v t1
   | TFun(ps,r)   -> List.exists (occurs v) ps || occurs v r
   | _            -> false
+
+(* 異なるクラスのアクター型を単一化してしまう従来の挙動へ戻す逃げ道。
+   既存コードが落ちたときの一時退避用で、既定は off。 *)
+let lax_actor () : bool =
+  match Sys.getenv_opt "AIOS_LAX_ACTOR" with
+  | Some ("1" | "true" | "yes") -> true
+  | _ -> false
 
 let rec unify ?(loc = Location.dummy) (t1 : ty) (t2 : ty) : unit =
   match repr t1, repr t2 with
@@ -282,13 +339,25 @@ let rec unify ?(loc = Location.dummy) (t1 : ty) (t2 : ty) : unit =
   | TFloat,  TFloat
   | TBool,   TBool
   | TString, TString
-  | TUnit,   TUnit
-  | TActor (_,_), TActor (_,_) ->
-      ()
+  | TUnit,   TUnit -> ()
+  (* アクター型は名前で区別する。
+     "?" は実行時の値から作られた未知のクラスなので、どちらとも合わせる
+     （ActorRef から作られる TActor ("?", [])）。
+     AIOS_LAX_ACTOR=1 で従来どおり無条件に成功させる。 *)
+  | TActor (a, _), TActor (b, _) ->
+      if lax_actor () || a = b || a = "?" || b = "?" then ()
+      else
+        raise (Type_error (loc,
+          Printf.sprintf "actor type mismatch: actor(%s) vs actor(%s)" a b))
   | TArray a, TArray b ->
       unify ~loc a b  (* ★ loc を引き継ぐ *)
-  | TFuture a, TFuture b ->
-      unify ~loc a b
+  | TResult a, TResult b -> unify ~loc a b
+  | TFuture (a, ka), TFuture (b, kb) ->
+      unify ~loc a b;
+      (* 効果キーは和にして両方へ書き戻す。どちらの ref も他所から
+         参照されうるので、片方だけ更新すると await 地点で取りこぼす。 *)
+      let u = SSet.union !ka !kb in
+      ka := u; kb := u
   | TFun (ps1, r1), TFun (ps2, r2) ->
       if List.length ps1 <> List.length ps2 then
         raise (Type_error (loc, "arity mismatch"));
@@ -322,7 +391,8 @@ let rec prune t =
            (!tv).link <- Some t'';
            t'')
   | TArray t1 -> TArray (prune t1)
-  | TFuture t1 -> TFuture (prune t1)
+  | TFuture (t1, ks) -> TFuture (prune t1, ks)
+  | TResult t1 -> TResult (prune t1)
   | TRecord fs -> TRecord (List.map (fun (l,t1) -> (l, prune t1)) fs)
   | TActor (n,ms) -> TActor (n, List.map (fun (m,t1)->(m,prune t1)) ms)
   | TFun (ps,r) -> TFun (List.map prune ps, prune r)
@@ -346,7 +416,8 @@ let string_of_ty_pretty (t : ty) : string =
     match prune ty with
     | TVar v      -> name_of (!v).id
     | TArray t1   -> go t1 ^ "[]"
-    | TFuture t1  -> "future " ^ go t1
+    | TFuture (t1, _) -> "future " ^ go t1
+    | TResult t1 -> "result " ^ go t1
     | TRecord fs  ->
         "{" ^ (fs |> List.map (fun (l,t)-> l ^ " : " ^ go t) |> String.concat "; ") ^ "}"
     | TActor(n,ms) ->
@@ -376,7 +447,8 @@ let rec ftv_ty t =
        | None -> ISet.singleton (!tv).id
        | Some t' -> ftv_ty t')
   | TArray t1 -> ftv_ty t1
-  | TFuture t1 -> ftv_ty t1
+  | TFuture (t1, _) -> ftv_ty t1
+  | TResult t1 -> ftv_ty t1
   | TRecord fs ->
       List.fold_left (fun acc (_,t1)->ISet.union acc (ftv_ty t1)) ISet.empty fs
   | TActor (_n,ms) ->
@@ -397,7 +469,8 @@ let instantiate (Forall (qs, t)) : ty =
     match ty with
     | TInt | TFloat | TBool | TString | TAny | TUnit -> ty
     | TArray t1 -> TArray (inst t1)
-    | TFuture t1 -> TFuture (inst t1)
+    | TFuture (t1, ks) -> TFuture (inst t1, ks)
+    | TResult t1 -> TResult (inst t1)
     | TRecord fs -> TRecord (List.map (fun (l,t1)->(l,inst t1)) fs)
     | TActor (n,ms) -> TActor (n, List.map (fun (m,t1)->(m,inst t1)) ms)
     | TFun (ps,r) -> TFun (List.map inst ps, inst r)

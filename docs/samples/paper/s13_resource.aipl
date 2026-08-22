@@ -1,0 +1,17 @@
+// s13: 効果に順序を入れる ---- acquire したら release する
+//
+//      効果は集合なので「取得したら解放する」順序を表せない。
+//      acquire / release の対を本体の中で追い、
+//      解放し忘れ・二重取得・枝の食い違いを型検査で止める。
+class Bus {
+  var n = 0;
+  method read(addr) : int !{mut} {
+    acquire("i2c");
+    n = n + 1;
+    var v = addr * 2;
+    release("i2c");           // これを消すと型エラーになる
+    reply(v);
+  }
+}
+var b = new Bus();
+print("read = " ++ (now b.read(21) timeout 200 else -1));

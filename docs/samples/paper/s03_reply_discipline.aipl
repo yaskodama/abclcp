@@ -1,0 +1,9 @@
+// s03: reply の規律 ---- 高々一度、かつ宣言したら全経路で
+class Router {
+  method route(k) : string {
+    if (k > 0) { reply("positive"); } else { reply("non-positive"); }
+  }
+}
+var r = new Router();
+print(now r.route(5)  timeout 100 else "?");
+print(now r.route(-1) timeout 100 else "?");

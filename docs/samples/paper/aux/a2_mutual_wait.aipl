@@ -1,0 +1,13 @@
+// 待ち合いが起きたらどうなるか。
+// 呼ばれる側が返ってこないと、待つ側は詰まらずに期限切れになる。
+// デッドロック自由な型システムなら「書けない」が、AIPL は期限で受け止める。
+// 詰まらないが正しくもない ---- else の値が返るだけである。
+class Never {
+  method wait_forever(x) : int !{} { while 1 > 0 do { } reply(x); }
+}
+class Caller {
+  var n = new Never();
+  method go(x) : int !{} { reply(now n.wait_forever(x) timeout 200 else -1); }
+}
+var c = new Caller();
+print("go = " ++ (now c.go(5) timeout 900 else -999));

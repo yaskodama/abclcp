@@ -71,7 +71,8 @@ let rec expr_has_reply (e : Ast.expr) : bool =
   | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ | Ast.ActorRef _ -> false
 and alt_has_reply = function
   | None -> false
-  | Some (_, a) -> expr_has_reply a
+  | Some (_, None) -> false
+  | Some (_, Some a) -> expr_has_reply a
 
 let rec stmt_has_reply (s : Ast.stmt) : bool =
   match s.sdesc with
@@ -135,7 +136,7 @@ let rec max_replies_expr (e : Ast.expr) : int =
   | Ast.Expr e1 -> max_replies_expr e1
   | Ast.Await (e1, d) -> cap2 (max_replies_expr e1 + max_alt d)
   | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ | Ast.ActorRef _ -> 0
-and max_alt = function None -> 0 | Some (_, a) -> max_replies_expr a
+and max_alt = function None -> 0 | Some (_, None) -> 0 | Some (_, Some a) -> max_replies_expr a
 
 (* 囲むメソッドから見た reply 回数の上界。
    select の case 本体は別メッセージ宛なので数えない（timeout 本体だけ数える）。 *)
@@ -165,6 +166,12 @@ let rec max_replies (s : Ast.stmt) : int =
    メソッドごとに Types.eff_cell で確保したセルを指す。 *)
 let current_eff : Types.SSet.t ref ref = ref (ref Types.SSet.empty)
 let current_key : string ref = ref ""
+
+(* current_key は "クラス名#メソッド名"。いま検査しているクラス名を返す。 *)
+let current_class_name () : string =
+  match String.index_opt !current_key '#' with
+  | Some i -> String.sub !current_key 0 i
+  | None -> ""
 (* いま検査しているクラスのフィールド名。代入が mut かどうかの判定に使う。
    ローカル変数への代入は mut ではない。 *)
 let current_fields : (string, unit) Hashtbl.t = Hashtbl.create 16
@@ -182,8 +189,45 @@ let current_ret_declared = ref false
 (* now で待つ辺を記録する。future / send は待たないので辺を張らない。
    FutureSend の型付けは now からも使われるので、now かどうかは
    呼び出し側で判定して here を呼ぶ。 *)
+module SSet = Types.SSet
+
+(* 未宣言の名前への代入を暗黙の宣言として受ける、従来の挙動へ戻す逃げ道。 *)
+(* send も呼ばれる側の効果を引き継ぐか。既定は off（OCaml 版の従来動作）。 *)
+let send_effects () : bool =
+  match Sys.getenv_opt "AIOS_SEND_EFFECTS" with
+  | Some ("1" | "true" | "yes") -> true
+  | _ -> false
+
+(* become の置換先が元のインタフェースを満たすかの検査を外す逃げ道。 *)
+(* 循環待ちの検査。既定はエラー。
+   手元の .aipl 543 本すべてで閉路が 0 件だったので、既定を厳しくしても
+   既存のコードは落ちない。AIOS_LAX_WAIT=1 で警告に落とせる。 *)
+let strict_wait () : bool =
+  match Sys.getenv_opt "AIOS_LAX_WAIT" with
+  | Some ("1" | "true" | "yes") -> false
+  | _ -> true
+
+let lax_become () : bool =
+  match Sys.getenv_opt "AIOS_LAX_BECOME" with
+  | Some ("1" | "true" | "yes") -> true
+  | _ -> false
+
+let lax_assign () : bool =
+  match Sys.getenv_opt "AIOS_LAX_ASSIGN" with
+  | Some ("1" | "true" | "yes") -> true
+  | _ -> false
+
 let in_now_send = ref false
+
+(* 直前に型付けした FutureSend の呼び先（効果キー）。
+   FutureSend の本体は入れ子の match の中で決まるので、
+   結果を組み立てる場所まで値を運ぶための一時置き場。 *)
+let pending_future_callee : Types.SSet.t ref = ref Types.SSet.empty
+
 let record_now_edge (cls : string) (mname : string) : unit =
+  (* future / now のどちらでも呼び先を記録する。
+     now はここで即座に辺を張り、future は型に載せて await まで持ち越す。 *)
+  pending_future_callee := Types.SSet.singleton (Types.eff_key cls mname);
   if !in_now_send && !current_key <> "" then
     Types.add_now_edge !current_key (Types.eff_key cls mname)
 
@@ -235,7 +279,8 @@ let collect_tvar_cells (ts : ty list) : tvar ref list =
           acc := cell :: !acc;
           match (!cell).link with Some t' -> go t' | None -> ()
         end
-    | TArray t1 | TFuture t1 -> go t1
+    | TArray t1 -> go t1
+    | TFuture (t1, _) -> go t1
     | TRecord fs      -> List.iter (fun (_, t1) -> go t1) fs
     | TActor (_, ms)  -> List.iter (fun (_, t1) -> go t1) ms
     | TFun (ps, r)    -> List.iter go ps; go r
@@ -492,6 +537,9 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
     let ms = Types.lookup_class_methods_inst cls in TActor (cls, ms)
   | FutureSend (target, mname, args) ->
       let arg_tys = List.map (infer_expr env) args in
+      (* 引数の中に別の future があると呼び先が残っているので、必ず消してから入る。
+         呼び先が静的に分からない枝（remote / sender）では空のままになる。 *)
+      pending_future_callee := Types.SSet.empty;
       let ret =
         begin match target with
         (* リモート宛先は本体が別ノードにあり推論できない。
@@ -526,7 +574,9 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
                    ("future target is not actor: " ^ string_of_ty t_non_actor))
         end
       in
-      TFuture ret
+      (* ★ 呼ばれる側の効果キーを future の型に載せる。
+         await の地点で、now と同じ辺を張るために使う。 *)
+      TFuture (ret, ref !pending_future_callee)
   | NowSend (target, mname, args, dl) ->
       (* now は future の即時 await。戻り値型も同じ ρ になる。
          ★ 待つので、呼ばれる側の効果を引き継ぐ辺を張る。 *)
@@ -534,22 +584,28 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
       in_now_send := true;
       let r =
         (match repr (infer_expr env { e with desc = FutureSend (target, mname, args) }) with
-         | TFuture t -> t
-         | _         -> TAny)
+         | TFuture (t, _) -> t
+         | _              -> TAny)
       in
       in_now_send := saved;
       check_deadline env e.loc "now" r dl;
-      r
+      (* else を書かなければ result<τ>。成功したかどうかを型で持つ。 *)
+      (match dl with Some (_, None) -> Types.TResult r | _ -> r)
   | Await (e1, dl) ->
       let r =
         (match repr (infer_expr env e1) with
-         | TFuture t -> t
+         | TFuture (t, ks) ->
+             (* ★ 待つ側は、呼ばれる側の効果を負う。now と同じ規律。
+                これを書くまで、now を future+await に分けると効果検査を逃れていた。 *)
+             if !current_key <> "" then
+               SSet.iter (fun k -> Types.add_now_edge !current_key k) !ks;
+             t
          | TAny -> TAny
          | t -> Types.type_error ~loc:e.loc
                   ("await expected future, got " ^ string_of_ty_pretty t))
       in
       check_deadline env e.loc "await" r dl;
-      r
+      (match dl with Some (_, None) -> Types.TResult r | _ -> r)
 
   | Array (elems, _) ->
     begin match elems with
@@ -566,9 +622,14 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
    期限が無い場合は、無期限に待つのでデッドロックの余地が残る。
    AIOS_STRICT_DEADLINE=1 でエラー、既定は警告。 *)
 and check_deadline (env:env) (loc:Location.t) (kind:string)
-                   (rty:ty) (dl:(int * Ast.expr) option) : unit =
+                   (rty:ty) (dl:(int * Ast.expr option) option) : unit =
   match dl with
-  | Some (ms, alt) ->
+  (* else を書かない形。式全体の型は result<τ> になるので、
+     ここで照合する相手が無い。期限が正であることだけ見る。 *)
+  | Some (ms, None) ->
+      if ms <= 0 then
+        Types.type_error ~loc (kind ^ ": timeout must be positive")
+  | Some (ms, Some alt) ->
       if ms <= 0 then
         Types.type_error ~loc (kind ^ ": timeout must be positive");
       let ta = infer_expr ?expected:(expected_of rty) env alt in
@@ -599,6 +660,15 @@ let rec check_stmt (env:env) (s:stmt) : unit =
     let t_rhs = infer_expr env e in
     (match Hashtbl.find_opt env x with
      | None ->
+         (* ★ 未宣言の名前への代入。読み出しは unbound variable で弾いているのに、
+            代入だけ黙って新しい変数を作っていた。
+            フィールド名を打ち間違えると、フィールドは更新されないまま
+            別の変数ができて、何のエラーも出ない。
+            AIOS_LAX_ASSIGN=1 で従来の暗黙宣言に戻せる。 *)
+         if not (lax_assign ()) then
+           raise (Type_error (s.sloc,
+             "assignment to undeclared name: " ^ x
+             ^ " (write `var " ^ x ^ " = ...` to declare it)"));
          let sch = Types.generalize (ftv_env env) t_rhs in
          set_var_scheme env x sch
      | Some [sch] ->
@@ -633,6 +703,25 @@ let rec check_stmt (env:env) (s:stmt) : unit =
       ()
   | Become (cls, args) ->
       add_eff ["mut"];                   (* ★ 振る舞いの置換は状態変更 *)
+      (* ★ 置換後のクラスは、置換前が受け取れたメッセージをすべて受け取れなければ
+         ならない。そうでないと、外から見た型 actor(C) が嘘になる ----
+         型検査は通るのに、become のあとで「そのメソッドは無い」が起きる。
+         Akka Typed が Behavior[T] の T を固定しているのと同じ制限で、
+         これを入れて初めて no_method_not_understood が become を含む
+         プログラムでも成り立つ。AIOS_LAX_BECOME=1 で従来どおりにできる。 *)
+      let old_cls = current_class_name () in
+      if old_cls <> "" && old_cls <> cls && not (lax_become ()) then begin
+        let names t = List.map fst t in
+        let before = names (Types.lookup_class_methods_inst old_cls) in
+        let after  = names (Types.lookup_class_methods_inst cls) in
+        let missing = List.filter (fun m -> not (List.mem m after)) before in
+        let missing = List.filter (fun m -> m <> "init") missing in
+        if missing <> [] then
+          raise (Type_error (s.sloc,
+            Printf.sprintf
+              "become %s: %s does not accept %s, which %s accepts"
+              cls cls (String.concat ", " missing) old_cls))
+      end;
       let _ = Types.lookup_class_methods_inst cls in
       let targs = List.map (infer_expr env) args in
       (match Types.lookup_class_method_scheme cls "init" with
@@ -689,7 +778,12 @@ let rec check_stmt (env:env) (s:stmt) : unit =
                            List.map (fun e -> repr (infer_expr env e)) args in
                          if List.length param_tys <> List.length actuals then
                            raise (Type_error (s.sloc, "arity mismatch in send"));
-                         List.iter2 (Types.unify ~loc:s.sloc) param_tys actuals
+                         List.iter2 (Types.unify ~loc:s.sloc) param_tys actuals;
+                         (* AIOS_SEND_EFFECTS=1 のとき、send も呼ばれる側の効果を負う。
+                            既定は off（送るだけで待たないので負わない）。
+                            Py-I / JS-I は既定で負う側なので、ここは仕様の判断待ち。 *)
+                         if send_effects () && !current_key <> "" then
+                           Types.add_now_edge !current_key (Types.eff_key cls mname)
                      | _ ->
                          raise (Type_error (s.sloc,
                            ("method " ^ mname ^ " is not a function: "
@@ -714,7 +808,12 @@ let rec check_stmt (env:env) (s:stmt) : unit =
                            List.map (fun e -> repr (infer_expr env e)) args in
                          if List.length param_tys <> List.length actuals then
                            raise (Type_error (s.sloc, "arity mismatch in send"));
-                         List.iter2 (Types.unify ~loc:s.sloc) param_tys actuals
+                         List.iter2 (Types.unify ~loc:s.sloc) param_tys actuals;
+                         (* AIOS_SEND_EFFECTS=1 のとき、send も呼ばれる側の効果を負う。
+                            既定は off（送るだけで待たないので負わない）。
+                            Py-I / JS-I は既定で負う側なので、ここは仕様の判断待ち。 *)
+                         if send_effects () && !current_key <> "" then
+                           Types.add_now_edge !current_key (Types.eff_key cls mname)
                      | _ ->
                          raise (Type_error (s.sloc,
                            ("method " ^ mname ^ " is not a function: "
@@ -1080,11 +1179,11 @@ let collect_prim_calls (p : Ast.program) : (string * Ast.expr list * Location.t)
         acc := (f, args, e.loc) :: !acc; List.iter ex args
     | Ast.Binop (_, a, b) -> ex a; ex b
     | Ast.Expr e1 -> ex e1
-    | Ast.Await (e1, d) -> ex e1; (match d with Some (_,a) -> ex a | None -> ())
+    | Ast.Await (e1, d) -> ex e1; (match d with Some (_, Some a) -> ex a | _ -> ())
     | Ast.New (_, args) | Ast.Array (args, _)
     | Ast.FutureSend (_, _, args) -> List.iter ex args
     | Ast.NowSend (_, _, args, d) ->
-        List.iter ex args; (match d with Some (_,a) -> ex a | None -> ())
+        List.iter ex args; (match d with Some (_, Some a) -> ex a | _ -> ())
     | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ | Ast.ActorRef _ -> ()
   and st (s : Ast.stmt) =
     match s.sdesc with
@@ -1208,6 +1307,94 @@ let check_boundary_annotations (p : Ast.program) (env : env) : unit =
 
 (* 宣言された効果と、本体から集めた（そして now で伝播した）効果を照合する。
    注釈が無いメソッドは推論に任せる ---- 戻り値型と同じ gradual な扱い。 *)
+
+(* ============================================================ *)
+(*  資源の使用順序の検査（小林の資源使用解析のいちばん素朴な形）  *)
+(* ============================================================ *)
+(* 効果は集合なので「取得したら解放する」という順序を表せない。
+   そこで acquire("r") / release("r") の対を、メソッド本体の中で
+   構文的に追う。規律は三つ:
+     1. メソッドを抜けるとき、持っている資源が残っていてはならない
+     2. 持っていない資源を release してはならない
+     3. 二重に acquire してはならない
+   if の二つの枝は、抜けたときに同じ集合を持っていなければならない。
+   while の本体は、入る前と出た後で持ち物が変わってはならない
+   （0回でも n 回でも同じにするため）。
+   これはメソッド内で閉じた検査で、メソッドをまたぐ受け渡しは見ない。 *)
+
+exception Res_error of Location.t * string
+
+let rec res_of_expr (e : Ast.expr) (held : SSet.t) : SSet.t =
+  match e.desc with
+  | Ast.Call ("acquire", [{ Ast.desc = Ast.String r; _ }]) ->
+      if SSet.mem r held then
+        raise (Res_error (e.loc, Printf.sprintf "resource %s is acquired twice" r));
+      SSet.add r held
+  | Ast.Call ("release", [{ Ast.desc = Ast.String r; _ }]) ->
+      if not (SSet.mem r held) then
+        raise (Res_error (e.loc,
+          Printf.sprintf "resource %s is released without being acquired" r));
+      SSet.remove r held
+  | Ast.Call (_, args) | Ast.New (_, args) | Ast.FutureSend (_, _, args) ->
+      List.fold_left (fun h a -> res_of_expr a h) held args
+  | Ast.NowSend (_, _, args, d) ->
+      let h = List.fold_left (fun h a -> res_of_expr a h) held args in
+      (match d with Some (_, Some alt) -> res_of_expr alt h | _ -> h)
+  | Ast.Await (e1, d) ->
+      let h = res_of_expr e1 held in
+      (match d with Some (_, Some alt) -> res_of_expr alt h | _ -> h)
+  | Ast.Binop (_, a, b) -> res_of_expr b (res_of_expr a held)
+  | Ast.Expr e1 -> res_of_expr e1 held
+  | _ -> held
+
+let rec res_of_stmt (s : Ast.stmt) (held : SSet.t) : SSet.t =
+  match s.sdesc with
+  | Ast.Seq ss -> List.fold_left (fun h st -> res_of_stmt st h) held ss
+  | Ast.Assign (_, e) | Ast.VarDecl (_, e) -> res_of_expr e held
+  | Ast.CallStmt (f, args) ->
+      res_of_expr { Ast.desc = Ast.Call (f, args); loc = s.sloc } held
+  | Ast.Send (_, _, args) | Ast.UnsafeSend (_, _, args) | Ast.Become (_, args) ->
+      List.fold_left (fun h a -> res_of_expr a h) held args
+  | Ast.If (c, a, b) ->
+      let h = res_of_expr c held in
+      let ha = res_of_stmt a h and hb = res_of_stmt b h in
+      if not (SSet.equal ha hb) then begin
+        let d = SSet.union (SSet.diff ha hb) (SSet.diff hb ha) in
+        raise (Res_error (s.sloc,
+          Printf.sprintf
+            "the two branches disagree on which resources are held (%s)"
+            (String.concat ", " (SSet.elements d))))
+      end;
+      ha
+  | Ast.While (c, b) ->
+      let h = res_of_expr c held in
+      let hb = res_of_stmt b h in
+      if not (SSet.equal h hb) then
+        raise (Res_error (s.sloc,
+          "the loop body must leave the same resources held as it found"));
+      h
+  | Ast.Select (cases, (_, to_body)) ->
+      List.iter (fun (c : Ast.select_case) ->
+        let hb = res_of_stmt c.Ast.body held in
+        if not (SSet.equal hb held) then
+          raise (Res_error (s.sloc,
+            "a select case must leave the same resources held as it found"))) cases;
+      (match to_body with
+       | Some b ->
+           let hb = res_of_stmt b held in
+           if not (SSet.equal hb held) then
+             raise (Res_error (s.sloc,
+               "the timeout body must leave the same resources held as it found"));
+           held
+       | None -> held)
+
+let check_resource_use (cls : string) (m : Ast.method_decl) : unit =
+  let left = res_of_stmt m.Ast.body SSet.empty in
+  if not (SSet.is_empty left) then
+    raise (Res_error (m.Ast.body.Ast.sloc,
+      Printf.sprintf "method %s.%s returns while still holding %s"
+        cls m.Ast.mname (String.concat ", " (SSet.elements left))))
+
 let check_effect_annotations (p : Ast.program) : unit =
   List.iter
     (function
@@ -1260,6 +1447,25 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
     List.iter (check_decl env0) p;          (* それから通常どおりトップレベルを検査 *)
     Types.propagate_effects ();             (* ★ now の連鎖に沿って効果を伝播 *)
     check_effect_annotations p;             (* ★ 宣言と本体の効果を照合 *)
+    (* ★ 循環待ちの検査。now / await の辺に閉路があれば、
+       期限が無ければ確実に詰まる。既定は警告、
+       AIOS_STRICT_WAIT=1 でエラーに昇格する（期限の扱いと同じ形）。 *)
+    (match Types.wait_cycle () with
+     | Some cyc ->
+         let msg =
+           Printf.sprintf
+             "circular wait: %s; a now/await cycle deadlocks unless a deadline breaks it"
+             (String.concat " -> " cyc) in
+         if strict_wait () then Types.type_error ~loc:Location.dummy msg
+         else Printf.eprintf "[warn] %s\n%!" msg
+     | None -> ());
+    (* ★ 資源の使用順序（acquire / release の対）。効果集合では表せない性質。 *)
+    List.iter (function
+      | Ast.Class c ->
+          List.iter (fun (m : Ast.method_decl) ->
+            try check_resource_use c.Ast.cname m
+            with Res_error (loc, msg) -> Types.type_error ~loc msg) c.Ast.methods
+      | _ -> ()) p;
     check_boundary_annotations p env0;      (* ★ リモート境界の注釈必須検査 *)
     if !verbose then Types.debug_print_method_rets ();
     if !verbose then debug_print_effects ();

@@ -1,0 +1,4 @@
+// 期待: 期限が 0 ミリ秒（正でなければならない）
+class C4 { method f(x) : int { reply(x); } }
+var c = new C4();
+print(now c.f(1) timeout 0 else 0);

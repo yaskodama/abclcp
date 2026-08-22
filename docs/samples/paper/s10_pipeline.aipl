@@ -1,0 +1,21 @@
+// s10: 三つのアクターの協調 ---- 取得 → 変換 → 集計
+class Source { method get(i) : int !{} { reply(i * 10); } }
+class Scale  {
+  var src = new Source();
+  method at(i) : int !{} { reply((now src.get(i) timeout 100 else 0) + 1); }
+}
+class Sink {
+  var sc = new Scale();
+  var total = 0;
+  method run(n) : int !{mut, log} {
+    var i = 0;
+    while i < n do {
+      total = total + (now sc.at(i) timeout 100 else 0);
+      i = i + 1;
+    }
+    print("total=" ++ total);
+    reply(total);
+  }
+}
+var s = new Sink();
+print("sum = " ++ (now s.run(4) timeout 1000 else -1));

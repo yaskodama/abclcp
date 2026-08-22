@@ -1,0 +1,4 @@
+// 期待: 引数の型が合わない send（int を要求しているのに string）
+class Dev3 { method a(x: int) : unit !{log} { print(x); } }
+class Use5 { method f(y: Dev3) : unit !{log} { send y.a("s"); } }
+var d = new Dev3(); var u = new Use5(); send u.f(d);

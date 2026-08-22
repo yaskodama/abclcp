@@ -1,0 +1,8 @@
+// s05: 期限 ---- 待ちに上限を置く。切れたら else の値になる
+class Slow {
+  method fast(x) : int { reply(x); }
+  method never(x) : int { while 1 > 0 do { } reply(x); }   // 返ってこない
+}
+var s = new Slow();
+print("fast  = " ++ (now s.fast(42) timeout 200 else -1));
+print("never = " ++ (now s.never(7) timeout 200 else -1)); // 期限で -1 になる

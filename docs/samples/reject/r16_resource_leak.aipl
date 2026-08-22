@@ -1,0 +1,4 @@
+// 期待: acquire した資源を解放せずにメソッドを抜けている（順序つきの効果）
+class Dev4 {
+  method use(x) : int !{mut} { acquire("i2c"); reply(x); }
+}

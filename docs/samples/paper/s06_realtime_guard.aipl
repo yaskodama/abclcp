@@ -1,0 +1,13 @@
+// s06: 効果と期限が噛み合う ---- 実時間側は機外のモデルを同期で待てない
+class Planner {                       // エージェント側
+  method plan(g) : string !{ai, net} { reply(ai_call("plan " ++ g)); }
+}
+class Servo {                         // 実時間側。ai も net も持たない
+  var p = new Planner();
+  method step() : unit !{time, log} {
+    send p.plan("grasp");             // 送るだけなら許される（待たない）
+    print("servo step");
+  }
+}
+var s = new Servo();
+send s.step();

@@ -1,0 +1,1469 @@
+% AIPL: Actor based Intelligence Parallel Language — 設計から実現 —
+%   lualatex -interaction=nonstopmode aipl_paper_ja.tex   （3回：目次と相互参照のため）
+\documentclass[11pt,a4paper]{ltjsarticle}
+\usepackage{amsmath,amssymb}
+\usepackage{amsthm}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage[hidelinks]{hyperref}
+\geometry{margin=22mm}
+
+\newtheorem{theorem}{定理}
+\newtheorem{lemma}[theorem]{補題}
+\newtheorem{corollary}[theorem]{系}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{定義}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{注意}
+\newtheorem{finding}[theorem]{所見}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  basicstyle=\ttfamily\small, backgroundcolor=\color{codebg},
+  frame=single, framesep=4pt, rulecolor=\color{gray},
+  breaklines=true, showstringspaces=false,
+  columns=fullflexible, keepspaces=true,
+  keywordstyle=\bfseries, commentstyle=\itshape\color{gray!130},
+  xleftmargin=0pt, xrightmargin=0pt,
+}
+\lstdefinelanguage{AIPL}{
+  morekeywords={class,method,var,new,now,future,await,reply,send,become,
+    timeout,else,if,while,do,select,case,self,sender,remote,print,call,
+    int,float,string,bool,unit,any,true,false},
+  sensitive=true, morecomment=[l]{//}, morestring=[b]",
+}
+\lstnewenvironment{aipl}[1][]{\lstset{language=AIPL,#1}}{}
+\lstnewenvironment{term}[1][]{\lstset{language=,basicstyle=\ttfamily\footnotesize,#1}}{}
+
+\title{\bfseries AIPL: Actor based Intelligence Parallel Language\\[2mm]
+       \large --- 設計から実現 ---\\[1mm]
+       \normalsize ABCL/1 の継承と、型・効果・期限による静的保証}
+\author{児玉靖司\\\small 法政大学経営学部\\\small \texttt{yass@hosei.ac.jp}}
+\date{2026 年 8 月 21 日}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+本稿は、アクターを単位とする型付き並行言語 AIPL（Actor based Intelligence Parallel Language、
+処理系名 ABCLc+）の設計と実装を、一つの論文としてまとめたものである。
+AIPL は ABCL/1（Yonezawa, Briot, Shibayama, OOPSLA 1986）を出発点とし、
+その三種のメッセージ送信（past / now / future 型）をほぼそのまま受け継ぐ。
+一方で ABCL/1 が持っていた express mode による割り込み、返信先の一級性、
+\texttt{script} によるパターン受信は、意図的に落とすか大幅に縮小した。
+代わりに AIPL が得たのは静的な保証である。
+すなわち \textbf{型}（\texttt{reply} の引数から戻り値型を推論し、注釈も書ける）、
+\textbf{効果}（メソッドが世界に及ぼす作用を 8 種の名前で宣言・照合する）、
+\textbf{期限}（\texttt{now}/\texttt{await} に上限時間を義務づける）の三つであり、
+この三つは互いに噛み合っている。
+たとえば「実時間で動くアクターが機外の言語モデルを同期で呼ぶ」ことは、
+効果検査だけで禁止できる。
+
+形式的な保証は二段になっている。
+機械検証が済んでいるのは効果と期限を持たない中核 $\mathrm{AIPL}^{-}$ であり、
+保存・進行・型安全性・メッセージ不理解の不在を Rocq (Coq) で検証した。
+本稿の執筆にあたり主要 6 定理について \texttt{Print Assumptions} を実行し、
+いずれも公理に依存しないこと（\texttt{Closed under the global context}）を確認している。
+効果と期限を加えた $\mathrm{AIPL}^{-2}$ は\textbf{紙の上の証明}であり、
+そこでは期限を構文に義務づけた結果として進行定理の「待ちでブロックする」枝が消え、
+系としてデッドロック自由が言える。
+この範囲の機械検証は未了で、必要な追加は三点に特定できている。
+
+実現は三つの処理系からなる。正となる OCaml 版（手書き 7,289 行）、
+Python の CLI 実装（14,443 行）、ブラウザで動く JavaScript 実装（5,709 行）である。
+三実装はガイドのサンプル 9 本のうち 8 本で出力が完全に一致した。
+残る 1 本の差は言語仕様の差ではなく OCaml 版 REPL の出力取りこぼしであり、
+20 回反復して 13 回は全行が揃うという形で定量化した。
+
+最後に、実測によって確認できた穴を二つ報告し、\textbf{三実装とも直した}。
+\texttt{now} を \texttt{future} と \texttt{await} に分けて書くと効果検査を逃れること、
+および異なるクラスのアクター型が単一化してしまうことである。
+どちらも最小例で再現したうえで修正し、
+手元の \texttt{.aipl} 543 本を修正前後に通して、
+判定が変わったのが\textbf{狙ったテストだけ}であることを確かめた。
+併せて「弾かれるべきプログラム」を資産として持つ仕組みを作ったところ、
+出力の比較では見えなかった実装間の食い違いが五つ出た ----
+効果伝播の穴は正であるはずの OCaml 版だけのものであり、
+JS-I は効果を集めていながら宣言と照合しておらず、
+Py-I はトップレベルの呼び出しの引数を一つも検査していなかった。
+さらに探りを入れて、三実装すべてに共通する穴を一つ見つけた ----
+\textbf{未宣言の名前への代入が黙って通る}。
+フィールド名を打ち間違えると、フィールドは更新されないまま別の変数ができ、
+何のエラーも出ない。これも三実装とも直した。
+弾かれるべきプログラムは 8 本から 15 本に増え、
+期待と食い違う枠は 45 枠中 9 枠、OCaml 版は 15 本すべてを弾く。
+最後に、小林直樹の型システム研究の系譜が、
+AIPL が未解決として残した設計課題にどう噛み合うかを整理する。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{はじめに}
+\label{sec:intro}
+
+AIPL は二つの目的のために作られている。
+一つは\textbf{分散 AI エージェント}の記述である。
+複数の言語モデルや外部サービスを、それぞれ独立に動くアクターとして書き、
+その協調をプログラムとして残したい。
+もう一つは\textbf{実時間 OS} の記述である。
+Xinu のような小型 OS の構成要素——プロセス管理、メールボックス、
+スケジューラ、デバイスドライバ——を、C の手続き群ではなく型付きアクター群として書きたい。
+
+この二つは一見すると遠い。
+前者は「機外のモデルを呼ぶので、いつ返ってくるか分からない」世界であり、
+後者は「期限を守れないことが故障である」世界である。
+しかし両方ともアクターとメッセージで書きたいという点では同じであり、
+そして\textbf{両者を混ぜてはいけない}という点でも同じである。
+実時間で動くアクターが、機外のモデルを同期で待ってはならない。
+この「混ぜてはいけない」を、規約ではなく型検査で禁止したい——
+これが AIPL の設計を貫く動機である。
+
+出発点として ABCL/1 を選んだ理由は二つある。
+第一に、ABCL/1 は三種のメッセージ送信（past / now / future）を
+言語の中核に据えた数少ない設計であり、
+この三種はそのまま「待たない / 待つ / 後で受け取る」という
+AIPL が必要とする区別に対応する。
+第二に、ABCL/1 には型がない。
+動的型の並行オブジェクト言語である。
+ここに静的な型・効果・期限を載せると何が言えるようになるかは、
+それ自体が問いとして立つ。
+
+\subsection*{本稿の貢献}
+
+\begin{enumerate}
+\item ABCL/1 から何を継承し、何を落としたかを、
+      計算モデルの水準で整理した（\S\ref{sec:abcl1}、\S\ref{sec:dropped}）。
+      落とした三つ——express mode、返信先の一級性、\texttt{script} のパターン受信——
+      について、落とした理由を型システムと証明の側から述べる。
+\item 型・効果・期限という三つの静的な仕組みを設計し、
+      それらが互いに噛み合う形を示した（\S\ref{sec:design}）。
+      とくに \texttt{reply} の引数から戻り値型を推論する仕組みは、
+      ABCL/1 が持たなかった「返信に型を付ける」問題への一つの答である。
+\item 中核 $\mathrm{AIPL}^{-}$ の保存・進行・型安全性を機械検証し、
+      効果と期限を加えた $\mathrm{AIPL}^{-2}$ を紙の上で証明した（\S\ref{sec:proof}）。
+      期限を構文に義務づけると進行定理の枝が一本減り、
+      系としてデッドロック自由が言えることを示す。
+      両者の境目と、機械検証に残っている三点を明示する。
+\item 三つの処理系による実現と、それらを揃え続けるための仕掛けを述べた
+      （\S\ref{sec:impl}）。
+\item 実測にもとづく評価と、現状の限界を報告した（\S\ref{sec:eval}、\S\ref{sec:limits}）。
+      限界は「未実装項目の列挙」ではなく、最小例で再現した穴である。
+      二つの穴は三実装とも修正し、既存 543 本への影響を実測した。
+      併せて「弾かれるべきプログラム」の集合を資産として整備した。
+\item 小林直樹の型システム研究の系譜が、
+      これらの穴にどう噛み合うかを整理した（\S\ref{sec:kobayashi}）。
+\end{enumerate}
+
+\subsection*{本稿の位置づけ}
+
+AIPL については、これまで個別の主題ごとにレポートを書いてきた。
+ABCL/1 との比較\cite{selfvsabcl1}、
+落とした機能を戻した場合の検討\cite{selffeatures}、
+型健全性の第 1 版\cite{selfsound1}と第 2 版\cite{selfsound2}、
+\texttt{reply} からの戻り値型推論\cite{selfreply}、
+ユーザーズガイド\cite{selfguide}、
+三実装の同期\cite{selfparity}、
+小林研究の取り込み検討\cite{selfkoba}である。
+本稿はそれらを前提とせずに読める形で一つにまとめ直したものであり、
+各主題の詳細は該当レポートに譲る。
+実測値は本稿の執筆時点（2026 年 8 月 21 日、対象コミット \texttt{c837eef}）で取り直した。
+
+% =====================================================================
+\section{背景}
+\label{sec:background}
+
+\subsection{ABCL/1}
+\label{sec:abcl1}
+
+ABCL/1\cite{abcl1,abclbook} は、並行オブジェクトを計算の単位とする言語である。
+オブジェクトは自分のメールボックスを持ち、
+到着したメッセージを一つずつ処理する。
+この「一度に一つ」がオブジェクト内部の逐次性を保証し、
+それゆえフィールドへの排他制御を書かなくてよい。
+AIPL もこの性質をそのまま引き継いでいる。
+
+ABCL/1 の中核は次の四つである。
+
+\paragraph{三種のメッセージ送信。}
+\emph{past} 型は送って待たない。
+\emph{now} 型は送って返信を待つ。
+\emph{future} 型は送って引換券を受け取り、後で中身を取り出す。
+この三分割が ABCL/1 の最も影響力のある設計であり、
+AIPL はこれを \texttt{send} / \texttt{now} / \texttt{future}+\texttt{await} として
+ほぼそのまま継承した。
+
+\paragraph{\texttt{script} によるパターン受信。}
+オブジェクトは受け取るメッセージのパターンを並べ、
+さらに \texttt{where} 節で状態依存の受理条件を書ける。
+「在庫があるときだけ購入メッセージを受け取る」といった記述が、
+メソッド本体の \texttt{if} ではなく受理の段階で書ける。
+
+\paragraph{express mode による割り込み。}
+ordinary モードとは別の待ち行列があり、
+express メッセージは実行中の処理を中断して割り込む。
+中止・優先処理・監視のための機構である。
+
+\paragraph{返信先の一級性。}
+\emph{now} 型の送信で暗黙に作られる返信先（reply destination）は値であり、
+他のオブジェクトへ渡せる。
+つまり「A が受けた依頼に、B が代わりに答える」という委譲が書ける。
+
+\subsection{型理論的な基礎づけ——小林の系譜}
+\label{sec:kobabg}
+
+ABCL/1 は動的型であり、型システムを持たない。
+その基礎づけを与える試みは早くから行われた。
+小林と米澤の一連の研究\cite{kobayashi94,acl93,async92} は、
+線形論理を土台として並行オブジェクトの型理論的基礎を与えた。
+ここで重要なのは、後に AIPL が直面する問題の多くが
+すでにこの系譜の中で扱われていることである。
+
+\begin{itemize}
+\item \textbf{線形型}\cite{kptl96}——「ちょうど一度だけ使う」を型で保証する。
+      返信先を一級の値にしたときに「返信が一度だけ行われる」を保証するのは、
+      まさにこの問題である。
+\item \textbf{デッドロック自由な型システム}\cite{kobadf97,kobadf00,kobadf06}——
+      通信の依存関係に順序を入れ、循環待ちを型で排除する。
+\item \textbf{$\pi$ 計算の汎用型システム}\cite{kobagen01}——
+      個別の型システムを作り分けるのではなく、
+      一つの枠組みから複数の解析を導く。
+\item \textbf{資源使用解析}\cite{kobares}——
+      資源の使い方（開いてから閉じる、等）を型で追う。
+      効果を順序を持つ列として扱う立場である。
+\item \textbf{高階モデル検査}\cite{koba09,ko09}——
+      交差型による型付けとモデル検査の等価性。
+      検証器を自作せずに借りるための道具立てである。
+\item \textbf{精製型・サイズ型}\cite{kobasize}——
+      計算量や応答時間の上界を型で述べる。
+\end{itemize}
+
+AIPL が現在抱えている課題——返信先を一級にしたいが「ちょうど一度」を守りたい、
+待ちの循環を防ぎたい、効果に順序を入れたい、期限の上界を型で述べたい——は、
+この一覧とほぼ一対一に対応する。
+\S\ref{sec:kobayashi} でこの対応を具体的に述べる。
+
+\subsection{ABCL/f}
+
+同じ ABCL 系で型を持つ先行例として ABCL/f\cite{abclf} がある。
+future を中核に据えた多相型付き並行オブジェクト言語であり、
+「三種の送信のうち future だけを残して型を付ける」という設計判断をとった。
+AIPL は三種すべてを残したまま型を付けようとしている点で異なる。
+この違いが型システムに何をもたらすかは \S\ref{sec:threetypes} で述べる。
+
+% =====================================================================
+\section{AIPL の設計}
+\label{sec:design}
+
+\subsection{三つの設計指針}
+
+\paragraph{(1) アクターが単位である。}
+プログラムはクラス宣言の並びと、トップレベルの文からなる。
+クラスはフィールドとメソッドを持ち、\texttt{new} でアクターの実体になる。
+アクターは自分のメールボックスを持ち、メッセージを一つずつ処理する。
+
+\paragraph{(2) 値は \texttt{return} ではなく \texttt{reply} で返す。}
+メソッドは値を返すのではなく、
+送り主に向けて \texttt{reply(e)} で返信する。
+これは ABCL/1 の返信の考え方をそのまま受けたものだが、
+静的型を載せるうえでは厄介な選択でもある。
+\texttt{return} なら「関数の型」が戻り値型を決めるが、
+\texttt{reply} は本体のどこにでも書ける文だからである。
+この厄介さへの答が \S\ref{sec:replytype} の戻り値型推論である。
+
+\paragraph{(3) 静的な仕組みは三つだけにする。}
+型・効果・期限の三つに絞り、それぞれを独立に理解できる形にした。
+そのうえで、三つが噛み合うことによって初めて言えることを設計の中心に置いた。
+
+\subsection{構文}
+
+現行実装（\texttt{src/parser.mly}、229 行・27 規則・18 トークン）の文法を要約する。
+
+\begin{term}
+program    ::= decl+
+
+decl       ::= "class" ID "{" field* method+ "}"
+             | "var" ID "=" expr ";"
+             | "var" ID "=" "new" ID "(" args ")" ";"
+             | "send"  target "." ID "(" args ")" ";"
+             | ID "(" args ")" ";"
+
+field      ::= "var"   ID "=" expr ";"
+             | "float" ID "=" expr ";"
+
+method     ::= "method" ID "(" params ")" ret? eff? "{" stmt+ "}"
+params     ::= param ("," param)*
+param      ::= ID | ID ":" type            // 引数の型注釈
+ret        ::= ":" type
+eff        ::= "!" "{" (ID ("," ID)*)? "}"
+type       ::= "int"|"float"|"string"|"bool"|"unit"|"any"|ClassName
+
+target     ::= ID | "remote" "(" STRING "," STRING ")"
+
+stmt       ::= ID "=" expr ";"
+             | "var" ID "=" expr ";"
+             | "var" ID "=" "new" ID "(" args ")" ";"
+             | ID "(" args ")" ";"  |  "call" ID "(" args ")" ";"
+             | "send" ("self"|"sender"|target) "." ID "(" args ")" ";"
+             | "if" "(" expr ")" stmt ("else" stmt)?
+             | "while" expr "do" stmt
+             | "{" stmt* "}"
+             | "become" ID "(" args ")" ";"
+             | "select" "{" case* timeout_case? "}"
+
+case         ::= "case" ID "(" ids? ")" "->" "{" stmt+ "}"
+timeout_case ::= "timeout" INT "->" "{" stmt+ "}"
+
+expr       ::= INT | FLOAT | STRING | "true" | "false" | ID
+             | "-" expr
+             | expr ("=="|"!="|">"|"<"|">="|"<="|"++"|"+"|"-"|"*"|"/") expr
+             | "new" ID "(" args ")"
+             | "now" target "." ID "(" args ")" ("timeout" INT "else" expr)?
+             | "future" target "." ID "(" args ")"
+             | "await" expr ("timeout" INT "else" expr)?
+             | ID "(" args ")"  |  "(" expr ")"
+\end{term}
+
+演算子の優先順位は次のとおりで、下にいくほど強く結合する。
+
+\begin{center}
+\begin{tabular}{cl}
+\toprule
+弱 & \texttt{==} \quad \texttt{!=} \\
+$\downarrow$ & \texttt{>} \quad \texttt{<} \quad \texttt{>=} \quad \texttt{<=} \\
+ & \texttt{++}（文字列連結） \\
+ & \texttt{+} \quad \texttt{-} \\
+強 & \texttt{*} \quad \texttt{/} \\
+   & 単項マイナス \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+二項演算子は\textbf{すべて左結合}で、等値も例外ではない。
+\texttt{1 == 2 == false} は \texttt{((1 == 2) == false)} と読まれて \texttt{true} になる。
+
+\begin{remark}
+\texttt{++} が文字列連結で、\texttt{+} は数値専用である。
+この分離は後から入れたもので、移行のときに一つ罠を踏んだ。
+\texttt{+} は \texttt{++} より強く結合するため、
+\texttt{"a" + b + c} の \texttt{+} を一つだけ \texttt{++} に替えると意味が変わる。
+正規表現での一括置換ではなく、構文木で連鎖を判定して置換する道具を書いた。
+\end{remark}
+
+\subsection{三種の送信}
+\label{sec:threetypes}
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+書き方 & ABCL/1 & 意味 & 式か文か \\
+\midrule
+\texttt{send t.m(a);}                          & past   & 送って待たない & 文 \\
+\texttt{now t.m(a) timeout $n$ else $e$}       & now    & 送って返信を待つ & 式 \\
+\texttt{future t.m(a)} / \texttt{await f ...}  & future & 引換券を受け取る & 式 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+型を付けるうえで、この三種は同じではない。
+\texttt{send} は返信を受け取らないので、メソッドの戻り値型を要求しない。
+\texttt{now} は式なので、その場に戻り値型が要る。
+\texttt{future} は $\tau$ を返すメソッドに対して \texttt{future}$\langle\tau\rangle$ を返し、
+\texttt{await} がそれを $\tau$ に戻す。
+ABCL/f が future だけを残したのは、
+この三番目だけを扱えば型付けが素直に済むからである。
+AIPL は三種を残したまま、
+\texttt{send} には戻り値型を要求しないという扱いで整理した。
+
+\subsection{\texttt{reply} と \texttt{sender}}
+
+メソッドの返信は \texttt{reply(e)} で行う。
+送り主は \texttt{sender} で参照でき、\texttt{send sender.m(...)} と書ける。
+ここで型検査が見るのは次の二点である。
+
+\begin{itemize}
+\item \textbf{被覆}：戻り値型が宣言されているとき、
+      すべての実行経路で \texttt{reply} に到達しなければならない。
+\item \textbf{線形性}：一つのメッセージに対する \texttt{reply} は\textbf{高々一度}である。
+\end{itemize}
+
+\texttt{select} の \texttt{case} 本体にある \texttt{reply} は、
+囲むメソッドではなく \texttt{case} が受理したメッセージに帰属する。
+この帰属を間違えると被覆判定が壊れるため、実装では両者を別に数えている。
+
+\subsection{\texttt{reply} からの戻り値型推論}
+\label{sec:replytype}
+
+戻り値型の注釈 \texttt{method m(x) : T} は\textbf{省略できる}。
+省略された場合、\texttt{reply} の引数から型を推論する。
+実装ではメソッドごとに戻り値型を表す型変数 $\rho$ を用意し、
+本体に現れる各 \texttt{reply(e)} について $\rho$ と $e$ の型を単一化する。
+
+推論だけでは決まらない場面が 6 つあることを別稿\cite{selfreply}で整理した。
+代表的なものは、
+すべての経路で \texttt{reply} しないメソッド、
+経路によって異なる型を返すメソッド、
+相互再帰するアクター群である。
+そこで実装は「推論する。ただし注釈も書ける」という形をとった。
+注釈があれば、それが照合先となって
+「経路によって型が違う」「そもそも返していない」を具体的に指摘できる。
+
+\begin{remark}
+$\rho$ を型スキームに含めてはならない。
+含めると呼び出しごとに $\rho$ が新しくなり、
+「このメソッドはどの型を返すか」という制約が呼び出し側へ伝わらなくなる。
+$\rho$ はクラスのメソッド表に属する量であって、多相化の対象ではない。
+\end{remark}
+
+\subsection{型}
+
+型言語は次のとおりである（\texttt{src/types.ml}）。
+
+\begin{term}
+τ ::= int | float | string | bool | unit | any
+    | τ list -> τ                  (関数)
+    | actor[C]{ m : τ, ... }        (アクター)
+    | array<τ> | future<τ> | { l : τ, ... }
+    | α                             (型変数)
+σ ::= ∀α₁…αₙ. τ                     (型スキーム)
+\end{term}
+
+推論は Hindley--Milner 風である。
+クラスのメソッド表を先に走査して各メソッドの型スキームを登録し
+（\texttt{preinfer\_all\_classes}）、
+そのうえで本体を推論する。
+この二段構えにしないと、
+相互に \texttt{now} し合うアクターの型が決まらない。
+
+\subsection{効果}
+
+メソッドは自分が世界に及ぼす作用を宣言できる。
+
+\begin{aipl}
+method plan(g) : string !{ai, net} { reply(ai_call("plan " ++ g)); }
+\end{aipl}
+
+効果は 8 種類の名前からなる固定の語彙である。
+
+\begin{center}
+\begin{tabular}{ll@{\qquad}ll}
+\toprule
+\texttt{mut}  & 自分の状態を変える    & \texttt{net} & ネットワークに出る \\
+\texttt{time} & 時間に依存する        & \texttt{ai}  & 言語モデルを呼ぶ \\
+\texttt{io}   & 入出力                & \texttt{fs}  & ファイルを触る \\
+\texttt{mem}  & 動的に割り付ける      & \texttt{log} & ログを出す \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+注釈を書かなければ本体から推論する。
+書いた場合は本体から推論した集合と照合し、
+足りなければ型エラーとする。
+効果を生む構文は実装上明確で、
+フィールドへの代入と \texttt{become} が \texttt{mut}、
+\texttt{new} が \texttt{mem}、
+\texttt{remote(\ldots)} 宛の送信が \texttt{net}、
+組込み関数はそれぞれ固有の効果を持つ。
+
+\paragraph{これで何が禁止できるか。}
+実時間側のアクターに \texttt{!\{time, log\}} と書いておけば、
+そのメソッドから \texttt{ai} や \texttt{net} を持つメソッドを
+同期で呼ぶことが型エラーになる。
+「実時間の処理が言語モデルの応答を待つ」という設計上の誤りが、
+規約ではなく型検査で止まる。
+これが \S\ref{sec:intro} で述べた動機に対する直接の答である。
+
+\subsection{期限}
+
+\texttt{now} と \texttt{await} には期限を書ける。
+
+\begin{aipl}
+var r = now p.plan("x") timeout 100 else "";
+var v = await f timeout 50 else 0;
+\end{aipl}
+
+期限を書かない \texttt{now}/\texttt{await} は、既定では警告になる。
+
+\begin{term}
+[warn] line 3, col 7: now without a deadline waits forever;
+       write `now ... timeout <ms> else <expr>`
+\end{term}
+
+環境変数 \texttt{AIOS\_STRICT\_DEADLINE=1} を立てると、これは型エラーに昇格する。
+このスイッチは単なる厳しさの調整ではない。
+\textbf{型健全性の定理が成立する範囲に留まるためのスイッチ}である
+（\S\ref{sec:proof}）。
+
+\subsection{その他の機構}
+
+\paragraph{\texttt{select}。}
+複数のメッセージを待ち受け、来たものから処理する。
+\texttt{timeout} 節を書ける。
+ABCL/1 の \texttt{script} のパターン受信を縮小したもので、
+パターンはメソッド名と引数の並びに限られ、\texttt{where} 節は無い。
+
+\paragraph{\texttt{become}。}
+自分の振る舞いを別のクラスに置き換える。
+アクターモデルの \texttt{become} をそのまま持つ。
+状態を変えるので \texttt{mut} 効果を生む。
+
+\paragraph{境界。}
+\texttt{remote("host:port", "actor")} で他ホストのアクターを指せる。
+また Web 経由で外部に公開する機構がある。
+どちらも \texttt{net} 効果を伴う。
+
+\subsection{ABCL/1 から落としたもの}
+\label{sec:dropped}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+ABCL/1 の機構 & AIPL & 落とした理由 \\
+\midrule
+express mode  & 無し & 逐次性の証明が壊れる \\
+返信先の一級性 & 無し & 「ちょうど一度」を型で守れない \\
+\texttt{script} の \texttt{where} & 無し（\texttt{select} に縮小） & 進行定理に枝が増える \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+三つとも「入れられない」のではなく「入れると証明の形が変わる」という理由で落としている。
+別稿\cite{selffeatures}で \texttt{where} と express mode を戻した場合を検討した。
+結論を要約すると、どちらも\textbf{型システムはほとんど壊さない}。
+どちらも「いつメッセージを受理するか」の話であって
+「どんな型を持つか」の話ではないからである。
+壊れるのは進行定理の側で、
+\texttt{where} は「どのガードも成立せず受理できない」という枝を一本増やし、
+express mode は「メソッド本体の実行が逐次である」という前提を破る。
+
+返信先の一級性については事情が異なる。
+これは型の話であり、
+「返信先を値として渡せる」なら
+「渡された先が返信を一度だけ行う」を保証しなければならない。
+線形型がそのための道具であり、\S\ref{sec:kobayashi} で述べる。
+
+% =====================================================================
+\section{形式的な保証}
+\label{sec:proof}
+
+\subsection{証明が成立する範囲を切り出す}
+
+現行実装のすべてに対して型健全性を主張することはできない。
+そこで、実装から証明が成立する範囲 $\mathrm{AIPL}^{-2}$ を切り出した\cite{selfsound2}。
+判断の基準は「実装の事実」であり、
+どの機能が入り、どれが外れ、なぜそうなるかを一つずつ決めている。
+
+入るもの：クラス表とメソッド表、アクターの状態ストア、メールボックスと非同期送信、
+future 表と \texttt{await}、動的なアクター生成、効果、期限付きの待ち。
+外れるもの：\texttt{become}、\texttt{select} の一部、外部公開、組込みの一部。
+
+\subsection{主定理}
+
+\textbf{機械検証が済んでいるのは $\mathrm{AIPL}^{-}$ ---- 効果も期限も持たない中核である。}
+\texttt{coq/AIPLSoundness.v}（1,121 行）に次が含まれる。
+形式化は変数・局所束縛・代入補題、アクターの状態ストアとその型不変条件、
+クラス表とメソッド表、メールボックスと非同期送信、future 表と \texttt{await}、
+動的なアクター生成を含む。
+アクター型はクラス番号で添字づけられており（\texttt{TActor : nat -> ty}）、
+異なるクラスは異なる型である。
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+定理 & 内容 \\
+\midrule
+\texttt{preservation}            & 型付けされた構成の簡約は型付けを保つ \\
+\texttt{preservation\_star}      & 上記の反射推移閉包 \\
+\texttt{progress}                & 型付けされた構成は終状態か簡約できる \\
+\texttt{type\_safety}            & 型付けされた構成から到達できる構成は行き詰まらない \\
+\texttt{no\_method\_not\_understood} & 「メソッドが無い」実行時エラーは起きない \\
+\texttt{state\_type\_invariant}  & アクター状態の型不変条件 \\
+\texttt{future\_type\_invariant} & future 表の型不変条件 \\
+\texttt{no\_await\_no\_deadlock} & \texttt{await} を含まない構成はブロックしない \\
+\texttt{async\_deadlock\_free}   & \texttt{await} を含まないプログラムのデッドロック自由 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{theorem}[進行、機械検証済み]
+$\mathrm{AIPL}^{-}$ の型付けされた構成 $C$ は、
+終状態であるか、簡約できるか、
+\textbf{未解決 future の \texttt{await} でブロックしている}かのいずれかである。
+\end{theorem}
+
+\textbf{機械検証されている進行定理は三択であり、第三の枝がデッドロックである。}
+\texttt{async\_deadlock\_free} はこの第三の枝を消した主張ではない。
+仮定に \texttt{conf\_afree}（構成が \texttt{await} を含まない）が要る、
+すなわち\textbf{完全に非同期なプログラムに限った}デッドロック自由である。
+
+\begin{corollary}[機械検証済み]
+\texttt{await} を含まない型付き構成は、どこまで実行してもブロックせず、
+終状態でなければ必ず一歩進める。
+\end{corollary}
+
+\subsection{紙の上の証明 ---- $\mathrm{AIPL}^{-2}$}
+
+効果と期限を加えた $\mathrm{AIPL}^{-2}$ については、
+別稿\cite{selfsound2}が\textbf{紙の上で}証明している。
+そこでの主結果は\textbf{進行定理が二択になる}ことである。
+$\mathrm{AIPL}^{-2}$ には期限のない待ちが構文に存在せず、
+待ちは残り時間を減らす簡約として進むので、ブロックの枝が消える。
+系として、\texttt{await} を含む場合も含めてデッドロック自由が言える。
+これは第 1 版\cite{selfsound1}が「一般には言えない」と明記した性質であり、
+期限を構文に義務づけたことの見返りである。
+代償も明確で、\textbf{停止性は依然として言えない}。
+期限が保証するのは「待ちが有限時間で終わる」ことであって、
+プログラム全体が停止することではない。
+さらに、デッドロックが消えるのではなく\textbf{有限時間の失敗に変換される}という点も
+正しく述べておく必要がある。相互に待ち合う二者は両方が期限切れになる。
+詰まらないが正しくもない。
+
+副産物として、効果の健全性から
+「実時間側のアクターがエージェント側を待てない」ことが命題として出る。
+\S\ref{sec:design} で述べた設計上の要請が回収される形である。
+
+\subsection{機械検証に残っている作業}
+\label{sec:tobeproved}
+
+$\mathrm{AIPL}^{-2}$ を機械検証するために必要な追加は、
+別稿\cite{selfsound2}が三点に特定している。
+
+\begin{enumerate}
+\item \textbf{効果を型と対にして持つ}。判断を $\Gamma \vdash e : \tau\,!\,\varepsilon$ にし、
+      構成の整合条件に効果条件を足す。効果集合は有限なので有限集合で足りる。
+\item \textbf{期限を \texttt{await} に持たせる}。時間を進める簡約と期限切れの簡約を加える。
+      進行定理の \texttt{await} の場合はむしろ易しくなる
+      （三つの規則が網羅的なので、ブロックの場合分けが消える）。
+\item \textbf{future 型を \texttt{future}$\langle\tau\,!\,\varepsilon\rangle$ に変える}。
+      future 表が対を持つようになる。
+\end{enumerate}
+
+三点目は \S\ref{sec:limits} で報告する実装の穴と\textbf{同じもの}である。
+モデルの側も現状は \texttt{TFut : ty -> ty} であって効果を持たない。
+つまりこの一点は、実装とモデルの両方で同時に直すべき箇所である。
+
+\subsection{機械検証の状態}
+
+本稿の執筆にあたり、証明の状態を実際に確認した（2026 年 8 月 21 日）。
+以下はすべて $\mathrm{AIPL}^{-}$ についての値である。
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+項目 & 実測 \\
+\midrule
+処理系 & The Rocq Prover 9.1.0（OCaml 5.1.1 でビルド） \\
+形式化の規模 & \texttt{coq/} 全 6 ファイル 2,757 行 \\
+ & うち \texttt{AIPLSoundness.v} 1,121 行、\texttt{AIPLDining.v} 566 行 \\
+再コンパイル & \texttt{AIPLSoundness.v} が 0.9 秒で通り、生成物は既存とバイト一致 \\
+公理への依存 & 主要 6 定理すべて \texttt{Closed under the global context} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+最後の行が重要である。
+\texttt{Print Assumptions} を
+\texttt{preservation}、\texttt{progress}、\texttt{type\_safety}、
+\texttt{no\_method\_not\_understood}、\texttt{no\_await\_no\_deadlock}、
+\texttt{async\_deadlock\_free} の 6 つに対して実行し、
+いずれも公理・未証明の補題に依存しないことを確認した。
+形式化には \texttt{Axiom} も \texttt{Admitted} も含まれない。
+
+\begin{remark}
+\texttt{coq/} には他に、ABCM（ABCL カーネル言語の意味論）の形式化と、
+そこから AIPL への埋め込みが翻訳の健全性つきで入っている
+（\texttt{ABCM.v}、\texttt{ABCMEmbedding.v}）。
+また食事する哲学者の Chandy--Misra 解法の形式化（\texttt{AIPLDining.v}）がある。
+本稿では扱わない。
+\end{remark}
+
+% =====================================================================
+\section{実現}
+\label{sec:impl}
+
+\subsection{三つの処理系}
+
+AIPL には実装が三つある。
+
+\begin{center}
+\begin{tabular}{llrl}
+\toprule
+実装 & 位置づけ & 規模 & 実行の形 \\
+\midrule
+OCaml 版 & \textbf{正} & 手書き 7,289 行 & ネイティブの REPL \\
+         &            & （生成 3,670 行） & \\
+Py-I（Python） & 追随 & 14,443 行 & CLI \\
+JS-I（JavaScript） & 追随 & 5,709 行 & ブラウザ（CLI 足場あり） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+OCaml 版が仕様の正である。
+生成 3,670 行は \texttt{ocamllex}/\texttt{ocamlyacc} が
+\texttt{lexer.mll}（106 行）と \texttt{parser.mly}（229 行）から作るものである。
+Py-I の行数はテストを除いた値で、テストを含めると 16,048 行になる。
+
+三つも作る理由は二つある。
+第一に、JS-I はブラウザで動くので、
+処理系を配らずに言語を試してもらえる。
+第二に、\textbf{三つ揃えること自体が仕様の検査になる}。
+一つの実装しかなければ、実装の癖と言語の仕様が区別できない。
+
+\subsection{OCaml 版の構成}
+
+\begin{center}
+\begin{tabular}{lrl}
+\toprule
+ファイル & 行 & 役割 \\
+\midrule
+\texttt{lexer.mll}    & 106  & 字句 \\
+\texttt{parser.mly}   & 229  & 構文（27 規則・18 トークン） \\
+\texttt{ast.ml}       & 426  & 抽象構文木 \\
+\texttt{types.ml}     & 468  & 型・型スキーム・効果の語彙・クラスのメソッド表 \\
+\texttt{typing\_env.ml} & 285 & 型環境・組込みの型と効果 \\
+\texttt{infer.ml}     & 1,270 & 型推論・効果検査・\texttt{reply} 検査・期限検査 \\
+\texttt{eval\_thread.ml} & 2,291 & 評価器（スレッドによるアクター実行） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+型検査の実体は \texttt{infer.ml} に集まっている。
+推論と効果と \texttt{reply} 検査を別々のパスにせず、
+一度の走査で行っているためである。
+
+\subsection{三実装を揃え続ける}
+
+仕様を変えるたびに三つが揃っているかを確かめる必要がある。
+そのために、同じサンプルを三実装で流して出力を並べる道具を用意した
+（\texttt{tools/run\_all\_impls.sh}）。
+何かを触ったら必ずこれを流す。
+過去に二度、これで退行に気づいた。
+
+揃える過程で 6 つの不具合が出た記録は別稿\cite{selfparity}にある。
+そこで得た教訓を一つだけ引く。
+\textbf{検査の指摘は件数ではなく実物を開いて確かめる}。
+\texttt{reply} 検査が 62 件の指摘を出したとき、
+そのうち 59 件は誤検出であった
+（Py-I のメソッドは \texttt{return} でも返せる、\texttt{function} は検査対象外）。
+件数だけを見ていれば「大量の不具合がある」と誤診していた。
+
+% =====================================================================
+\section{評価}
+\label{sec:eval}
+
+以下はすべて 2026 年 8 月 21 日に実測した値である。
+
+\subsection{型検査が捕まえるもの}
+
+本稿のために最小の誤りプログラムを 4 本作り、
+OCaml 版に通した結果を示す。
+
+\paragraph{(1) \texttt{reply} の被覆漏れ。}
+\begin{aipl}
+class C {
+  method f(x) : int {
+    if (x > 0) { reply(1); }        // else の経路で reply しない
+  }
+}
+\end{aipl}
+\begin{term}
+[Type error] line 2, col 10: method f is declared to reply with int,
+             but some execution path does not reply
+\end{term}
+
+\paragraph{(2) \texttt{reply} の線形性違反。}
+\begin{aipl}
+class C { method f(x) : int { reply(1); reply(2); } }
+\end{aipl}
+\begin{term}
+[Type error] line 2, col 10: method f may reply more than once on some path;
+             a method must reply at most once
+\end{term}
+
+\paragraph{(3) 期限のない待ち。}
+既定では警告、\texttt{AIOS\_STRICT\_DEADLINE=1} で型エラーに昇格する。
+\begin{term}
+[Type error] line 3, col 7: now without a deadline waits forever;
+             write `now ... timeout <ms> else <expr>`
+\end{term}
+
+\paragraph{(4) 効果注釈と本体の食い違い。}
+\begin{aipl}
+class C {
+  var n = 0;
+  method f(x) : int !{log} { n = n + 1; reply(n); }   // mut を書いていない
+}
+\end{aipl}
+\begin{term}
+[Type error] line 3, col 10: method C.f declares {log} but its body has {mut}
+             (missing {mut})
+\end{term}
+
+四つとも、指摘の文面が\textbf{何を書けばよいか}まで述べている。
+期限の警告が \texttt{timeout <ms> else <expr>} という書き方を示すのは、
+この検査が「禁止」ではなく「書き換えの要求」だからである。
+
+\subsection{三実装の一致}
+
+ガイドのサンプル 9 本（\texttt{g1}--\texttt{g9}）を三実装で流した。
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+サンプル & 内容 & 三実装の出力 & 判定 \\
+\midrule
+\texttt{g1\_hello}        & クラス・\texttt{send}・文字列連結 & \texttt{hello,AIPL/tick1/tick2} & 一致 \\
+\texttt{g2\_now\_future}  & \texttt{now}/\texttt{future}/\texttt{await} & \texttt{twice=43/awaited=20/v=7} & 一致 \\
+\texttt{g3\_actors}       & 複数アクター & \texttt{ok,left=7/soldout} & 一致 \\
+\texttt{g4\_select}       & \texttt{select} と \texttt{reply} の帰属 & \texttt{waiting/got1/viaselect:1} & 一致 \\
+\texttt{g6\_effects}      & 効果注釈 & \texttt{1/1/n=1} & 一致 \\
+\texttt{g7\_deadline}     & 期限 & \texttt{fast=42/slow(timedout)=0/await=10} & 一致 \\
+\texttt{g8\_bool\_equality} & 真偽値と等値 & \texttt{literaltrueok/\ldots/b=true} & 一致 \\
+\texttt{g9\_actor\_arg}   & アクターを引数に渡す & （後述） & 差あり \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+8 本が完全に一致した。
+9 本目の \texttt{g9} だけが食い違ったが、
+これは\textbf{言語仕様の差ではない}。
+Py-I と JS-I が \texttt{got actor / after send / pong} の 3 行を出すのに対し、
+OCaml 版がその回に限って先頭行を落としたためである。
+
+\subsection{出力の非決定性を定量化する}
+
+\texttt{g9} を OCaml 版で 20 回反復した。
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+結果 & 回数 \\
+\midrule
+3 行すべて揃った & 13 \\
+行が欠けた       & 7 \\
+時間切れ         & 0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+他のサンプルについても同様に反復した。
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+サンプル & 期待行数 & 全行が揃った回数 \\
+\midrule
+\texttt{g1\_hello}        & 3 & 5/10 \\
+\texttt{g2\_now\_future}  & 3 & 10/10 \\
+\texttt{g3\_actors}       & 2 & 10/10 \\
+\texttt{g4\_select}       & 3 & 10/10 \\
+\texttt{g6\_effects}      & 3 & 9/10 \\
+\texttt{g7\_deadline}     & 3 & 6/6 \\
+\texttt{g8\_bool\_equality} & 4 & 5/6 \\
+\texttt{g9\_actor\_arg}   & 3 & 13/20 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{finding}
+出力の欠落は、待ちを含むサンプル（\texttt{g2}、\texttt{g3}、\texttt{g4}、\texttt{g7}）では
+一度も起きず、
+\texttt{send} だけで終わるサンプル（\texttt{g1}、\texttt{g9}）で頻繁に起きる。
+これは計算が誤るのではなく、
+REPL がスクリプトの終端に達したときに
+まだ書き出されていない出力を捨てているためだと考えられる。
+\texttt{now}/\texttt{await} を含むサンプルでは待ちの間に書き出しが進むので、
+問題が表に出ない。
+\end{finding}
+
+この所見は、\textbf{単発の実行では絶対に得られない}。
+一度流して 3 行出れば「動いている」と判断してしまう。
+反復して分布を見て初めて、
+「動くこともある」と「常に動く」の区別がつく。
+
+\subsection{応用}
+
+AIPL は言語単体ではなく、いくつかの応用の記述言語として使われている。
+
+\begin{itemize}
+\item \textbf{災害時の避難支援 MANET}\cite{selfmanet}。
+      基地局が失われた状況で、避難者の端末そのものを無線ノードとし、
+      その上を移動エージェントが渡り歩く方式を、
+      AIPL のアクターと Xinu 互換の軽量ノードで実装した。
+      1 台の端末を 1 つのノードとして独立プロセス化している。
+\item \textbf{小型 OS の記述}\cite{selfxinu}。
+      Xinu 風 OS の構成要素——プロセス管理、メールボックス、
+      スケジューラ、デバイスドライバ、システムコール——を
+      アクターに対応づける構想。
+      システムコール引数、デバイスの権限、プロセス間メッセージを
+      型で検査する設計である。
+\item \textbf{進化計算によるアクター構成の探索}\cite{selfevo}。
+      アクター組織の設計パラメータを遺伝子とし、
+      同一の進化エンジンを 4 つの業務ドメインに適用した。
+\end{itemize}
+
+これらは AIPL の設計判断が現場で妥当かを試す場でもある。
+とくに効果と期限は、実時間側（OS・MANET）と
+エージェント側（言語モデル）を同じプログラムに書いたときに初めて意味を持つ。
+
+% =====================================================================
+\section{現状の限界}
+\label{sec:limits}
+
+未実装項目を並べるのではなく、
+本稿のために最小例を作って\textbf{実際に再現した}穴を二つ報告する。
+
+\subsection{効果伝播の穴——\texttt{future}+\texttt{await} が検査を逃れる（修正済み）}
+
+\S\ref{sec:eval} の (4) で見たとおり、効果注釈は本体と照合される。
+ところが、同じ意味の処理を \texttt{now} で書くか
+\texttt{future}+\texttt{await} で書くかで結果が変わる。
+
+\begin{aipl}
+class Planner {
+  method plan(g) : string !{ai, net} { reply(ai_call("plan " ++ g)); }
+}
+class Ctrl {
+  var p = new Planner();
+  method viaNow() : unit !{time, log} {          // ai も net も宣言していない
+    var r = now p.plan("x") timeout 100 else "";
+    print(r);
+  }
+  method viaFutureAwait() : unit !{time, log} {  // 同じ意味
+    var f = future p.plan("x");
+    var r = await f timeout 100 else "";
+    print(r);
+  }
+}
+\end{aipl}
+
+\texttt{viaNow} だけを含むプログラムは、期待どおり弾かれる。
+
+\begin{term}
+[Type error] line 7, col 10: method Ctrl.viaNow declares {log, time}
+             but its body has {ai, log, net} (missing {ai, net})
+\end{term}
+
+ところが \texttt{viaFutureAwait} だけを含むプログラムは、\textbf{通ってしまう}。
+
+\begin{term}
+[Loaded] /tmp/aipl/e5_gap.aipl
+\end{term}
+
+これは深刻である。
+\S\ref{sec:design} で述べた「実時間側が言語モデルを待てない」という保証が、
+書き方を変えるだけで破れることを意味する。
+
+原因は型の定義にあった。
+\texttt{future}$\langle\tau\rangle$ が値の型 $\tau$ しか持たず、効果を持たない。
+そのため \texttt{future} を作った時点で効果が落ち、\texttt{await} は何も足さない。
+
+\paragraph{直した。}
+\texttt{TFuture of ty} を \texttt{TFuture of ty * SSet.t ref} に変え、
+\texttt{future} が呼び先（\texttt{"クラス名\#メソッド名"}）を型に載せ、
+\texttt{await} がその呼び先へ向けて \texttt{now} と同じ効果伝播の辺を張るようにした。
+集合にしてあるのは、別々の呼び出し由来の future が単一化されうるためで、
+単一化のときは両側の和をとって書き戻す。
+これで \texttt{now} 版と \texttt{future}+\texttt{await} 版が同じ診断を出す。
+
+\begin{term}
+[Type error] line 8, col 10: method Ctrl.viaFutureAwait declares {log, time}
+             but its body has {ai, log, net} (missing {ai, net})
+\end{term}
+
+\paragraph{既存コードへの影響。}
+手元の 4 リポジトリにある \texttt{.aipl} \textbf{543 本}を修正前後の型検査に通し、
+判定が変わったファイルを数えた。変わったのは\textbf{狙ったテスト 1 本だけ}である
+（修正前 OK 136 / 構文エラー 268 / 型エラー 139、
+修正後 OK 135 / 268 / 140）。
+構文エラーが多いのは、他実装向けの方言で書かれた \texttt{.aipl} が
+OCaml 版の構文では読めないためで、修正前後で変わらない。
+
+\subsection{アクター型が区別されない（修正済み）}
+
+型言語には \texttt{actor[C]} があるにもかかわらず、
+異なるクラスのアクター型が単一化してしまう。
+
+\begin{aipl}
+class Alpha { method a() : unit !{log} { print("a"); } }
+class Beta  { method b() : unit !{log} { print("b"); } }
+class Use {
+  method f(x: Alpha) : unit !{log} { send x.a(); }   // Alpha を要求している
+}
+var u = new Use();
+var b = new Beta();
+send u.f(b);          // ところが Beta を渡す
+\end{aipl}
+
+修正前はこれが通った。
+\texttt{Beta} に \texttt{a} は無いので、受け付けてはならない。
+単一化が \texttt{TActor} 同士を無条件に成功させていたことが原因である。
+第 2 版の健全性レポートで
+「モデルが実装より厳しい」と書いた箇所が、まさにこれであった。
+形式化ではアクター型がクラス番号で添字づけられている
+（\texttt{TActor : nat -> ty}）ので
+\texttt{no\_method\_not\_understood} が定理として立つが、
+実装はその前提を満たしていなかった。
+
+\paragraph{直した。}
+単一化をクラス名で行うようにした。
+ただし実行時の値から作られるアクター型はクラスが静的に分からず
+\texttt{TActor ("?", [])} になるので、\texttt{"?"} はどちらとも合う印として扱う。
+
+\begin{term}
+[Type error] line 11, col 1: actor type mismatch: actor(Alpha) vs actor(Beta)
+\end{term}
+
+逃げ道として \texttt{AIOS\_LAX\_ACTOR=1} で従来の挙動に戻せるようにしたが、
+543 本を通した結果、判定が変わったのは\textbf{やはり狙ったテスト 1 本だけ}で、
+逃げ道を使う必要は無かった。
+
+\begin{remark}
+この二つの穴には共通の性質がある。
+どちらも\textbf{正しいプログラムでは表に出ない}。
+型検査は通り、実行も正常に進む。
+誤ったプログラムを書いたときにだけ、
+「止めるはずのものが止まらない」という形で現れる。
+だから通常の動作確認では見つからず、
+定式化のために仕様を書き下す過程で初めて露見した。
+形式化には「証明する」以外に「実装の穴を見つける」という効用がある。
+そして\textbf{見つけたあとも、通常のテストでは守れない}。
+守るには「弾かれるべきプログラム」を資産として持つ必要がある（\S\ref{sec:reject}）。
+\end{remark}
+
+\subsection{弾かれるべきプログラムを資産にする}
+\label{sec:reject}
+
+穴を直すだけでは足りない。
+既存の突き合わせ（\S\ref{sec:impl}）は
+\textbf{通るプログラムの出力が一致するか}しか見ておらず、
+\textbf{通ってはいけないプログラムが止まるか}を見る仕組みが無かった。
+\S\ref{sec:eval} で示した誤りプログラムも、その場限りのものだった。
+
+そこで、弾かれるべきプログラムを 8 本並べた集合と、
+それを三実装すべてに通す道具を用意した
+（\texttt{docs/samples/reject/}、\texttt{tools/run\_reject\_tests.sh}）。
+期待は \texttt{reject}（型エラーで止まる）か
+\texttt{warn}（警告は出るが通る。期限だけ）である。
+
+\begin{center}
+\begin{tabular}{llccc}
+\toprule
+テスト & 見るもの & OCaml & Py-I & JS-I \\
+\midrule
+\texttt{r1}  & \texttt{reply} の被覆漏れ           & ○ & ○ & ○ \\
+\texttt{r2}  & \texttt{reply} の線形性違反         & ○ & ○ & ○ \\
+\texttt{r3}  & 期限のない \texttt{now}（警告）     & ○ & ○ & ○ \\
+\texttt{r4}  & 効果の宣言漏れ（\texttt{mut}）      & ○ & ○ & ○ \\
+\texttt{r5}  & 効果（\texttt{future}+\texttt{await} 経由） & ○ & ○ & ○ \\
+\texttt{r6}  & アクター型の不一致                  & ○ & ○ & × \\
+\texttt{r7}  & 効果（\texttt{now} 経由。r5 の対照）  & ○ & ○ & ○ \\
+\texttt{r8}  & 1 文字のクラス名                    & ○ & × & × \\
+\texttt{r9}  & 未宣言の名前への代入                & ○ & ○ & ○ \\
+\texttt{r10} & 存在しないメソッドへの \texttt{send} & ○ & ○ & × \\
+\texttt{r11} & 引数の数が合わない                  & ○ & ○ & × \\
+\texttt{r12} & 引数の型が合わない                  & ○ & ○ & × \\
+\texttt{r13} & \texttt{reply} の型が宣言と違う      & ○ & ○ & × \\
+\texttt{r14} & future でないものを \texttt{await}   & ○ & × & × \\
+\texttt{r15} & 期限が 0 ミリ秒                     & ○ & ○ & ○ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+作業前は 8 本 24 枠のうち\textbf{11 枠}が期待と食い違っていた
+（OCaml 3、Py-I 3、JS-I 5）。
+その 8 本を直したうえで、さらに探りを入れて 7 本を足した。
+現在は 15 本 45 枠のうち\textbf{9 枠}である。
+OCaml 版は\textbf{15 本すべて}を弾く。
+残りは Py-I が 2（\texttt{r8}・\texttt{r14}）、JS-I が 7 である。
+
+\paragraph{探りで新たに出た穴。}
+\texttt{r9} が三実装すべてに共通していた唯一の穴である。
+\textbf{未宣言の名前への代入が黙って通り、その場で新しい変数ができていた}。
+読み出しは \texttt{unbound variable} で弾いているのに、代入だけが素通りしていた。
+
+\begin{aipl}
+class C {
+  var count = 0;
+  method f(x) : int { cout = count + 1; reply(count); }   // count の打ち間違い
+}
+\end{aipl}
+
+\texttt{count} は永久に 0 のままで、何のエラーも出ない。
+三実装とも弾くようにした（\texttt{AIOS\_LAX\_ASSIGN=1} で従来の暗黙宣言に戻せる）。
+543 本を通した結果、\textbf{影響を受けた既存ファイルは 0 本}であった。
+暗黙宣言に頼っているコードは一つも無かったことになる。
+
+残る \texttt{r10}--\texttt{r15} は「OCaml 版にはあるが他の実装に無い検査」で、
+穴というより追随の遅れである。今回 Py-I に
+メソッドの存在・引数の数・引数の型・\texttt{reply} の型・期限の値の検査を、
+JS-I に期限の値の検査を足した。
+
+\subsection{三実装を並べて初めて見えたもの}
+
+この集合を作る過程で、\textbf{出力の比較では絶対に出てこない}食い違いが五つ出た。
+いずれも「検査したのに何も出ない」類である。
+
+\begin{enumerate}
+\item \textbf{効果伝播の穴は OCaml 版だけのものだった}。
+      Py-I は \texttt{future}+\texttt{await} でも正しく効果を引き継いでいた。
+      正であるはずの実装が唯一間違えていた例である。
+\item \textbf{JS-I は効果を集めていたが、宣言と照合していなかった}。
+      呼び出しの辺も不動点も持っているのに、
+      その結果を \texttt{!\{...\}} と突き合わせる箇所がどこにも無い。
+      さらに効果の収集がクラス表の登録に依存しており、
+      単体で走らせるとフィールド代入が一件も \texttt{mut} にならなかった。
+\item \textbf{JS-I はメッセージ送信と \texttt{reply} を \texttt{mut} と数えていた}。
+      仕様では \texttt{mut} は「自分の状態を変える」であり、
+      フィールド代入と \texttt{become} だけが生む。
+      照合を入れた瞬間、正しいプログラムが軒並み落ちてこれに気づいた。
+\item \textbf{Py-I はトップレベルの文を毎回空の環境で検査していた}。
+      \texttt{var u = new Use(); send u.f(b);} の \texttt{u} が未知になり、
+      トップレベルの呼び出しは\textbf{引数がひとつも照合されていなかった}。
+\end{enumerate}
+
+\item \textbf{\texttt{send} の効果の扱いが三者三様だった}。
+      ガイドの \texttt{g6} は「\texttt{send} は待たないので引き継がない」と
+      明記しているのに、Py-I と JS-I は引き継いでいた。
+      そのため\textbf{仕様どおりに書いたプログラムが二つの実装で落ちる}。
+      OCaml 版に合わせて直した。
+      判断の材料として、逆に OCaml 版で \texttt{send} も引き継ぐようにして
+      543 本を通してみたところ、落ちたのは\textbf{ガイドの \texttt{g6} ただ一本}で、
+      それがまさにこの規律を説明している例題であった。
+
+加えて、組込みの効果表そのものが揃っていなかった。
+\texttt{ai\_call} は OCaml 版と Py-I が \texttt{\{ai, net\}} を与えるのに対し、
+JS-I は \texttt{\{ai\}} だけで、
+「AI を使うが機外へは出ない」オンデバイス推論と区別がつかなくなっていた。
+これも揃えた。
+
+\begin{finding}
+残る 3 枠のうち 2 枠は \texttt{r8} である。
+Py-I は\textbf{1 文字の大文字を型変数として読む}（\texttt{\textbackslash b[A-Z]\textbackslash b}）。
+そのため \texttt{class A} を作って \texttt{method f(x: A)} と書くと、
+\texttt{A} はクラスではなく総称の枠になり、何を渡しても通る。
+OCaml 版はクラス名として読む。
+同じ誤りが\textbf{クラス名の長さによって}捕まったり捕まらなかったりする。
+これは実装の不具合というより、言語仕様が
+「型変数を書けるのか、書けるならどう綴るのか」を決めていないことの現れである。
+\end{finding}
+
+\subsection{その他}
+
+\begin{itemize}
+\item メソッド内の \texttt{return} が JS-I に無い（Py-I は受ける）。
+\item \texttt{typeof} の出力書式が三実装で揃っていない。JS-I には存在しない。
+\item 型注釈つき変数宣言 \texttt{var x : T = e} が未実装。
+\item OCaml 版 REPL の出力取りこぼし（\S\ref{sec:eval} で定量化）。
+\item JS-I にメソッドの存在・引数・アクター型の照合が無い
+      （\texttt{r6}・\texttt{r10}--\texttt{r13}）。
+      送信の宛先クラスを最善努力で解決しているだけで、
+      引数を名前で照合する経路を持たない。
+\item Py-I に「future でないものを \texttt{await} している」の検査が無い（\texttt{r14}）。
+\item 型変数の綴りが言語仕様に無い（\texttt{r8}）。
+\end{itemize}
+
+% =====================================================================
+\section{小林研究をどう取り込むか}
+\label{sec:kobayashi}
+
+\S\ref{sec:kobabg} で挙げた道具箱は、
+AIPL が残した課題にそのまま噛み合う。
+対応を表にする。
+
+\begin{center}
+\begin{tabular}{p{0.30\textwidth}p{0.28\textwidth}p{0.32\textwidth}}
+\toprule
+AIPL の課題 & 小林の道具 & 得られるもの \\
+\midrule
+返信先を一級にしたいが、
+「ちょうど一度」を守れない
+（\S\ref{sec:dropped}） &
+線形型\cite{kptl96} &
+返信先を線形な値にする。委譲が書けて、
+なお二重返信・返信忘れが型で止まる \\
+\addlinespace
+進行定理の第三の枝
+（期限の無い場合の待ちの循環） &
+デッドロック自由な型システム
+\cite{kobadf97,kobadf00,kobadf06} &
+期限に頼らずに枝を消す。
+期限は工学的な保険として残せる \\
+\addlinespace
+二つのプロファイル（エージェント／実時間）を
+別々の規則で書いている &
+$\pi$ 計算の汎用型システム\cite{kobagen01} &
+一つの枠組みからプロファイルを導く。
+規則の重複が消える \\
+\addlinespace
+効果が順序を持たない集合である &
+資源使用解析\cite{kobares} &
+「開いたら閉じる」「取得したら解放する」を
+効果の水準で書ける \\
+\addlinespace
+\texttt{where} ガードを戻すと
+検証が要る（\S\ref{sec:dropped}） &
+高階モデル検査\cite{koba09,ko09}、
+述語抽象と CEGAR &
+検証器を自作せずに借りる \\
+\addlinespace
+期限の値が妥当かを言えない &
+精製型・サイズ型\cite{kobasize} &
+応答時間の上界を型で述べる \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+すべてを取り込むことは可能でも望ましくもない。
+別稿\cite{selfkoba}で代償を含めて検討したが、
+本稿の立場から言えば優先順位は明確である。
+
+\begin{enumerate}
+\item \textbf{線形型による返信先の一級化}。
+      ABCL/1 から落とした三つのうち、
+      唯一「型の問題」であるものが解ける。
+      委譲が書けるようになる効果も大きい。
+\item \textbf{効果に順序を入れる}。
+      \S\ref{sec:limits} の一つ目の穴を直したうえで、
+      効果を集合から順序つきの構造にすれば、
+      デバイスの獲得と解放のような性質が書ける。
+      OS を記述する目的\cite{selfxinu}に直結する。
+\item \textbf{デッドロック自由な型システム}。
+      現在は期限で回避しているが、
+      期限は「待ちが終わる」ことしか保証しない。
+      設計として循環を排除できるほうが強い。
+\end{enumerate}
+
+% =====================================================================
+\section{関連研究}
+
+ABCL 系については \S\ref{sec:background} で述べた。
+ABCL/1\cite{abcl1,abclbook} が計算モデルの出発点であり、
+ABCL/f\cite{abclf} は future を中核に据えた型付きの先行例、
+ABCL/R\cite{abclr} は反射的な拡張である。
+ABCL カーネル言語の意味論\cite{abclkernel}は
+本プロジェクトでも形式化の対象としている。
+
+型付き並行言語という枠では、
+セッション型が「通信の順序を型で書く」立場から近い位置にある。
+AIPL は現在、実行時のセッションプロトコル検査を持つが、
+静的なセッション型は持たない。
+効果システムの側では、
+効果を集合として扱う素朴な形を採っており、
+順序や資源の獲得・解放を表現できない。
+この二点はいずれも \S\ref{sec:kobayashi} の方向で改善しうる。
+
+\begin{remark}
+名称について一点断っておく。
+本プロジェクトの過去のレポートに、
+GA と複数の言語モデルを組み合わせた別のシステムを
+``AIPL (AI Programming Loop)'' と呼んでいるものがある\cite{selfga}。
+本稿の AIPL（Actor based Intelligence Parallel Language）とは別物である。
+\end{remark}
+
+% =====================================================================
+\section{おわりに}
+
+AIPL は ABCL/1 の三種のメッセージ送信を継承し、
+そこに型・効果・期限という三つの静的な仕組みを載せた並行アクター言語である。
+本稿はその設計と実現を一つにまとめ、実測にもとづいて評価した。
+
+得られたことを三点にまとめる。
+第一に、\textbf{三つの仕組みは互いに噛み合う}。
+効果と期限を組み合わせると、
+「実時間で動くアクターが機外のモデルを同期で待つ」という設計上の誤りが
+型検査で止まる。
+第二に、\textbf{期限を構文に義務づけると進行定理の枝が一本減る}。
+その結果、デッドロック自由が系として言える。
+ただしこれは紙の上の結果であって、機械検証はまだ済んでいない
+（残る作業は \S\ref{sec:tobeproved} の三点）。
+代償は停止性が言えないことと、
+デッドロックが消えるのではなく有限時間の失敗に変わることである。
+第三に、\textbf{形式化は実装の穴を見つける}。
+本稿で報告した二つの穴——効果伝播の抜け道とアクター型の非区別——は、
+どちらも正しいプログラムでは表に出ず、
+仕様を書き下す過程で初めて露見した。
+
+残された課題も明確である。
+実装側では二つの穴の修正、
+設計側では線形型による返信先の一級化と、
+効果への順序の導入である。
+これらは ABCL/1 から落としたものを取り戻す作業でもあり、
+小林の系譜が示した道具でそれが可能になる、という見通しを本稿は述べた。
+
+\subsection*{再現方法}
+
+本稿の実測値は次で再現できる。
+
+\begin{term}
+# 三実装の一致
+sh ~/aios/abclcp/tools/run_all_impls.sh
+
+# 単一サンプルの反復（OCaml 版）
+cd ~/aios/abclcp
+printf 'load %s\ncompile\n' docs/samples/guide/g9_actor_arg.aipl > /tmp/r.repl
+./src/abclrepl_thread -q -f /tmp/r.repl
+
+# 証明の確認
+cd ~/aios/abclcp/coq
+coqc -Q . "" AIPLSoundness.v
+echo 'Require Import AIPLSoundness. Print Assumptions type_safety.' > /tmp/chk.v
+coqc -I . -Q . "" /tmp/chk.v
+\end{term}
+
+% =====================================================================
+\begin{thebibliography}{99}
+
+\bibitem{abcl1}
+Akinori Yonezawa, Jean-Pierre Briot, Etsuya Shibayama.
+\newblock Object-Oriented Concurrent Programming in ABCL/1.
+\newblock \emph{OOPSLA 1986}, pp.~258--268.
+
+\bibitem{abclbook}
+Akinori Yonezawa (ed.).
+\newblock \emph{ABCL: An Object-Oriented Concurrent System}.
+\newblock MIT Press, 1990.
+
+\bibitem{abclf}
+Kenjiro Taura, Satoshi Matsuoka, Akinori Yonezawa.
+\newblock ABCL/f: A Future-Based Polymorphic Typed Concurrent
+Object-Oriented Language. 1994.
+
+\bibitem{abclr}
+Takuo Watanabe, Akinori Yonezawa.
+\newblock Reflection in an Object-Oriented Concurrent Language (ABCL/R).
+\newblock \emph{OOPSLA 1988}.
+
+\bibitem{abclkernel}
+Etsuya Shibayama.
+\newblock An ABCL Kernel Language and Its Semantics.
+
+\bibitem{async92}
+Naoki Kobayashi, Akinori Yonezawa.
+\newblock Asynchronous Communication Model Based on Linear Logic. 1992.
+
+\bibitem{acl93}
+Naoki Kobayashi, Akinori Yonezawa.
+\newblock ACL --- A Concurrent Linear Logic Programming Paradigm. 1993.
+
+\bibitem{kobayashi94}
+Naoki Kobayashi, Akinori Yonezawa.
+\newblock Type-Theoretic Foundations for Concurrent Object-Oriented
+Programming.
+\newblock \emph{OOPSLA 1994}.
+
+\bibitem{kptl96}
+Naoki Kobayashi, Benjamin C. Pierce, David N. Turner.
+\newblock Linearity and the Pi-Calculus.
+\newblock \emph{POPL 1996}.
+
+\bibitem{kobadf97}
+Naoki Kobayashi.
+\newblock A Partially Deadlock-Free Typed Process Calculus. 1997.
+
+\bibitem{kobadf00}
+Naoki Kobayashi.
+\newblock An Implicitly-Typed Deadlock-Free Process Calculus. 2000.
+
+\bibitem{kobadf06}
+Naoki Kobayashi.
+\newblock A New Type System for Deadlock-Free Processes.
+\newblock \emph{CONCUR 2006}.
+
+\bibitem{kobagen01}
+Naoki Kobayashi.
+\newblock A Generic Type System for the Pi-Calculus.
+\newblock \emph{POPL 2001}.
+
+\bibitem{kobares}
+Naoki Kobayashi et al.
+\newblock Resource Usage Analysis. 2001/2002/2005.
+
+\bibitem{koba09}
+Naoki Kobayashi.
+\newblock Types and Higher-Order Recursion Schemes for Verification of
+Higher-Order Programs. 2009.
+
+\bibitem{ko09}
+Naoki Kobayashi, C.-H. Luke Ong.
+\newblock A Type System Equivalent to the Modal Mu-Calculus Model Checking
+of Higher-Order Recursion Schemes. 2009.
+
+\bibitem{kobasize}
+Naoki Kobayashi et al.
+\newblock Sized Types and Parallel Complexity.
+
+\bibitem{selfvsabcl1}
+児玉靖司.
+\newblock AIPL（ABCLc+）と ABCL/1 --- 機能とモデルの観点からの比較.
+\newblock \texttt{docs/aipl\_vs\_abcl1\_ja.pdf}, 2026 年 7 月 30 日.
+
+\bibitem{selffeatures}
+児玉靖司.
+\newblock AIPL の言語仕様の検討 --- ABCL/1 の機構の再導入と、
+分散 AI エージェント／実時間 OS という目的から.
+\newblock \texttt{docs/aipl\_abcl1\_features\_ja.pdf}, 2026 年 7 月 30 日.
+
+\bibitem{selfsound1}
+児玉靖司.
+\newblock AIPL における型の健全性と型の安全性 --- 証明が成立する範囲
+$\mathrm{AIPL}^-$ の定式化と機械検証.
+\newblock \texttt{docs/aipl\_soundness\_ja.pdf}, 2026 年 7 月 28 日.
+
+\bibitem{selfsound2}
+児玉靖司.
+\newblock AIPL の型健全性と型安全性（第 2 版）--- 現行実装から証明可能な範囲
+$\mathrm{AIPL}^{-2}$ を切り出し、効果と期限つきで証明する.
+\newblock \texttt{docs/aipl\_soundness2\_ja.pdf}, 2026 年 7 月 30 日.
+
+\bibitem{selfreply}
+児玉靖司.
+\newblock AIPL におけるメソッド戻り値型の推論 --- \texttt{reply} の引数から型は決まるか.
+\newblock \texttt{docs/aipl\_reply\_inference\_ja.pdf}, 2026 年 7 月 29 日.
+
+\bibitem{selfguide}
+児玉靖司.
+\newblock AIPL / ABCLc+ ユーザーズガイド --- 文法・使い方・サンプルプログラム.
+\newblock \texttt{docs/aipl\_guide\_ja.pdf}, 2026 年 7 月 30 日.
+
+\bibitem{selfparity}
+児玉靖司.
+\newblock AIPL 3 実装の同期 --- 拡張子の統一、仕様追随、
+そして調べる過程で出た 6 つの不具合.
+\newblock \texttt{docs/aipl\_three\_impl\_parity\_ja.pdf}, 2026 年 8 月 1 日.
+
+\bibitem{selfkoba}
+児玉靖司.
+\newblock 小林研究の成果を AIPL に取り入れる場合の言語仕様 ---
+可能性、メリット、デメリット.
+\newblock \texttt{docs/aipl\_kobayashi\_synthesis\_ja.pdf}, 2026 年 7 月 30 日.
+
+\bibitem{selfmanet}
+児玉靖司.
+\newblock 移動エージェントによる避難支援 MANET の AIPL$\times$soft-Xinu 実装と評価.
+\newblock 2026 年 7 月.
+
+\bibitem{selfxinu}
+児玉靖司.
+\newblock actor-first 記述言語 AIPL による小型 OS の記述.
+\newblock 2026 年 5 月.
+
+\bibitem{selfevo}
+児玉靖司.
+\newblock AIPL/AICE 汎用進化的 Actor アーキテクチャ探索フレームワークとその評価.
+\newblock 2026 年 7 月.
+
+\bibitem{selfga}
+児玉靖司.
+\newblock 複数 LLM エージェントの協調による進化計算.
+\newblock 2026 年 5 月.（本稿の AIPL とは別システム）
+
+\end{thebibliography}
+
+\end{document}

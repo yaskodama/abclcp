@@ -1,0 +1,11 @@
+// 1文字のクラス名。OCaml 版はクラス名として読み、Py-I は型変数（\b[A-Z]\b）として読む。
+// 同じ誤りが実装によって捕まったり捕まらなかったりする。
+// 期待: 本来は r6 と同じ理由で弾かれるべき。
+class A { method a() : unit !{log} { print("a"); } }
+class B { method b() : unit !{log} { print("b"); } }
+class Use2 {
+  method f(x: A) : unit !{log} { send x.a(); }
+}
+var u = new Use2();
+var b = new B();
+send u.f(b);

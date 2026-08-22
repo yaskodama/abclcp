@@ -55,6 +55,12 @@ let () =
   (* Core.Array : 読みは効果なし、割り付けは mem *)
   set_eff [ "array_get"; "array_len" ] [];
   set_eff [ "array_empty"; "array_push"; "array_set" ] ["mem"];
+  (* 配備はノード外へ出て、相手に割り付けさせる *)
+  set_eff [ "deploy" ] ["net"; "mem"];
+  set_eff [ "source_of" ] [];
+  set_eff [ "node_allow" ] [];
+  (* 資源の取得と解放は状態を変える *)
+  set_eff [ "acquire"; "release" ] ["mut"];
   (* Console / AIOS.Kernel / AIOS.Event / Protocol.Session / Actor.Introspection *)
   set_eff [ "print" ] ["log"];
   set_eff [ "capabilities"; "capability_prims"; "aios_kernel"; "aios_actors";
@@ -103,6 +109,29 @@ let prelude () : env =
   let a1 = fresh_tvar () in
   add_poly e "print" (Forall ([(!a1).id], TFun ([TVar a1], TUnit)));
 
+  (* 3) result<τ> を扱う組込み。
+     期限つきの待ちで else を書かないと result<τ> が返る。
+     is_ok で成否を見て、value で中身を取り出す（既定値つき）。
+     これが無いと「期限切れの値」と「正常な値」が区別できない。 *)
+  let r1 = fresh_tvar () in
+  add_poly e "is_ok" (Forall ([(!r1).id], TFun ([TResult (TVar r1)], TBool)));
+  let r2 = fresh_tvar () in
+  add_poly e "value"
+    (Forall ([(!r2).id], TFun ([TResult (TVar r2); TVar r2], TVar r2)));
+  let r3 = fresh_tvar () in
+  add_poly e "timed_out" (Forall ([(!r3).id], TFun ([TResult (TVar r3)], TBool)));
+
+  (* メッシュ配備。ソースを送り、相手先で JIT して動かす。
+     deploy は外へ出て相手に割り付けさせるので net と mem を持つ。 *)
+  add_mono e "source_of" (TFun ([TString], TString));
+  add_mono e "node_allow" (TFun ([TString; TString], TUnit));
+  add_mono e "deploy" (TFun ([TString; TString; TString], TString));
+
+  (* 資源の取得と解放。型は string -> unit だが、
+     本体の中で対になっているかを別に検査する（順序つきの効果）。 *)
+  add_mono e "acquire" (TFun ([TString], TUnit));
+  add_mono e "release" (TFun ([TString], TUnit));
+
   (* AI-OS capability introspection *)
   add_mono e "capabilities" (TFun ([], TArray TString));
   add_mono e "capability_prims" (TFun ([TString], TArray TString));
@@ -129,20 +158,20 @@ let prelude () : env =
   let b = fresh_tvar () in
   let c = fresh_tvar () in
   add_poly e "aios_now" (Forall ([(!a).id; (!b).id; (!c).id], TFun ([TString; TString; TVar a; TVar b; TVar c], TAny)));
-  add_mono e "aios_future" (TFun ([TString; TString], TFuture TAny));
-  add_mono e "aios_future" (TFun ([TString; TString; TString], TFuture TAny));
-  add_mono e "aios_future" (TFun ([TString; TString; TFloat], TFuture TAny));
-  add_mono e "aios_future" (TFun ([TString; TString; TFloat; TFloat], TFuture TAny));
-  add_mono e "aios_future" (TFun ([TString; TString; TString; TString], TFuture TAny));
+  add_mono e "aios_future" (TFun ([TString; TString], TFuture (TAny, ref Types.SSet.empty)));
+  add_mono e "aios_future" (TFun ([TString; TString; TString], TFuture (TAny, ref Types.SSet.empty)));
+  add_mono e "aios_future" (TFun ([TString; TString; TFloat], TFuture (TAny, ref Types.SSet.empty)));
+  add_mono e "aios_future" (TFun ([TString; TString; TFloat; TFloat], TFuture (TAny, ref Types.SSet.empty)));
+  add_mono e "aios_future" (TFun ([TString; TString; TString; TString], TFuture (TAny, ref Types.SSet.empty)));
   let a = fresh_tvar () in
-  add_poly e "aios_future" (Forall ([(!a).id], TFun ([TString; TString; TVar a], TFuture TAny)));
+  add_poly e "aios_future" (Forall ([(!a).id], TFun ([TString; TString; TVar a], TFuture (TAny, ref Types.SSet.empty))));
   let a = fresh_tvar () in
   let b = fresh_tvar () in
-  add_poly e "aios_future" (Forall ([(!a).id; (!b).id], TFun ([TString; TString; TVar a; TVar b], TFuture TAny)));
+  add_poly e "aios_future" (Forall ([(!a).id; (!b).id], TFun ([TString; TString; TVar a; TVar b], TFuture (TAny, ref Types.SSet.empty))));
   let a = fresh_tvar () in
   let b = fresh_tvar () in
   let c = fresh_tvar () in
-  add_poly e "aios_future" (Forall ([(!a).id; (!b).id; (!c).id], TFun ([TString; TString; TVar a; TVar b; TVar c], TFuture TAny)));
+  add_poly e "aios_future" (Forall ([(!a).id; (!b).id; (!c).id], TFun ([TString; TString; TVar a; TVar b; TVar c], TFuture (TAny, ref Types.SSet.empty))));
   add_mono e "aios_emit" (TFun ([TString], TInt));
   add_mono e "aios_events" (TFun ([], TArray TString));
   add_mono e "aios_events_since" (TFun ([TInt], TArray TString));

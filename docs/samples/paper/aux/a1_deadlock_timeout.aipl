@@ -1,0 +1,11 @@
+// 小林のデッドロック自由型を採らず、期限で代用した場合に何が起きるか。
+// 互いに now で待ち合う二者は、詰まらない。両方が期限切れになる。
+class A5 {
+  var b = new B5();
+  method ping(x) : int !{} { reply(now b.pong(x) timeout 200 else -1); }
+}
+class B5 {
+  method pong(x) : int !{} { reply(x); }
+}
+var a = new A5();
+print("ping = " ++ (now a.ping(7) timeout 800 else -999));
