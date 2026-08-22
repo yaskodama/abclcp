@@ -1,0 +1,4 @@
+// 期待: 小さい義務レベルへ待っている（逆流）
+class A10 { method f(x) : int @ 1 !{} { reply(x); } }
+class B10 { var a = new A10();
+  method g(x) : int @ 5 !{} { reply(now a.f(x) timeout 100 else 0); } }

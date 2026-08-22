@@ -39,6 +39,7 @@ rule token = parse
 | "call"       { CALL }
 | "send!"      { UNSAFESEND }
 | "!"          { BANG }
+| "@"          { AT }        (* 義務レベル注釈 method m() : T @ 3 *)
 | "send"       { SEND }
 | "now"        { NOW }
 | "future"     { FUTURE }

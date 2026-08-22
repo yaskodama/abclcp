@@ -43,7 +43,7 @@ let ty_of_name (loc : Location.t) (s : string) : Types.ty =
 %token SELECT CASE TIMEOUT
 %token ARROW /* -> */
 %token EOF NEW
-%token VAR EQ DOT
+%token VAR EQ DOT AT
 %token COLON /* : ... 戻り値型注釈 */
 %token PLUSPLUS /* ++ ... 文字列連結 */
 %token BANG /* ! ... 効果注釈 !{...} */
@@ -99,12 +99,17 @@ methods:
   | method_decl methods { $1 :: $2 }
 
 method_decl:
-  | METHOD ID LPAREN param_list RPAREN opt_ret opt_eff LBRACE stmts RBRACE
+  | METHOD ID LPAREN param_list RPAREN opt_ret opt_level opt_eff LBRACE stmts RBRACE
     { { mname = $2;
         params = List.map fst $4;
         param_tys = List.map snd $4;
-        ret = $6; eff = $7;
-        body = mk_stmt1 2 (Seq $9) } }
+        ret = $6; level = $7; eff = $8;
+        body = mk_stmt1 2 (Seq $10) } }
+
+/* 義務レベル。now/await は厳密に大きいレベルにしか向かえない。 */
+opt_level:
+  | /* empty */     { None }
+  | AT INTLIT       { Some $2 }
 
 opt_ret:
   | /* empty */     { None }

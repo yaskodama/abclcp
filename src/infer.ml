@@ -1602,6 +1602,47 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
     (* ★ 循環待ちの検査。now / await の辺に閉路があれば、
        期限が無ければ確実に詰まる。既定は警告、
        AIOS_STRICT_WAIT=1 でエラーに昇格する（期限の扱いと同じ形）。 *)
+    (* ★ 待たれるメソッドは必ず返す（reply の全域性）。
+       デッドロックは循環待ちだけではない ---- 閉路が無くても、
+       呼ばれる側が reply しなければ待ちは返らない。
+       戻り値型を宣言したメソッドには既に被覆を課しているが、
+       unit を返すメソッドが抜け穴になっていた。
+       now/await で待たれるメソッドに限って、戻り値型に関わらず課す。
+       AIOS_LAX_REPLY_TOTAL=1 で従来どおりにできる。 *)
+    (if Sys.getenv_opt "AIOS_LAX_REPLY_TOTAL" <> Some "1" then begin
+       let waited = List.map snd !Types.now_edges in
+       List.iter (function
+         | Ast.Class c ->
+             List.iter (fun (m : Ast.method_decl) ->
+               let key = Types.eff_key c.Ast.cname m.Ast.mname in
+               if List.mem key waited
+                  && not (stmt_uses_replyto m.Ast.body)
+                  && not (replies_on_all_paths m.Ast.body) then
+                 Types.type_error ~loc:m.Ast.body.Ast.sloc
+                   (Printf.sprintf
+                      "method %s.%s is waited on by now/await but does not reply on every path"
+                      c.Ast.cname m.Ast.mname)) c.Ast.methods
+         | _ -> ()) p
+     end);
+    (* ★ 義務レベル。now/await は厳密に大きいレベルにしか向かえない。
+       両端に注釈があるときだけ検査する（明示宣言のみの段階）。
+       これが全メソッドに付けば、待ちのグラフは構成的に非巡回になる。 *)
+    (let lv = Hashtbl.create 32 in
+     List.iter (function
+       | Ast.Class c ->
+           List.iter (fun (m : Ast.method_decl) ->
+             match m.Ast.level with
+             | Some n -> Hashtbl.replace lv (Types.eff_key c.Ast.cname m.Ast.mname) n
+             | None -> ()) c.Ast.methods
+       | _ -> ()) p;
+     List.iter (fun (caller, callee) ->
+       match Hashtbl.find_opt lv caller, Hashtbl.find_opt lv callee with
+       | Some a, Some b when b <= a ->
+           Types.type_error ~loc:Location.dummy
+             (Printf.sprintf
+                "obligation level: %s (@%d) waits on %s (@%d); a wait must go to a strictly higher level"
+                caller a callee b)
+       | _ -> ()) !Types.now_edges);
     (match Types.wait_cycle () with
      | Some cyc ->
          let msg =

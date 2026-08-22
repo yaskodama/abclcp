@@ -1,0 +1,20 @@
+// s15: 義務レベル ---- 待ちを一方向にして、循環待ちを型で防ぐ
+//
+//      now / await は「厳密に大きいレベル」へしか向かえない。
+//      全メソッドに付けば、待ちのグラフは構成的に非巡回になる。
+//      小林のデッドロック自由な型システムの、いちばん素朴な形。
+class Source9 { method get(i) : int @ 3 !{} { reply(i * 10); } }
+class Scale9  {
+  var s = new Source9();
+  method at(i) : int @ 2 !{} { reply((now s.get(i) timeout 100 else 0) + 1); }
+}
+class Sink9 {
+  var c = new Scale9();
+  method run(n) : int @ 1 !{log} {
+    var v = now c.at(n) timeout 300 else -1;
+    print("level chain = " ++ v);
+    reply(v);
+  }
+}
+var k = new Sink9();
+print("total = " ++ (now k.run(4) timeout 900 else -1));

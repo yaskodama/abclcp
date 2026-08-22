@@ -72,6 +72,11 @@ type method_decl = {
    (* 省略可能な効果注釈: method m(x) : T !{ai, net} { ... }
       None なら本体から推論する。Some l なら本体の効果が l に含まれることを検査。 *)
    eff : string list option;
+   (* 省略可能な義務レベル注釈: method m(x) : T @ 3 { ... }
+      now/await は厳密に大きいレベルにしか向かえない。
+      両端に注釈があるときだけ検査する（小林のデッドロック自由型の
+      いちばん素朴な形。明示宣言のみから始める）。 *)
+   level : int option;
    body : stmt;
 }
 

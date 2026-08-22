@@ -1,0 +1,6 @@
+// 期待: now で待たれるのに reply しない。閉路は無いが待ちは返らない。
+class Silent4 { method f(x) : unit !{log} { print("ignored"); } }
+class Caller6 {
+  var s = new Silent4();
+  method go(x) : unit !{log} { var r = now s.f(x) timeout 200; print("after"); }
+}

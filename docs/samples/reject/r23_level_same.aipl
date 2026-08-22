@@ -1,0 +1,4 @@
+// 期待: 同じ義務レベルへ待っている（循環しうる形）
+class A9 { method f(x) : int @ 2 !{} { reply(x); } }
+class B9 { var a = new A9();
+  method g(x) : int @ 2 !{} { reply(now a.f(x) timeout 100 else 0); } }
