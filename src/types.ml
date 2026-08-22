@@ -25,6 +25,9 @@ and ty =
   (* result<τ>。期限つきの待ちで else を書かなかったときの型。
      成功した値か、期限切れかを区別する。組込みの is_ok / value で取り出す。 *)
   | TResult of ty
+  (* reply<τ>。返信先を値として持つ型（ABCL/1 の reply destination）。
+     線形に扱う ---- ちょうど一度 answer するか、他へ渡して義務を移す。 *)
+  | TReply of ty
   | TAny
   | TRecord of (string * ty) list
 and scheme = Forall of int list * ty
@@ -290,6 +293,7 @@ let rec string_of_ty (t : ty) : string =
       "{" ^ fs ^ "}"
   | TArray t1 -> Printf.sprintf "%s array" (string_of_ty t1)
   | TResult t1 -> Printf.sprintf "result %s" (string_of_ty t1)
+  | TReply t1 -> Printf.sprintf "reply %s" (string_of_ty t1)
   | TFuture (t1, ks) ->
       if SSet.is_empty !ks then Printf.sprintf "future %s" (string_of_ty t1)
       else Printf.sprintf "future %s ! {%s}" (string_of_ty t1)
@@ -316,6 +320,7 @@ let rec occurs (v : tvar ref) (t : ty) : bool =
   | TArray t1    -> occurs v t1
   | TFuture (t1, _) -> occurs v t1
   | TResult t1 -> occurs v t1
+  | TReply t1 -> occurs v t1
   | TFun(ps,r)   -> List.exists (occurs v) ps || occurs v r
   | _            -> false
 
@@ -352,6 +357,7 @@ let rec unify ?(loc = Location.dummy) (t1 : ty) (t2 : ty) : unit =
   | TArray a, TArray b ->
       unify ~loc a b  (* ★ loc を引き継ぐ *)
   | TResult a, TResult b -> unify ~loc a b
+  | TReply a, TReply b -> unify ~loc a b
   | TFuture (a, ka), TFuture (b, kb) ->
       unify ~loc a b;
       (* 効果キーは和にして両方へ書き戻す。どちらの ref も他所から
@@ -393,6 +399,7 @@ let rec prune t =
   | TArray t1 -> TArray (prune t1)
   | TFuture (t1, ks) -> TFuture (prune t1, ks)
   | TResult t1 -> TResult (prune t1)
+  | TReply t1 -> TReply (prune t1)
   | TRecord fs -> TRecord (List.map (fun (l,t1) -> (l, prune t1)) fs)
   | TActor (n,ms) -> TActor (n, List.map (fun (m,t1)->(m,prune t1)) ms)
   | TFun (ps,r) -> TFun (List.map prune ps, prune r)
@@ -418,6 +425,7 @@ let string_of_ty_pretty (t : ty) : string =
     | TArray t1   -> go t1 ^ "[]"
     | TFuture (t1, _) -> "future " ^ go t1
     | TResult t1 -> "result " ^ go t1
+    | TReply t1 -> "reply " ^ go t1
     | TRecord fs  ->
         "{" ^ (fs |> List.map (fun (l,t)-> l ^ " : " ^ go t) |> String.concat "; ") ^ "}"
     | TActor(n,ms) ->
@@ -449,6 +457,7 @@ let rec ftv_ty t =
   | TArray t1 -> ftv_ty t1
   | TFuture (t1, _) -> ftv_ty t1
   | TResult t1 -> ftv_ty t1
+  | TReply t1 -> ftv_ty t1
   | TRecord fs ->
       List.fold_left (fun acc (_,t1)->ISet.union acc (ftv_ty t1)) ISet.empty fs
   | TActor (_n,ms) ->
@@ -471,6 +480,7 @@ let instantiate (Forall (qs, t)) : ty =
     | TArray t1 -> TArray (inst t1)
     | TFuture (t1, ks) -> TFuture (inst t1, ks)
     | TResult t1 -> TResult (inst t1)
+    | TReply t1 -> TReply (inst t1)
     | TRecord fs -> TRecord (List.map (fun (l,t1)->(l,inst t1)) fs)
     | TActor (n,ms) -> TActor (n, List.map (fun (m,t1)->(m,inst t1)) ms)
     | TFun (ps,r) -> TFun (List.map inst ps, inst r)

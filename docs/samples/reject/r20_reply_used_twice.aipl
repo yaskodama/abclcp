@@ -1,0 +1,6 @@
+// 期待: 返信先を二度渡している（義務は一度しか移せない）
+class S20 { method take(r: reply, x) : unit !{} { answer(r, x); } }
+class F20 {
+  var s = new S20();
+  method ask(x) : int !{} { var r = replyto; send s.take(r, x); send s.take(r, x); }
+}

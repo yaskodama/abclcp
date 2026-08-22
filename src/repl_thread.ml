@@ -128,7 +128,6 @@ let pp_token = function
   | TIMEOUT    -> "TIMEOUT"
   | ARROW      -> "ARROW"
   | REMOTE     -> "REMOTE"
-  | BECOME     -> "BECOME"
   | COLON      -> "COLON"
   | PLUSPLUS   -> "PLUSPLUS"
   | BANG       -> "BANG"
@@ -917,6 +916,13 @@ let () =
         Printf.printf "[deploy] %s -> %s (compiled at destination)\n%!" cls handle;
         Eval_thread.VString handle
     | _ -> failwith "deploy(node, class, name): three strings are expected");
+
+  (* 返信先を値として受け取り、そこへ返信する。
+     reply(v) は answer(replyto, v) の糖衣にあたる。 *)
+  add_prim ~capability:"Core" ~psig:"(reply<a>, a) -> unit"
+    ~description:"send a value to a reply destination" "answer" (function
+    | [Eval_thread.VReplyTo id; v] -> Eval_thread.resolve_future id v; Eval_thread.VUnit
+    | _ -> failwith "answer(r, v): a reply destination and a value are expected");
 
   (* 資源の取得と解放。実行時は保持集合を持つだけで、
      対になっているかの検査は型検査の側で行う。 *)

@@ -17,6 +17,9 @@ type value =
   (* result<τ>。期限つきの待ちで else を書かなかったときの値。
      VResult (Some v) が成功、VResult None が期限切れ。 *)
   | VResult of value option
+  (* 返信先を値として持つ。msg_id を握っているだけ。
+     answer(r, v) で resolve_future する。 *)
+  | VReplyTo of string
 
 and future_state = {
   fid : string;
@@ -480,6 +483,7 @@ let rec string_of_value v =
   | VFuture f -> "<future:" ^ f.fid ^ ">"
   | VResult None -> "<timedout>"
   | VResult (Some v) -> "<ok:" ^ string_of_value v ^ ">"
+  | VReplyTo id -> "<replyto:" ^ id ^ ">"
 
 let pp_recv = function
   | Var id -> id
@@ -495,6 +499,7 @@ let type_name_of_value = function
   | VArray _  -> "array"
   | VFuture _ -> "future"
   | VResult _ -> "result"
+  | VReplyTo _ -> "reply"
 
 let lookup_opt (env : (string, 'a) Hashtbl.t) (k : string) : 'a option =
   Hashtbl.find_opt env k
@@ -695,6 +700,7 @@ let to_bool = function
   | VArray (_,_)   -> failwith "array is not allowed as condition"
   | VFuture _ -> failwith "future is not allowed as condition"
   | VResult _ -> failwith "result is not allowed as condition (use is_ok)"
+  | VReplyTo _ -> failwith "a reply destination is not a condition"
   | VInt i -> i <> 0
 
 let as_bool = function
@@ -706,6 +712,7 @@ let as_bool = function
   | VArray (_,_)   -> failwith "array is not allowed as condition"
   | VFuture _ -> failwith "future is not allowed as condition"
   | VResult _ -> failwith "result is not allowed as condition (use is_ok)"
+  | VReplyTo _ -> failwith "a reply destination is not a condition"
   | VInt i -> i <> 0
 
 let as_float (v : value) : float =
@@ -744,11 +751,15 @@ let to_string_plain = function
                 | VArray (_,_)  -> "<array>"
                 | VFuture f -> "<future:" ^ f.fid ^ ">"
                 | VResult None -> "<timedout>"
-                | VResult (Some _) -> "<ok>")
+                | VResult (Some _) -> "<ok>"
+                | VReplyTo id -> "<replyto:" ^ id ^ ">")
           |> String.concat ", "
       in
       "[" ^ items ^ "]"
   | VFuture f -> "<future:" ^ f.fid ^ ">"
+  | VResult None -> "<timedout>"
+  | VResult (Some _) -> "<ok>"
+  | VReplyTo id -> "<replyto:" ^ id ^ ">"
 
 (* 追加: 数値かどうか判定＆Floatに昇格するヘルパ *)
 let is_number = function
@@ -805,6 +816,7 @@ let apply_binop op v1 v2 =
     failwith ("unsupported binop/operands: " ^ op)
 
 let expr_of_value = function
+  | VReplyTo id -> ReplyRef id
   | VInt n -> Int n
   | VFloat f  -> Float f
   | VString s -> String s
@@ -829,13 +841,15 @@ let expr_of_value = function
                 | VArray (_,_)  -> "<array>"
                 | VFuture f -> "<future:" ^ f.fid ^ ">"
                 | VResult None -> "<timedout>"
-                | VResult (Some _) -> "<ok>")
+                | VResult (Some _) -> "<ok>"
+                | VReplyTo id -> "<replyto:" ^ id ^ ">")
           |> String.concat ", "
       in
       String ("[" ^ items ^ "]")
   | VFuture f -> String ("<future:" ^ f.fid ^ ">")
   | VResult None -> String "<timedout>"
   | VResult (Some _) -> String "<ok>"
+  | VReplyTo id -> String ("<replyto:" ^ id ^ ">")
       
 (* === Value extractors === *)
 (* アクター値。第1要素はクラス名だが、実体名も表に入れて持ち回る。
@@ -1637,7 +1651,8 @@ let prim_table : (string, value list -> value) Hashtbl.t =
             | VBool _ -> "bool" | VArray _ -> "array" | VUnit -> "unit"
             | VActor (c,_) -> "actor("^c^")"
             | VFuture _ -> "future"
-            | VResult _ -> "result"));
+            | VResult _ -> "result"
+            | VReplyTo _ -> "reply"));
            VUnit
        | _ -> failwith "actor_dump(x): arity 1 expected"));
     ("capabilities",
@@ -1941,9 +1956,16 @@ let rec eval_expr (actor:actor) (e : expr) =
   | Float f  -> VFloat f
   | Bool b   -> VBool b
   | String s -> VString s
+  (* ★ replyto ---- いま処理しているメッセージの返信先を値にする。
+     ABCL/1 の reply destination を線形に扱って取り戻したもの。 *)
+  | Var "replyto" ->
+      (match get_current_msg_id () with
+       | Some id -> VReplyTo id
+       | None -> failwith "replyto: no message is being handled")
   | Var x    -> get_var_a actor x
   (* メッセージ引数として運ばれてきたアクター参照。大域表から復元する。
      表に無ければ（消えた等）名前を文字列として返し、落とさない。 *)
+  | ReplyRef id -> VReplyTo id
   | ActorRef n ->
       (match Hashtbl.find_opt actor_table n with
        | Some a ->

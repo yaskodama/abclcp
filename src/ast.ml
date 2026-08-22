@@ -16,6 +16,10 @@ type expr = {
      解決できず、文字列に潰すとアクターでなくなってしまう。
      アクターは大域表に名前で載っているので、名前だけ持てば復元できる。 *)
   | ActorRef of string
+  (* 返信先を式として運ぶための内部表現。
+     送信のときに値を式へ戻す（expr_of_value）ので、ここが無いと
+     replyto を引数で渡した瞬間に文字列へ潰れて宛先が失われる。 *)
+  | ReplyRef of string
   | New of string * expr list    (* new Line(10,20) *)
   | Array of expr list * Types.ty option
   (* now / await は期限と else 節を持てる: (ミリ秒, 期限切れ時の式)。
@@ -108,6 +112,7 @@ let rec string_of_expr (e:expr) : string =
   | Bool b         -> Printf.sprintf "Bool %b" b
   | String s       -> Printf.sprintf "String %S" s
   | ActorRef n     -> Printf.sprintf "ActorRef %s" n
+  | ReplyRef n     -> Printf.sprintf "ReplyRef %s" n
   | Binop (op,a,b) -> Printf.sprintf "Binop(%s, %s, %s)" op (string_of_expr a) (string_of_expr b)
   | Call (f,args)  -> let xs = args |> List.map string_of_expr |> String.concat ", " in
       Printf.sprintf "Call(%s, [%s])" f xs
@@ -187,6 +192,7 @@ let label_of_expr (e:expr) : string =
   | String s       -> Printf.sprintf "String %S" s
   | Bool b         -> Printf.sprintf "Bool %b" b
   | ActorRef n     -> "ActorRef " ^ n
+  | ReplyRef n     -> "ReplyRef " ^ n
   | Binop (op,_,_) -> "Binop " ^ op
   | Call (f,_)     -> "Call " ^ f
   | Expr _         -> "Expr"
@@ -347,6 +353,7 @@ let rec pprint_expr ?(lvl=0) (e:expr) : string =
   | String s -> Printf.sprintf "\"%s\"" s
   | Var x    -> x
   | ActorRef n -> "<actor:" ^ n ^ ">"
+  | ReplyRef n -> "<replyto:" ^ n ^ ">"
   | Binop (op,a,b) ->
       Printf.sprintf "%s %s %s" (pprint_expr ~lvl a) op (pprint_expr ~lvl b)
   | Call (f,args) ->

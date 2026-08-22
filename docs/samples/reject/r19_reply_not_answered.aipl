@@ -1,0 +1,2 @@
+// 期待: 受け取った返信先に答えないままメソッドを抜けている（線形性）
+class B19 { method h(r: reply, x) : unit !{log} { print("got " ++ x); } }

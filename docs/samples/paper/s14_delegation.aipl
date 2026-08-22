@@ -1,0 +1,19 @@
+// s14: 返信先の委譲 ---- ABCL/1 の reply destination を線形型で取り戻す
+//
+//      ABCL/1 は返信先を一級の値にしたが、「ちょうど一度返す」を守る手立てが
+//      無かった。AIPL は replyto で取り出した返信先を線形に扱う ----
+//      ちょうど一度 answer するか、他へ渡して義務を移す。
+//      これで委譲を許しながら「ちょうど一度」が保たれる。
+class Backend {
+  method handle(r: reply, x) : unit !{} {
+    answer(r, x * 2);            // Frontend の依頼者へ直接返す
+  }
+}
+class Frontend {
+  var b = new Backend();
+  method ask(x) : int !{} {
+    send b.handle(replyto, x);   // 返信先を渡して義務を移す。自分は reply しない
+  }
+}
+var f = new Frontend();
+print("ans = " ++ (now f.ask(21) timeout 500 else -1));

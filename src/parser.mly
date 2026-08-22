@@ -20,6 +20,10 @@ let ty_of_name (loc : Location.t) (s : string) : Types.ty =
   | "bool"   -> Types.TBool
   | "unit"   -> Types.TUnit
   | "any"    -> Types.TAny
+  (* 返信先の型。要素の型は注釈では書けないので新しい型変数にする。
+     渡した先で answer するときに、実際の型と単一化される。
+     any にすると単一化できず「no overload of answer matches」になる。 *)
+  | "reply"  -> Types.TReply (Types.TVar (Types.fresh_tvar ()))
   | _ ->
       if String.length s > 0 && s.[0] >= 'A' && s.[0] <= 'Z' then
         Types.TActor (s, [])

@@ -68,7 +68,7 @@ let rec expr_has_reply (e : Ast.expr) : bool =
   | Ast.Binop (_, a, b) -> expr_has_reply a || expr_has_reply b
   | Ast.Expr e1 -> expr_has_reply e1
   | Ast.Await (e1, d) -> expr_has_reply e1 || alt_has_reply d
-  | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ | Ast.ActorRef _ -> false
+  | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ | Ast.ActorRef _ | Ast.ReplyRef _ -> false
 and alt_has_reply = function
   | None -> false
   | Some (_, None) -> false
@@ -119,6 +119,38 @@ let rec replies_on_all_paths (s : Ast.stmt) : bool =
    すでに待ち手が受け取ったあとなので黙って捨てられる。 *)
 let cap2 n = if n > 2 then 2 else n
 
+(* 本体が replyto を使っているか。
+   使っていれば「返信の義務」は線形性の検査（check_reply_linearity）が担うので、
+   reply の回数・被覆の構文検査は適用しない。 *)
+let rec expr_uses_replyto (e : Ast.expr) : bool =
+  match e.desc with
+  | Ast.Var "replyto" -> true
+  | Ast.Call (_, args) | Ast.New (_, args) | Ast.FutureSend (_, _, args) ->
+      List.exists expr_uses_replyto args
+  | Ast.NowSend (_, _, args, d) ->
+      List.exists expr_uses_replyto args
+      || (match d with Some (_, Some a) -> expr_uses_replyto a | _ -> false)
+  | Ast.Await (e1, d) ->
+      expr_uses_replyto e1
+      || (match d with Some (_, Some a) -> expr_uses_replyto a | _ -> false)
+  | Ast.Binop (_, a, b) -> expr_uses_replyto a || expr_uses_replyto b
+  | Ast.Expr e1 -> expr_uses_replyto e1
+  | _ -> false
+
+let rec stmt_uses_replyto (s : Ast.stmt) : bool =
+  match s.sdesc with
+  | Ast.Seq ss -> List.exists stmt_uses_replyto ss
+  | Ast.Assign (_, e) | Ast.VarDecl (_, e) -> expr_uses_replyto e
+  | Ast.CallStmt (_, args) | Ast.Send (_, _, args) | Ast.UnsafeSend (_, _, args)
+  | Ast.Become (_, args) -> List.exists expr_uses_replyto args
+  | Ast.If (c, a, b) ->
+      expr_uses_replyto c || stmt_uses_replyto a || stmt_uses_replyto b
+  | Ast.While (c, b) -> expr_uses_replyto c || stmt_uses_replyto b
+  | Ast.Select (cases, (_, to_body)) ->
+      List.exists (fun (c : Ast.select_case) -> stmt_uses_replyto c.Ast.body) cases
+      || (match to_body with Some b -> stmt_uses_replyto b | None -> false)
+
+
 let rec max_replies_expr (e : Ast.expr) : int =
   match e.desc with
   | Ast.Call ("reply", args) ->
@@ -135,7 +167,7 @@ let rec max_replies_expr (e : Ast.expr) : int =
   | Ast.Binop (_, a, b) -> cap2 (max_replies_expr a + max_replies_expr b)
   | Ast.Expr e1 -> max_replies_expr e1
   | Ast.Await (e1, d) -> cap2 (max_replies_expr e1 + max_alt d)
-  | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ | Ast.ActorRef _ -> 0
+  | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ | Ast.ActorRef _ | Ast.ReplyRef _ -> 0
 and max_alt = function None -> 0 | Some (_, None) -> 0 | Some (_, Some a) -> max_replies_expr a
 
 (* 囲むメソッドから見た reply 回数の上界。
@@ -482,6 +514,7 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
   | Bool _ -> TBool
   (* 実行時に値から作られる式。クラスは実行時にしか分からないので
      未知のアクター型にしておく（unify は TActor 同士を同一視する） *)
+  | ReplyRef _ -> Types.TReply (Types.TVar (Types.fresh_tvar ()))
   | ActorRef _ -> TActor ("?", [])
   | String _ -> TString
   | Binop (op, e1, e2) ->
@@ -497,6 +530,17 @@ and infer_expr ?expected (env:env) (e:expr) : ty =
       pick_overload ?expected e.loc fname env t_args
   | Expr e -> infer_expr env e
   | Var x when x = "sender" -> TAny
+  (* ★ replyto ---- いま処理しているメッセージの返信先を値として取り出す。
+     ABCL/1 の reply destination の一級性を、線形に扱うことで取り戻したもの。
+     型は reply<ρ>（ρ はこのメソッドの戻り値型）。
+     使ったら、ちょうど一度 answer するか、他へ渡して義務を移さなければならない。 *)
+  | Var "replyto" when !current_key <> "" ->
+      let cls = current_class_name () in
+      let mname =
+        (match String.index_opt !current_key '#' with
+         | Some i -> String.sub !current_key (i + 1) (String.length !current_key - i - 1)
+         | None -> "") in
+      Types.TReply (method_ret_ty cls mname)
   | Var x ->
      (* preinfer（1パス目）のときは、未束縛変数は「新しい型変数」として許す *)
       (match Hashtbl.find_opt env x with
@@ -1006,7 +1050,7 @@ let check_decl (env:env) = function
         (* ★ reply の線形性（上界）。注釈の有無によらず、二重 reply は常に誤り。
            2 度目の resolve_future は、待ち手がすでに 1 度目の値を受け取った
            あとに来るので黙って捨てられる。型は付くが動かない典型。 *)
-        if max_replies m.body > 1 then
+        if (not (stmt_uses_replyto m.body)) && max_replies m.body > 1 then
           Types.type_error ~loc:m.body.Ast.sloc
             (Printf.sprintf
                "method %s may reply more than once on some path; a method must reply at most once"
@@ -1021,7 +1065,8 @@ let check_decl (env:env) = function
              (match repr t with
               | TUnit -> ()
               | _ ->
-                  if not (replies_on_all_paths m.body) then
+                  if (not (stmt_uses_replyto m.body))
+                     && not (replies_on_all_paths m.body) then
                     Types.type_error ~loc:m.body.Ast.sloc
                       (Printf.sprintf
                          "method %s is declared to reply with %s, but some execution path does not reply"
@@ -1184,7 +1229,7 @@ let collect_prim_calls (p : Ast.program) : (string * Ast.expr list * Location.t)
     | Ast.FutureSend (_, _, args) -> List.iter ex args
     | Ast.NowSend (_, _, args, d) ->
         List.iter ex args; (match d with Some (_, Some a) -> ex a | _ -> ())
-    | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ | Ast.ActorRef _ -> ()
+    | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Var _ | Ast.ActorRef _ | Ast.ReplyRef _ -> ()
   and st (s : Ast.stmt) =
     match s.sdesc with
     | Ast.CallStmt (f, args) ->
@@ -1395,6 +1440,113 @@ let check_resource_use (cls : string) (m : Ast.method_decl) : unit =
       Printf.sprintf "method %s.%s returns while still holding %s"
         cls m.Ast.mname (String.concat ", " (SSet.elements left))))
 
+
+(* ============================================================ *)
+(*  返信先の線形性（reply<τ> をちょうど一度だけ使う）            *)
+(* ============================================================ *)
+(* replyto で取り出した返信先は義務である。
+   ちょうど一度 answer するか、他のアクターへ渡して義務を移さなければならない。
+   ABCL/1 は返信先を一級の値にしたが、回数を守る手立てが無かった。
+   ここでは線形に扱うことで、委譲を許しながら「ちょうど一度」を保つ。
+
+   規律（メソッド内で閉じた検査）:
+     1. `var r = replyto;` で義務が生まれる
+     2. `answer(r, v)` か、送信の引数に r を渡すと義務が消える
+     3. 同じ r を二度使ってはならない
+     4. メソッドを抜けるとき義務が残っていてはならない
+     5. if の二つの枝は同じ状態で合流する
+   `send b.m(replyto)` のように、その場で作ってその場で渡す形は差引ゼロ。 *)
+
+(* 状態は (owed, spent)。owed はまだ答えていない返信先、
+   spent は既に使った返信先。spent をもう一度使ったらエラーにする
+   （消すだけだと、二度渡しがただの変数参照に見えて素通りする）。 *)
+let rec rep_of_expr (e : Ast.expr) ((owed, spent) : SSet.t * SSet.t) : SSet.t * SSet.t =
+  match e.desc with
+  (* answer(r, v)：r が変数なら義務を消す *)
+  | Ast.Call ("answer", ({ Ast.desc = Ast.Var r; _ } :: rest)) when r <> "replyto" ->
+      if SSet.mem r spent then
+        raise (Res_error (e.loc,
+          Printf.sprintf "reply destination %s is used twice" r));
+      if not (SSet.mem r owed) then
+        raise (Res_error (e.loc,
+          Printf.sprintf "reply destination %s was never taken from replyto" r));
+      List.fold_left (fun h a -> rep_of_expr a h)
+        (SSet.remove r owed, SSet.add r spent) rest
+  | Ast.Call (_, args) | Ast.New (_, args) ->
+      List.fold_left (fun h a -> rep_of_expr a h) (owed, spent) args
+  (* 送信の引数に返信先の変数を渡すと、義務は相手へ移る *)
+  | Ast.FutureSend (_, _, args) | Ast.NowSend (_, _, args, _) ->
+      List.fold_left (fun h a -> consume_arg e.loc a h) (owed, spent) args
+  | Ast.Await (e1, _) -> rep_of_expr e1 (owed, spent)
+  | Ast.Binop (_, a, b) -> rep_of_expr b (rep_of_expr a (owed, spent))
+  | Ast.Expr e1 -> rep_of_expr e1 (owed, spent)
+  | _ -> (owed, spent)
+
+and consume_arg (loc : Location.t) (a : Ast.expr)
+                ((owed, spent) : SSet.t * SSet.t) : SSet.t * SSet.t =
+  match a.desc with
+  | Ast.Var r when SSet.mem r spent ->
+      raise (Res_error (loc,
+        Printf.sprintf "reply destination %s is used twice" r))
+  | Ast.Var r when SSet.mem r owed -> (SSet.remove r owed, SSet.add r spent)
+  | _ -> rep_of_expr a (owed, spent)
+
+let rec rep_of_stmt (s : Ast.stmt) ((owed, spent) : SSet.t * SSet.t) : SSet.t * SSet.t =
+  match s.sdesc with
+  | Ast.Seq ss -> List.fold_left (fun h st -> rep_of_stmt st h) (owed, spent) ss
+  (* var r = replyto;  ---- 義務が生まれる *)
+  | Ast.VarDecl (x, { Ast.desc = Ast.Var "replyto"; _ }) -> (SSet.add x owed, spent)
+  | Ast.Assign (_, e) | Ast.VarDecl (_, e) -> rep_of_expr e (owed, spent)
+  | Ast.CallStmt (f, args) ->
+      rep_of_expr { Ast.desc = Ast.Call (f, args); loc = s.sloc } (owed, spent)
+  | Ast.Send (_, _, args) | Ast.UnsafeSend (_, _, args) ->
+      List.fold_left (fun h a -> consume_arg s.sloc a h) (owed, spent) args
+  | Ast.Become (_, args) ->
+      List.fold_left (fun h a -> rep_of_expr a h) (owed, spent) args
+  | Ast.If (c, a, b) ->
+      let h = rep_of_expr c (owed, spent) in
+      let ha = rep_of_stmt a h and hb = rep_of_stmt b h in
+      if not (SSet.equal (fst ha) (fst hb)) then
+        raise (Res_error (s.sloc,
+          "the two branches disagree on which reply destinations are still owed"));
+      ha
+  | Ast.While (c, b) ->
+      let h = rep_of_expr c (owed, spent) in
+      let hb = rep_of_stmt b h in
+      if not (SSet.equal (fst h) (fst hb)) then
+        raise (Res_error (s.sloc,
+          "the loop body must leave the same reply destinations owed as it found"));
+      h
+  | Ast.Select (cases, (_, to_body)) ->
+      List.iter (fun (c : Ast.select_case) ->
+        if not (SSet.equal (fst (rep_of_stmt c.Ast.body (owed, spent))) owed) then
+          raise (Res_error (s.sloc,
+            "a select case must leave the same reply destinations owed"))) cases;
+      (match to_body with
+       | Some b ->
+           if not (SSet.equal (fst (rep_of_stmt b (owed, spent))) owed) then
+             raise (Res_error (s.sloc,
+               "the timeout body must leave the same reply destinations owed"));
+           (owed, spent)
+       | None -> (owed, spent))
+
+let check_reply_linearity (cls : string) (m : Ast.method_decl) : unit =
+  (* 引数で受け取った返信先も義務である（reply 注釈の付いた引数） *)
+  let start =
+    List.fold_left2
+      (fun acc p t ->
+        match t with Some (Types.TReply _) -> SSet.add p acc | _ -> acc)
+      SSet.empty m.Ast.params
+      (if List.length m.Ast.param_tys = List.length m.Ast.params
+       then m.Ast.param_tys
+       else List.map (fun _ -> None) m.Ast.params)
+  in
+  let (left, _) = rep_of_stmt m.Ast.body (start, SSet.empty) in
+  if not (SSet.is_empty left) then
+    raise (Res_error (m.Ast.body.Ast.sloc,
+      Printf.sprintf "method %s.%s returns without answering %s"
+        cls m.Ast.mname (String.concat ", " (SSet.elements left))))
+
 let check_effect_annotations (p : Ast.program) : unit =
   List.iter
     (function
@@ -1463,8 +1615,11 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
     List.iter (function
       | Ast.Class c ->
           List.iter (fun (m : Ast.method_decl) ->
-            try check_resource_use c.Ast.cname m
-            with Res_error (loc, msg) -> Types.type_error ~loc msg) c.Ast.methods
+            (try check_resource_use c.Ast.cname m
+             with Res_error (loc, msg) -> Types.type_error ~loc msg);
+            (* ★ 返信先の線形性 *)
+            (try check_reply_linearity c.Ast.cname m
+             with Res_error (loc, msg) -> Types.type_error ~loc msg)) c.Ast.methods
       | _ -> ()) p;
     check_boundary_annotations p env0;      (* ★ リモート境界の注釈必須検査 *)
     if !verbose then Types.debug_print_method_rets ();

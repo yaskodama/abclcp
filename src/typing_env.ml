@@ -121,6 +121,12 @@ let prelude () : env =
   let r3 = fresh_tvar () in
   add_poly e "timed_out" (Forall ([(!r3).id], TFun ([TResult (TVar r3)], TBool)));
 
+  (* 返信先を値として扱う ---- answer(r, v) で返信する。
+     r は reply<a>、v は a。線形性は別に検査する。 *)
+  let q1 = fresh_tvar () in
+  add_poly e "answer"
+    (Forall ([(!q1).id], TFun ([TReply (TVar q1); TVar q1], TUnit)));
+
   (* メッシュ配備。ソースを送り、相手先で JIT して動かす。
      deploy は外へ出て相手に割り付けさせるので net と mem を持つ。 *)
   add_mono e "source_of" (TFun ([TString], TString));

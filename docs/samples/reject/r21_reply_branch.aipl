@@ -1,0 +1,4 @@
+// 期待: 片方の枝でしか答えていない
+class B21 {
+  method h(r: reply, x) : unit !{} { if (x > 0) { answer(r, x); } else { } }
+}
