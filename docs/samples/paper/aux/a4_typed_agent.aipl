@@ -1,0 +1,36 @@
+// a4: 型付き AI エージェント ---- 三役のパイプラインを型で縛る
+//
+//      モデルを呼ぶメソッドは ai と net の効果を持つ。
+//      待ちには期限を置き、else を書かないので result<string> が返る。
+//      三役の順序はセッションとして宣言し、静的に照合される。
+//
+//      これは「型検査だけ」のサンプルである。モデルの応答は三実装で
+//      違うので（それぞれ別の mock を持つ）、出力の一致は求めない。
+class Planner {
+  method plan(q) : string !{ai, net} {
+    reply(ai_call_with_system("You are a planner. Output one line.", q));
+  }
+}
+class Solver {
+  method solve(p) : string !{ai, net} {
+    reply(ai_call_with_system("You are a solver. Answer concisely.", p));
+  }
+}
+class Reviewer {
+  method review(a) : string !{ai, net} {
+    reply(ai_call_with_system("You are a reviewer. Reply OK or NG only.", a));
+  }
+}
+var planner  = new Planner();
+var solver   = new Solver();
+var reviewer = new Reviewer();
+
+protocol_define("Agent", "planner.plan -> solver.solve -> reviewer.review");
+var sid = protocol_start("Agent");
+
+var p = now planner.plan("What is 12 * 11?") timeout 20000;      // result<string>
+var a = now solver.solve(value(p, "")) timeout 20000;
+var v = now reviewer.review(value(a, "")) timeout 20000;
+
+protocol_end(sid);
+print("verdict = " ++ value(v, "(timed out)"));
