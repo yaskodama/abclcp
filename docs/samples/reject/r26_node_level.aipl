@@ -1,8 +1,8 @@
 // 期待: ノードをまたぐ待ちが下へ向かっている。
 // 宛先の実体は別ノードにあり静的に見えないので、ノード単位の階層で近似する。
-node_level("rt0", 1);
 class Ctl2 {
   method go(x) : int @ 7 !{net} {
     reply(now remote("rt0","servo1").step(x) timeout 100 else 0);
   }
 }
+node_level("rt0", 1);
