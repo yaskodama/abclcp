@@ -85,6 +85,7 @@ express mode による割り込みと \texttt{script} の \texttt{where} ガー�
 取得の入れ子から\textbf{全体順序}を読み取り、逆順の取得を止める。
 \textbf{(6)} \textbf{義務レベル} --- 待ちの循環を止める。注釈でも書けるし、書かなければ推論される。
 \textbf{(7)} \textbf{セッション型} --- 役割どうしのやり取りの順序を静的に照合する。
+同期の呼び先は\textbf{展開}するので、セッションがアクターをまたいでも追える。
 併せて\textbf{メッシュ配備}を持ち、アクターのソースを他ノードへ送って
 相手先で構文解析・型検査してから実体化する。効果注釈がコードと一緒に運ばれる。
 
@@ -101,10 +102,10 @@ express mode による割り込みと \texttt{script} の \texttt{where} ガー�
 型が何を止めるかを実測で示す --- 期限を外すと警告が出て後続の型が合わなくなり、
 \texttt{ai} 効果を隠すと弾かれ、役割の順序を入れ替えるとセッション型が弾き、
 失敗を確かめずに次へ渡すと型が合わない。
-最新仕様の代表的なサンプル 19 本を、コード・出力・メリット・デメリットとともに解説し、
-そのうち 17 本が\textbf{三つの独立な処理系で出力一致}することを確認した
+最新仕様の代表的なサンプル 20 本を、コード・出力・メリット・デメリットとともに解説し、
+そのうち 18 本が\textbf{三つの独立な処理系で出力一致}することを確認した
 （\texttt{s11} と \texttt{s16} は出力にノード名を含むため自動比較から外し、内容を目視で照合した）。
-弾かれるべきプログラムは 30 本ある。
+弾かれるべきプログラムは 31 本ある。
 \end{abstract}
 
 \tableofcontents
@@ -1176,6 +1177,106 @@ pipeline = 41
 \textbf{言語が世界の全部を見ているわけではない}。
 \end{finding}
 
+\subsection{アクターをまたぐセッション --- 振る舞い展開}
+\label{sec:crosssession}
+
+上の「アクターをまたぐから静的には追えない」は、逃げであった。
+数え直すと、セッションを使う 13 本のうち\textbf{6 本}がまたいでいる ---
+つまり\textbf{半分近くを検査していない}ことになる。
+そして 6 本を並べてみると、全部\textbf{同じ形}をしていた。
+
+\begin{aipl}
+protocol_define("FutureTimelineJa",
+  "main_thread.run -> planner.plan -> solver.solve
+   -> reviewer.brief -> reviewer.review");
+var result = aios_now("main", "run", problem);      // 手順1だけがここ
+\end{aipl}
+
+残りの手順は \texttt{main\_thread.run} の本体にある。
+
+\begin{aipl}
+var plan          = aios_now("planner", "plan", problem);          // 手順2
+var answer_future = aios_future("solver", "solve", problem, plan);  // 手順3
+var brief_future  = aios_future("reviewer", "brief", problem, plan);// 手順4
+var verdict       = aios_now("reviewer", "review", ...);            // 手順5
+\end{aipl}
+
+\textbf{プログラム順にぴったり並んでいる}。
+トップが窓口役をひとつ呼び、窓口役の本体が残りを順に送る ---
+6 本ともこの形であった。
+
+\paragraph{同期の呼び出しは、その場に差し込める。}
+必要だったのは新しい型ではなく、\textbf{展開}であった。
+\texttt{now} / \texttt{aios\_now} は、呼び先が呼び出し側の続きより
+\textbf{先に走り切る}。だから呼び先の送信列を、呼び出しの位置に
+そのまま差し込んでよい。これで、またいだセッションも一本の並びになる。
+
+非同期（\texttt{send} / \texttt{future}）は差し込まない ---
+いつ走るか決まらないからである。
+呼び先が手順を含んでいたら「静的に並べられない」と印を付け、
+完了の判定を実行時に任せる。
+送信そのものは呼んだ位置で起きるので、
+\textbf{順序の検査には非同期でも支障がない} ---
+上の \texttt{aios\_future} 二つが手順 3・4 として正しく並ぶのは、
+このためである。
+
+\paragraph{名前を解決する。}
+手順は \texttt{"main\_thread.run"} とアクターの変数名で書かれ、
+送信は \texttt{aios\_now("main", "run", ...)} とサービス名で書かれる。
+両者は \texttt{aios\_register\_service("main", "main\_thread")} で
+結ばれている --- 前節で「綴りの違い」として避けた食い違いは、
+\textbf{解決表を作れば消える}ものであった。
+クラスも同じで、\texttt{var planner = new PlannerActor();} と
+引数の型注釈 \texttt{method run(f: Fetch, ...)} からたどれる。
+
+\paragraph{結果。}
+6 本とも、\textbf{手順が最後まで静的に並んだ}。
+窓口役の本体で順序を入れ替えると、走らせる前に出る。
+
+\begin{term}
+[Type error] protocol ThreeActorSolve: expected solver.solve
+             but the program sends reviewer.review here
+\end{term}
+
+手順をひとつ落とした場合も、今度は完了検査が働く。
+
+\begin{term}
+[Type error] protocol ThreeActorSolve is incomplete at protocol_end;
+             next expected reviewer.review
+\end{term}
+
+582 本を旧版の型検査器と\textbf{一件ずつ}突き合わせた結果、
+判定が変わったファイルは\textbf{0 本}であった ---
+新しく捕まえるものだけが増え、通っていたものは通り続けている。
+
+\paragraph{実装が教えてくれた限界。}
+最初に書いたサンプルは、窓口役が \texttt{Fetch} と \texttt{Refine} を
+\textbf{フィールドとして}持つ形であった。型検査は通ったが、走らせると止まった。
+
+\begin{term}
+protocol Cross violation: expected f.get, got c#f.get
+\end{term}
+
+実行時はフィールドのアクターを\textbf{持ち主で修飾した名前}（\texttt{c\#f}）
+で呼ぶ。静的な側はフィールド名 \texttt{f} しか知らない。
+クラスに実体はいくつでもありうるので、静的な側が \texttt{c\#f} を
+作ることは原理的にできない。
+\textbf{手順が名前で役を指す以上、フィールドに隠れたアクターは役になれない}。
+サンプルは、アクターを引数で渡す形（\texttt{run(f: Fetch, r: Refine, k)}）に
+書き換えた --- こちらは静的にも実行時にも同じ名前で呼ばれる。
+
+\begin{finding}
+「アクターをまたぐから静的には追えない」は、\textbf{型の限界ではなく
+検査の範囲の狭さ}だった。
+必要だったのは多者間セッション型でも委譲でもなく、
+\textbf{呼び先の送信列を差し込むこと}と\textbf{名前の解決表}である。
+プログラムは何も変えていない。
+
+そして限界は、予想していたところ（またぐこと）ではなく
+\textbf{名前}に現れた ---
+実行時と静的な側で、同じアクターの呼び名が違っていた。
+\end{finding}
+
 \subsection{資源の取得順序 --- 資源への全体順序}
 \label{sec:resorder}
 
@@ -1491,9 +1592,9 @@ mock の応答そのものを仕様に含める必要がある。
 \section{代表的なサンプルプログラム}
 \label{sec:samples}
 
-最新仕様の代表として 19 本を挙げる。
+最新仕様の代表として 20 本を挙げる。
 出力はすべて実行して得たものであり、
-うち 17 本は\textbf{三つの処理系すべてで一致する}ことを確認している（\S\ref{sec:impl}）。
+うち 18 本は\textbf{三つの処理系すべてで一致する}ことを確認している（\S\ref{sec:impl}）。
 残る 2 本（\texttt{s11}・\texttt{s16}）は出力にノード名を含むため自動比較から外し、
 内容を目視で照合した。
 
@@ -1834,7 +1935,19 @@ r = 21
 \textbf{デメリット}：名前がリテラルの \texttt{acquire} しか追えない。
 そこだけは実行時の検査に任せる。
 
-\subsection{19 本を通して見えること}
+\subsection{s20 --- アクターをまたぐセッション}
+コードと出力は \S\ref{sec:crosssession} に示した。
+\begin{term}
+cross = 41
+\end{term}
+\textbf{示すもの}：窓口役をひとつ呼び、残りの手順はその本体で進む ---
+実際のプログラムの形。同期の呼び先を差し込んで一本の並びにする。
+\textbf{メリット}：プログラムを変えずに、またいだセッションが検査できる。
+\textbf{デメリット}：アクターは\textbf{引数で渡す}必要がある。
+フィールドに持たせると、実行時の呼び名（\texttt{c\#f}）と
+静的な呼び名（\texttt{f}）が食い違い、手順が役を指せない。
+
+\subsection{20 本を通して見えること}
 
 \begin{center}
 \begin{tabular}{lll}
@@ -1854,6 +1967,7 @@ s16 & ノード階層 & 粒度がノード単位。宣言しなければ検査�
 s17 & select の規律 & 動的な送信・外部の送り手は見えない \\
 s18 & セッション型 & 同じ並びで完結するセッションに限る \\
 s19 & 資源への全体順序 & 名前がリテラルの acquire に限る \\
+s20 & またぐセッション & 同期の呼び先しか差し込めない \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1881,7 +1995,7 @@ Python の CLI 実装（15,101 行）、ブラウザで動く JavaScript 実装�
 確かめ方は二本立てである。
 \texttt{run\_all\_impls.sh} が\textbf{通るプログラムの出力が一致するか}を見て、
 \texttt{run\_reject\_tests.sh} が\textbf{通ってはいけないプログラムが止まるか}を見る。
-後者は\textbf{30 本}の「弾かれるべきプログラム」からなる。
+後者は\textbf{31 本}の「弾かれるべきプログラム」からなる。
 
 \subsection{サンプルを三実装に通して見つかったもの}
 
@@ -1926,8 +2040,8 @@ Python の CLI 実装（15,101 行）、ブラウザで動く JavaScript 実装�
 比較スクリプトが区切りに使う \texttt{/} で割れてしまうため自動比較から外した。
 内容は目視で一致を確認している）。
 ガイドの 8 本も一致する。
-弾かれるべき 30 本については、90 枠のうち\textbf{10 枠}が期待と食い違い、
-その内訳は JS 版 7・Py 版 3 である（\textbf{OCaml 版は 30 本すべてで期待どおりに振る舞う}）。
+弾かれるべき 31 本については、93 枠のうち\textbf{10 枠}が期待と食い違い、
+その内訳は JS 版 7・Py 版 3 である（\textbf{OCaml 版は 31 本すべてで期待どおりに振る舞う}）。
 残りはいずれも「OCaml 版にはあるが他の実装に無い検査」であり、
 言語仕様の穴ではなく追随の遅れである。
 
@@ -2044,7 +2158,7 @@ $-1$ が返ることと、正しく計算できたことを、型は区別しな
 これは望ましくないが、避けがたくもある。
 機構を足すたびに形式化を追いかけると、
 「実装が何をしているか」を確かめる速度が落ちる。
-現状は、\textbf{機械検証の代わりに「弾かれるべきプログラム」30 本}が
+現状は、\textbf{機械検証の代わりに「弾かれるべきプログラム」31 本}が
 実装の規律を押さえている。
 これは証明ではないが、\textbf{三つの実装すべてに同じ問いを投げられる}という利点がある ---
 証明は一つのモデルについてしか言えない。
@@ -2052,12 +2166,25 @@ $-1$ が返ることと、正しく計算できたことを、型は区別しな
 \subsection{残っている課題}
 
 \begin{enumerate}
-\item \textbf{アクターをまたぐセッションの静的検査}。
-      いまは実行時に任せている。
-\item \textbf{名前が動的な \texttt{acquire}}。
-      \S\ref{sec:resorder} の順序検査は文字列リテラルしか追えない。
-      いまは実行時の検査で受けているが、
-      資源を一級の値にして線形に扱えば静的に追える。
+\item \textbf{非同期の呼び先をまたぐセッション}。
+      \S\ref{sec:crosssession} の展開は同期の呼び先しか差し込めない。
+      \texttt{send} / \texttt{future} の先で手順が進む場合は、
+      順序が決まらないので実行時に任せている。
+      多者間セッション型と委譲（線形な \texttt{session}$\langle S\rangle$ を
+      引数で引き回す）に進めば追えるが、プログラムの書き換えが要る。
+\item \textbf{フィールドに持ったアクターは役になれない}。
+      実行時は持ち主で修飾した名前（\texttt{c\#f}）で呼ぶが、
+      静的な側はクラスの実体を一つに決められない。
+      手順が名前で役を指す設計そのものに由来する。
+\item \textbf{資源がアクターの実体であるときの順序}。
+      \S\ref{sec:resorder} の順序は\textbf{資源の名前}についてのものである。
+      食事する哲学者のように資源が\textbf{同じクラスの別インスタンス}
+      （\texttt{lo} / \texttt{hi}）である場合、いまの義務レベルは
+      \texttt{Class\#method} を鍵にしているので区別できない。
+      実体ごとの順序には精緻化型 $\{i:\mathtt{int} \mid i < j\}$ か、
+      フィールドによる順序宣言が要る。
+      なお「名前が動的な \texttt{acquire}」は、582 本を測ると
+      \textbf{一件も無かった} --- 穴は空である。
 \item \textbf{メソッド内で起きた失敗の伝わり方}。
       宣言順序に反する \texttt{acquire} を実行時に捕まえたとき、
       呼び出し側の \texttt{now ... timeout ... else} が何を返すかが
@@ -2071,7 +2198,7 @@ $-1$ が返ることと、正しく計算できたことを、型は区別しな
       精緻化型を載せる余地がある。
 \item \textbf{$\mathrm{AIPL}^{-2}$ 以降の機械検証}。
       効果つき判断、期限、\texttt{future}$\langle\tau\,!\,\varepsilon\rangle$、
-      そして第 3 版以降に足した六つ。
+      そして第 3 版以降に足した七つ。
 \item \textbf{実機のメッシュへの接続}。
       配備の輸送は現状ひとつのプロセス内で模している。
       Xinu ノード間の実際の転送に差し替える。
@@ -2132,14 +2259,14 @@ AI エージェントを題材に据え直すと、
 \subsection*{再現方法}
 
 \begin{term}
-# 本稿の19本を流す
+# 本稿の20本を流す
 cd ~/aios/abclcp
 for f in docs/samples/paper/s*.aipl; do
   printf 'load %s\ncompile\n' "$PWD/$f" > /tmp/s.repl
   ./src/abclrepl_thread -q -f /tmp/s.repl
 done
 
-# 通るプログラムの一致 / 通ってはいけないプログラム30本の拒否（三実装）
+# 通るプログラムの一致 / 通ってはいけないプログラム31本の拒否（三実装）
 sh tools/run_all_impls.sh
 sh tools/run_reject_tests.sh
 

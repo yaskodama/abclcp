@@ -1,0 +1,28 @@
+// s20: アクターをまたぐセッション ---- 振る舞い展開
+//
+//      s18 は protocol_start と protocol_end のあいだに手順が全部並ぶ場合だった。
+//      実際のプログラムは、窓口役をひとつ呼び、残りの手順は
+//      その本体の中で進む。手順がアクターをまたぐ。
+//
+//      同期の送信（now）は、呼び先が呼び出し側の続きより先に走り切る。
+//      だから呼び先の送信列を、その場に差し込んでよい。
+//      こうして、またいだセッションも一本の並びとして照合できる。
+class Fetch  { method get(k)   : int { reply(k * 10); } }
+class Refine { method scale(v) : int { reply(v + 1); } }
+
+class Coord {
+  method run(f: Fetch, r: Refine, k) : int {
+    var a = now f.get(k)   timeout 200 else 0;   // 手順2（窓口役の中）
+    var b = now r.scale(a) timeout 200 else 0;   // 手順3（窓口役の中）
+    reply(b);
+  }
+}
+var f = new Fetch();
+var r = new Refine();
+var c = new Coord();
+
+protocol_define("Cross", "c.run -> f.get -> r.scale");
+var sid = protocol_start("Cross");
+var out = now c.run(f, r, 4) timeout 600 else -1;   // 手順1はここだけ
+protocol_end(sid);
+print("cross = " ++ out);

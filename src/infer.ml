@@ -1746,35 +1746,141 @@ let parse_protocol_spec (spec : string) : (string * string) list =
               String.sub p (i+1) (String.length p - i - 1))
     | None -> None) parts
 
-(* 文の並びから、送信を (宛先, メソッド) の順に取り出す。
-   aios_now("a","m",...) のような文字列で宛先を指す形も拾う。 *)
-let rec sends_of_stmt (st : Ast.stmt) : (string * string) list =
+(* ---- 宛先の解決表 --------------------------------------------
+   手順は "main_thread.run" のようにアクターの変数名で書かれるが、
+   送信は aios_now("main", "run", ...) のようにサービス名で書かれる。
+   両者は aios_register_service("main", "main_thread") で結ばれている。
+   同じことをクラスの解決にも行う ---- var planner = new PlannerActor(); *)
+let proto_svc_actor : (string, string) Hashtbl.t = Hashtbl.create 16
+let proto_var_class : (string, string) Hashtbl.t = Hashtbl.create 16
+let proto_field_class : (string * string, string) Hashtbl.t = Hashtbl.create 32
+let proto_methods : (string * string, Ast.method_decl) Hashtbl.t = Hashtbl.create 32
+(* 全プロトコルの手順の和集合。非同期の呼び先が手順を含むかの判定に使う *)
+let proto_steps : (string * string) list ref = ref []
+(* 非同期の呼び先が手順を含んでいた = 静的に順序を決められない *)
+let proto_unsequenced = ref false
+
+let resolve_actor (a : string) : string =
+  match Hashtbl.find_opt proto_svc_actor a with Some x -> x | None -> a
+
+(* いま歩いているメソッドが引数で受け取ったアクター（名前 -> クラス）。
+   method run(f: Fetch, ...) の f は、呼び出し側の実体を指す。 *)
+let proto_params : (string, string) Hashtbl.t = Hashtbl.create 8
+
+let class_of_actor (cls : string option) (a : string) : string option =
+  match Hashtbl.find_opt proto_params a with
+  | Some c -> Some c
+  | None ->
+      (match cls with
+       | Some c when Hashtbl.mem proto_field_class (c, a) ->
+           Hashtbl.find_opt proto_field_class (c, a)
+       | _ -> Hashtbl.find_opt proto_var_class a)
+
+(* 文の並びから、送信を (宛先アクター, メソッド) の順に取り出す。
+
+   ここが「振る舞い展開」である。
+   同期の送信（now / aios_now）は、呼び先の本体が呼び出し側の続きより
+   先に走り切るので、その送信列を\textbf{その場に差し込む}ことができる。
+   これでセッションがアクターをまたいでも、送信の順序が一本に並ぶ。
+
+   非同期（send / future）は差し込まない ---- いつ走るか決まらないからである。
+   呼び先が手順を含んでいた場合は、その並びは静的に追えないと印を付け、
+   完了検査を実行時に任せる。 *)
+let rec sends_of_stmt (vis : (string * string) list) (cls : string option)
+                      (st : Ast.stmt) : (string * string) list =
+  let go = sends_of_stmt vis cls and goe = sends_of_expr vis cls in
   match st.Ast.sdesc with
-  | Ast.Seq ss -> List.concat_map sends_of_stmt ss
-  | Ast.Send (Ast.LocalTarget t, m, _) | Ast.UnsafeSend (Ast.LocalTarget t, m, _) ->
-      [(t, m)]
-  | Ast.VarDecl (_, e) | Ast.Assign (_, e) -> sends_of_expr e
+  | Ast.Seq ss -> List.concat_map go ss
+  | Ast.Send (Ast.LocalTarget t, m, args) | Ast.UnsafeSend (Ast.LocalTarget t, m, args) ->
+      List.concat_map goe args @ expand vis cls t m false
+  | Ast.VarDecl (_, e) | Ast.Assign (_, e) -> goe e
   | Ast.CallStmt (f, args) ->
-      sends_of_expr { Ast.desc = Ast.Call (f, args); loc = st.Ast.sloc }
-  | Ast.If (c, a, b) -> sends_of_expr c @ sends_of_stmt a @ sends_of_stmt b
-  | Ast.While (c, b) -> sends_of_expr c @ sends_of_stmt b
+      goe { Ast.desc = Ast.Call (f, args); loc = st.Ast.sloc }
+  | Ast.If (c, a, b) -> goe c @ go a @ go b
+  | Ast.While (c, b) -> goe c @ go b
   | _ -> []
 
-and sends_of_expr (e : Ast.expr) : (string * string) list =
+and sends_of_expr (vis : (string * string) list) (cls : string option)
+                  (e : Ast.expr) : (string * string) list =
+  let goe = sends_of_expr vis cls in
   match e.Ast.desc with
   | Ast.NowSend (Ast.LocalTarget t, m, args, _) ->
-      List.concat_map sends_of_expr args @ [(t, m)]
+      List.concat_map goe args @ expand vis cls t m true
   | Ast.FutureSend (Ast.LocalTarget t, m, args) ->
-      List.concat_map sends_of_expr args @ [(t, m)]
+      List.concat_map goe args @ expand vis cls t m false
   (* aios_now("actor", "method", ...) ---- 文字列で宛先を指す形 *)
-  | Ast.Call (("aios_now" | "aios_send" | "remote_now"),
+  | Ast.Call (("aios_now" | "remote_now") as f,
               ({ Ast.desc = Ast.String t; _ } :: { Ast.desc = Ast.String m; _ } :: rest)) ->
-      List.concat_map sends_of_expr rest @ [(t, m)]
-  | Ast.Call (_, args) | Ast.New (_, args) -> List.concat_map sends_of_expr args
-  | Ast.Binop (_, a, b) -> sends_of_expr a @ sends_of_expr b
-  | Ast.Await (e1, _) -> sends_of_expr e1
-  | Ast.Expr e1 -> sends_of_expr e1
+      ignore f;
+      List.concat_map goe rest @ expand vis cls t m true
+  | Ast.Call (("aios_send" | "aios_future"),
+              ({ Ast.desc = Ast.String t; _ } :: { Ast.desc = Ast.String m; _ } :: rest)) ->
+      List.concat_map goe rest @ expand vis cls t m false
+  | Ast.Call (_, args) | Ast.New (_, args) -> List.concat_map goe args
+  | Ast.Binop (_, a, b) -> goe a @ goe b
+  | Ast.Await (e1, _) -> goe e1
+  | Ast.Expr e1 -> goe e1
   | _ -> []
+
+(* 送信ひとつを、それ自身と（同期なら）呼び先の送信列に展開する *)
+and expand (vis : (string * string) list) (cls : string option)
+           (target : string) (m : string) (sync : bool) : (string * string) list =
+  let a = resolve_actor target in
+  let self = [(a, m)] in
+  (* 手順の宛先なのに本体が見えないなら、続きがそこで進んでいるかもしれない。
+     見えないものは「静的に並べられない」と印を付け、完了検査を実行時に任せる。 *)
+  let opaque () = if List.mem (a, m) !proto_steps then proto_unsequenced := true in
+  match class_of_actor cls a with
+  | None -> opaque (); self
+  | Some c ->
+      if List.mem (c, m) vis then self          (* 再帰は一度で止める *)
+      else
+        (match Hashtbl.find_opt proto_methods (c, m) with
+         | None -> opaque (); self
+         | Some md ->
+             (* 呼び先が引数でアクターを受け取るなら、その名前を解決できる *)
+             let saved = Hashtbl.copy proto_params in
+             List.iter2 (fun nm ty ->
+               match ty with
+               | Some (Types.TActor (cn, _)) when cn <> "?" ->
+                   Hashtbl.replace proto_params nm cn
+               | _ -> Hashtbl.remove proto_params nm)
+               md.Ast.params md.Ast.param_tys;
+             let inner = sends_of_stmt ((c, m) :: vis) (Some c) md.Ast.body in
+             Hashtbl.reset proto_params;
+             Hashtbl.iter (fun k v -> Hashtbl.replace proto_params k v) saved;
+             if sync then self @ inner
+             else begin
+               (* 非同期。呼び先が手順を含むなら、順序は静的に決められない *)
+               if List.exists (fun x -> List.mem x !proto_steps) inner then
+                 proto_unsequenced := true;
+               self
+             end)
+
+(* 解決表を作る。トップレベルの var と register_service、
+   各クラスのフィールドとメソッドを拾う。 *)
+let build_proto_tables (p : Ast.program) : unit =
+  Hashtbl.reset proto_svc_actor; Hashtbl.reset proto_var_class;
+  Hashtbl.reset proto_field_class; Hashtbl.reset proto_methods;
+  proto_unsequenced := false;
+  List.iter (function
+    | Ast.Class c ->
+        List.iter (fun (st : Ast.stmt) ->
+          match st.Ast.sdesc with
+          | Ast.VarDecl (x, { Ast.desc = Ast.New (cn, _); _ })
+          | Ast.Assign (x, { Ast.desc = Ast.New (cn, _); _ }) ->
+              Hashtbl.replace proto_field_class (c.Ast.cname, x) cn
+          | _ -> ()) c.Ast.fields;
+        List.iter (fun (m : Ast.method_decl) ->
+          Hashtbl.replace proto_methods (c.Ast.cname, m.Ast.mname) m) c.Ast.methods
+    | Ast.Global st ->
+        (match st.Ast.sdesc with
+         | Ast.VarDecl (x, { Ast.desc = Ast.New (cn, _); _ }) ->
+             Hashtbl.replace proto_var_class x cn
+         | Ast.CallStmt ("aios_register_service",
+             [ { Ast.desc = Ast.String svc; _ }; { Ast.desc = Ast.String actor; _ } ]) ->
+             Hashtbl.replace proto_svc_actor svc actor
+         | _ -> ())) p
 
 (* トップレベルの文の並びを、宣言・開始・送信・終了の順に見る *)
 let check_protocols (p : Ast.program) : unit =
@@ -1787,23 +1893,23 @@ let check_protocols (p : Ast.program) : unit =
         Hashtbl.replace defs name (parse_protocol_spec spec)
     | _ -> ()) p;
   if Hashtbl.length defs = 0 then () else begin
-    (* トップレベルの並びが行う送信をすべて集めておく。
-       手順のどれかがここに現れないなら、そのセッションは
-       アクターをまたいでいる（続きは受け手の中で進む）。
-       静的には追えないので、その場合は実行時の検査に任せて何もしない。
-       実測でこれを入れる前は、そういう例題を 7 本落としていた。 *)
-    let top_sends =
-      List.concat_map (function
-        | Ast.Global st -> sends_of_stmt st
-        | _ -> []) p in
-    let covered steps =
-      List.for_all (fun (a, m) -> List.mem (a, m) top_sends) steps in
+    (* 宛先の解決表と、全手順の和集合を用意する（振る舞い展開で使う） *)
+    build_proto_tables p;
+    proto_steps := Hashtbl.fold (fun _ v acc -> v @ acc) defs [];
+    (* 送信列を一度全部展開して、静的に並べきれたかを見る。
+       並べきれた（proto_unsequenced が立たなかった）なら、
+       セッションがアクターをまたいでいても「やり残し」を誤りと言ってよい。
+       並べきれなければ、続きが見えないところで進んでいるかもしれないので、
+       完了の判定は実行時に任せる。 *)
+    List.iter (function
+      | Ast.Global st -> ignore (sends_of_stmt [] None st)
+      | _ -> ()) p;
+    let sequenced = not !proto_unsequenced in
     (* 2) start から end までの間の送信を順に照合する *)
     let cur : (string * string) list ref = ref [] in   (* 残りの手順 *)
     let active = ref None in
-    (* この並びの中に手順が全部現れるか。現れないなら、セッションは
-       アクターをまたいでいる可能性がある（続きは受け手の中で進む）。
-       その場合、順序の違反は依然として誤りだが、
+    (* 送信列を静的に並べきれたか。並べきれなければ、
+       順序の違反は依然として誤りだが、
        「まだやっていない」は誤りだと言い切れない。 *)
     let full = ref false in
     let loc = ref Location.dummy in
@@ -1816,7 +1922,7 @@ let check_protocols (p : Ast.program) : unit =
                (match Hashtbl.find_opt defs n with
                 | Some steps ->
                     active := Some n; cur := steps; loc := st.Ast.sloc;
-                    full := covered steps
+                    full := sequenced
                 | None ->
                     Types.type_error ~loc:st.Ast.sloc
                       ("protocol_start: unknown protocol " ^ n))
@@ -1858,7 +1964,7 @@ let check_protocols (p : Ast.program) : unit =
                                    "protocol %s: expected %s.%s but the program sends %s.%s here"
                                    n ea em t m)
                       end)
-                      (sends_of_stmt st)))
+                      (sends_of_stmt [] None st)))
       | _ -> ()) p;
     (* 3) end を書かずに終わった場合 *)
     (match !active with

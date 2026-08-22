@@ -1,0 +1,21 @@
+// 弾かれるべき: セッションがアクターをまたぎ、窓口役の本体で順序が逆。
+// トップレベルだけを見ていた検査は、これを素通ししていた。
+class Fetch  { method get(k)   : int { reply(k * 10); } }
+class Refine { method scale(v) : int { reply(v + 1); } }
+
+class Coord {
+  method run(f: Fetch, r: Refine, k) : int {
+    var b = now r.scale(k) timeout 200 else 0;   // ★ 手順3を先に送っている
+    var a = now f.get(b)   timeout 200 else 0;
+    reply(a);
+  }
+}
+var f = new Fetch();
+var r = new Refine();
+var c = new Coord();
+
+protocol_define("Cross", "c.run -> f.get -> r.scale");
+var sid = protocol_start("Cross");
+var out = now c.run(f, r, 4) timeout 600 else -1;
+protocol_end(sid);
+print("cross = " ++ out);
