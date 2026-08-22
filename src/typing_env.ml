@@ -61,6 +61,7 @@ let () =
   set_eff [ "node_allow"; "node_level" ] [];
   (* 資源の取得と解放は状態を変える *)
   set_eff [ "acquire"; "release" ] ["mut"];
+  set_eff [ "resource_order" ] [];
   (* Console / AIOS.Kernel / AIOS.Event / Protocol.Session / Actor.Introspection *)
   set_eff [ "print" ] ["log"];
   set_eff [ "capabilities"; "capability_prims"; "aios_kernel"; "aios_actors";
@@ -139,6 +140,7 @@ let prelude () : env =
      本体の中で対になっているかを別に検査する（順序つきの効果）。 *)
   add_mono e "acquire" (TFun ([TString], TUnit));
   add_mono e "release" (TFun ([TString], TUnit));
+  add_mono e "resource_order" (TFun ([TString], TUnit));
 
   (* AI-OS capability introspection *)
   add_mono e "capabilities" (TFun ([], TArray TString));

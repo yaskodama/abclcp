@@ -956,6 +956,19 @@ let () =
     ~description:"release a named resource" "release" (function
     | [Eval_thread.VString r] -> Eval_thread.release_res r; Eval_thread.VUnit
     | _ -> failwith "release(name): a string is expected");
+  (* 資源への全体順序の宣言。型検査が読むのが主で、
+     実行時にも「追えなかった acquire」を捕まえるために効かせる。 *)
+  add_prim ~capability:"Core" ~psig:"string -> unit"
+    ~description:"declare a global order on resources" "resource_order" (function
+    | [Eval_thread.VString spec] ->
+        Eval_thread.declare_res_order (String.split_on_char '>' spec
+          |> List.map (fun x ->
+               let x = String.trim x in
+               let n = String.length x in
+               if n > 0 && x.[n-1] = '-' then String.trim (String.sub x 0 (n-1)) else x)
+          |> List.filter (fun x -> x <> ""));
+        Eval_thread.VUnit
+    | _ -> failwith "resource_order(spec): a string is expected");
 
   (* result<τ> を扱う組込み。期限つきの待ちで else を書かないと result<τ> が返る。 *)
   add_prim ~capability:"Core" ~psig:"result<a> -> bool"

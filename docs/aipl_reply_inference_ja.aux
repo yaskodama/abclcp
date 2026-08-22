@@ -1,0 +1,110 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}問題設定}{3}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}出発点：実装の現状}{4}{subsection.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}推論できる部分}{4}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}推論では決まらないこと}{5}{section.3}\protected@file@percent }
+\newlabel{sec:limits}{{3}{5}{推論では決まらないこと}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}reply しないパスが黙って通る}{5}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}分岐ごとに異なる型を reply したときの blame}{5}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}アクター間の相互再帰}{5}{subsection.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}リモートアクターと分離コンパイル}{5}{subsection.3.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}\texttt  {become} と複数実装}{6}{subsection.3.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6}session protocol への昇格}{6}{subsection.3.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}型健全性の証明にとっての意味}{6}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}既存言語はどうしているか}{6}{section.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces アクター言語における戻り値型の扱い}}{6}{table.1}\protected@file@percent }
+\newlabel{tab:langs}{{1}{6}{アクター言語における戻り値型の扱い}{table.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}実装}{7}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}$\rho $ の表}{7}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}1 パス目：$\rho $ の確保と defaulting}{7}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}2 パス目：\texttt  {reply} の単相束縛}{8}{subsection.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}送信地点}{8}{subsection.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}戻り値型注釈 \texttt  {method m(x) : T}}{8}{section.7}\protected@file@percent }
+\newlabel{sec:annotation}{{7}{8}{戻り値型注釈 \texttt {method m(x) : T}}{section.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}字句・構文・AST}{8}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}型検査への反映}{9}{subsection.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}全パス被覆検査}{9}{subsection.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.4}双方向型付け：宣言型を式へ流す}{9}{subsection.7.4}\protected@file@percent }
+\newlabel{sec:bidir}{{7.4}{9}{双方向型付け：宣言型を式へ流す}{subsection.7.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}リモート境界での注釈必須化}{10}{section.8}\protected@file@percent }
+\newlabel{sec:boundary}{{8}{10}{リモート境界での注釈必須化}{section.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}境界を開いているのは \texttt  {web\_expose} ではない}{10}{subsection.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}既存コードの移行}{10}{subsection.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}発見：\texttt  {select} の case 本体の \texttt  {reply} は別のメッセージに返る}{10}{subsection.8.3}\protected@file@percent }
+\newlabel{sec:select}{{8.3}{10}{発見：\texttt {select} の case 本体の \texttt {reply} は別のメッセージに返る}{subsection.8.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9}実行して分かったこと：評価器が型検査器と食い違っていた}{11}{section.9}\protected@file@percent }
+\newlabel{sec:runtime}{{9}{11}{実行して分かったこと：評価器が型検査器と食い違っていた}{section.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}修正}{12}{subsection.9.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}残る食い違いと、その境界}{12}{subsection.9.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10}副産物：\texttt  {pick\_overload} の 2 つの欠陥}{13}{section.10}\protected@file@percent }
+\newlabel{sec:overload}{{10}{13}{副産物：\texttt {pick\_overload} の 2 つの欠陥}{section.10}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {11}型安全性をさらに上げる：3 つの追加}{14}{section.11}\protected@file@percent }
+\newlabel{sec:harden}{{11}{14}{型安全性をさらに上げる：3 つの追加}{section.11}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces 型検査を通ってしまうもの（実測）}}{14}{table.2}\protected@file@percent }
+\newlabel{tab:holes}{{2}{14}{型検査を通ってしまうもの（実測）}{table.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.1}select パターンをメソッド署名に照合する}{14}{subsection.11.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.2}\texttt  {reply} の線形性}{14}{subsection.11.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.3}型と実行値の差分テスト}{15}{subsection.11.3}\protected@file@percent }
+\newlabel{sec:difftest}{{11.3}{15}{型と実行値の差分テスト}{subsection.11.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {12}文字列連結を \texttt  {++} に分離する}{15}{section.12}\protected@file@percent }
+\newlabel{sec:concat}{{12}{15}{文字列連結を \texttt {++} に分離する}{section.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.1}変更}{15}{subsection.12.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.2}既存コードの移行}{16}{subsection.12.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.3}どこまで消えたか}{16}{subsection.12.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13}仮引数の結線と、曖昧性の厳格化}{16}{section.13}\protected@file@percent }
+\newlabel{sec:wiring}{{13}{16}{仮引数の結線と、曖昧性の厳格化}{section.13}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {13.1}測って順序を決める}{16}{subsection.13.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {13.2}曖昧 overload をエラーにする}{17}{subsection.13.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {13.3}仮引数を署名に結線する}{17}{subsection.13.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14}実験}{18}{section.14}\protected@file@percent }
+\newlabel{sec:experiment}{{14}{18}{実験}{section.14}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {14.1}サンプル}{18}{subsection.14.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces サンプルにおけるパッチ前後の判定}}{18}{table.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {14.2}退行試験}{18}{subsection.14.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {14.3}型と実行値の差分テスト}{19}{subsection.14.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {14.4}型検査の退行}{19}{subsection.14.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15}残る限界}{19}{section.15}\protected@file@percent }
+\newlabel{sec:limitations}{{15}{19}{残る限界}{section.15}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {16}結論と次の一歩}{20}{section.16}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {付録A}サンプル全文と実行結果}{20}{appendix.A}\protected@file@percent }
+\newlabel{sec:samples}{{付録A}{20}{サンプル全文と実行結果}{appendix.A}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}s1\_ok.aipl --- reply からの推論}{21}{subsection.A.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s1\textunderscore ok.aipl}{21}{lstlisting.-35}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.2}s2\_missing\_reply.aipl --- reply の書き忘れ}{22}{subsection.A.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s2\textunderscore missing\textunderscore reply.aipl}{22}{lstlisting.-37}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.3}s3\_conflict.aipl --- 分岐ごとに異なる型を reply}{22}{subsection.A.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s3\textunderscore conflict.aipl}{22}{lstlisting.-39}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.4}s4\_chain.aipl --- アクターを跨いだ伝播}{23}{subsection.A.4}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s4\textunderscore chain.aipl}{23}{lstlisting.-41}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.5}s5\_overload\_ambiguity.aipl --- principal type が無い例}{23}{subsection.A.5}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s5\textunderscore overload\textunderscore ambiguity.aipl}{23}{lstlisting.-43}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.6}s6\_usable\_result.aipl --- 通るようになった正しいプログラム}{24}{subsection.A.6}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s6\textunderscore usable\textunderscore result.aipl}{24}{lstlisting.-46}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.7}s7\_annotation\_ok.aipl --- 注釈が推論を助ける}{25}{subsection.A.7}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s7\textunderscore annotation\textunderscore ok.aipl}{25}{lstlisting.-48}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.8}s8\_annotation\_conflict.aipl --- 宣言と食い違う reply}{26}{subsection.A.8}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s8\textunderscore annotation\textunderscore conflict.aipl}{26}{lstlisting.-50}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.9}s9\_missing\_path.aipl --- 全パス被覆検査}{26}{subsection.A.9}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s9\textunderscore missing\textunderscore path.aipl}{26}{lstlisting.-52}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.10}s10\_expose\_unannotated.aipl --- リモート境界での注釈必須}{27}{subsection.A.10}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s10\textunderscore expose\textunderscore unannotated.aipl}{27}{lstlisting.-54}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.11}s11\_service.aipl --- 追加機能を一通り使う}{28}{subsection.A.11}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s11\textunderscore service.aipl}{28}{lstlisting.-57}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.12}s12\_service\_exposed.aipl --- 同じものを外部公開する}{30}{subsection.A.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.13}s13\_runtime\_mismatch.aipl --- 型検査器と評価器の食い違い}{31}{subsection.A.13}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s13\textunderscore runtime\textunderscore mismatch.aipl}{31}{lstlisting.-62}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.14}s14\_select\_pattern.aipl --- select パターンの照合}{32}{subsection.A.14}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s14\textunderscore select\textunderscore pattern.aipl}{32}{lstlisting.-64}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.15}s15\_double\_reply.aipl --- reply の線形性}{32}{subsection.A.15}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s15\textunderscore double\textunderscore reply.aipl}{32}{lstlisting.-66}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.16}s16\_concat.aipl --- 文字列連結 \texttt  {++} と数値 \texttt  {+}}{33}{subsection.A.16}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/s16\textunderscore concat.aipl}{33}{lstlisting.-71}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {付録B}型検査ドライバ \texttt  {tc\_main.ml}}{34}{appendix.B}\protected@file@percent }
+\newlabel{sec:driver}{{付録B}{34}{型検査ドライバ \texttt {tc\_main.ml}}{appendix.B}{}}
+\@writefile{lol}{\contentsline {lstlisting}{samples/reply\textunderscore inference/tc\textunderscore main.ml}{34}{lstlisting.-73}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {付録C}変更ファイル}{35}{appendix.C}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {付録D}参照}{35}{appendix.D}\protected@file@percent }
+\gdef \@abspage@last{36}

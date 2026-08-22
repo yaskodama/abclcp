@@ -1,0 +1,114 @@
+\contentsline {section}{\numberline {1}はじめに}{4}{section.1}%
+\contentsline {section}{\numberline {2}背景}{4}{section.2}%
+\contentsline {subsection}{\numberline {2.1}ABCL/1}{4}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}小林らの型システム研究}{4}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}他の並行オブジェクト言語}{4}{subsection.2.3}%
+\contentsline {section}{\numberline {3}ABCL/1 から採ったもの}{5}{section.3}%
+\contentsline {subsection}{\numberline {3.1}三種のメッセージ送信}{5}{subsection.3.1}%
+\contentsline {paragraph}{なぜ採ったか。}{5}{section*.2}%
+\contentsline {subsection}{\numberline {3.2}オブジェクト内部の逐次性}{5}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}返信という考え方}{5}{subsection.3.3}%
+\contentsline {section}{\numberline {4}ABCL/1 から落としたもの}{5}{section.4}%
+\contentsline {subsection}{\numberline {4.1}express mode による割り込み}{6}{subsection.4.1}%
+\contentsline {paragraph}{落とした理由。}{6}{section*.3}%
+\contentsline {paragraph}{落とすと何が書けなくなるか。}{6}{section*.4}%
+\contentsline {subsection}{\numberline {4.2}返信先の一級性}{6}{subsection.4.2}%
+\contentsline {paragraph}{落とした理由。}{6}{section*.5}%
+\contentsline {paragraph}{副産物。}{6}{section*.6}%
+\contentsline {subsection}{\numberline {4.3}\texttt {script} の \texttt {where} ガード}{6}{subsection.4.3}%
+\contentsline {paragraph}{落とした理由。}{6}{section*.7}%
+\contentsline {paragraph}{落とすと書き方がどう変わるか。}{6}{section*.8}%
+\contentsline {section}{\numberline {5}小林研究から採ったもの}{7}{section.5}%
+\contentsline {subsection}{\numberline {5.1}効果 ---- 資源使用解析の素朴版}{7}{subsection.5.1}%
+\contentsline {paragraph}{採った理由。}{7}{section*.9}%
+\contentsline {paragraph}{規律の細部。}{7}{section*.10}%
+\contentsline {subsection}{\numberline {5.2}期限 ---- サイズ型の粗い代用}{8}{subsection.5.2}%
+\contentsline {paragraph}{採った理由と、その位置づけ。}{8}{section*.11}%
+\contentsline {subsection}{\numberline {5.3}線形性の考え方 ---- \texttt {reply} は高々一度}{8}{subsection.5.3}%
+\contentsline {section}{\numberline {6}小林研究から落としたもの}{9}{section.6}%
+\contentsline {subsection}{\numberline {6.1}交差型による高階モデル検査}{9}{subsection.6.1}%
+\contentsline {paragraph}{落とした理由。}{9}{section*.12}%
+\contentsline {subsection}{\numberline {6.2}多相メソッド}{9}{subsection.6.2}%
+\contentsline {paragraph}{落とした理由。}{9}{section*.13}%
+\contentsline {paragraph}{代価。}{9}{section*.14}%
+\contentsline {subsection}{\numberline {6.3}完全な所有権の型システム}{9}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}デッドロック自由な型システム（採らず、期限で代用）}{9}{subsection.6.4}%
+\contentsline {paragraph}{採らなかった理由。}{9}{section*.15}%
+\contentsline {section}{\numberline {7}採否の対応表}{10}{section.7}%
+\contentsline {section}{\numberline {8}\texttt {become} ---- 入れて、型で縛って、外した}{10}{section.8}%
+\contentsline {subsection}{\numberline {8.1}無制限だと型が嘘になる}{11}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}型で縛ると、縛った先に残るものが少ない}{11}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}使われていなかった}{11}{subsection.8.3}%
+\contentsline {section}{\numberline {9}第 2 版から足した四つの機構}{12}{section.9}%
+\contentsline {subsection}{\numberline {9.1}失敗を型で表す ---- \texttt {result}$\langle \tau \rangle $}{12}{subsection.9.1}%
+\contentsline {paragraph}{仕様。}{12}{section*.16}%
+\contentsline {paragraph}{効いていること。}{12}{section*.17}%
+\contentsline {subsection}{\numberline {9.2}効果に順序を入れる ---- \texttt {acquire} / \texttt {release}}{12}{subsection.9.2}%
+\contentsline {paragraph}{限界。}{13}{section*.18}%
+\contentsline {subsection}{\numberline {9.3}返信先を一級の値にする ---- 線形型}{13}{subsection.9.3}%
+\contentsline {paragraph}{仕様。}{13}{section*.19}%
+\contentsline {paragraph}{線形性の規律。}{13}{section*.20}%
+\contentsline {subsection}{\numberline {9.4}メッシュ配備 ---- ソースを送り、相手先で JIT する}{14}{subsection.9.4}%
+\contentsline {paragraph}{送る荷物。}{14}{section*.21}%
+\contentsline {subsection}{\numberline {9.5}循環待ちの静的検査}{14}{subsection.9.5}%
+\contentsline {paragraph}{ただし、これだけではデッドロック自由にならない。}{14}{section*.22}%
+\contentsline {subsection}{\numberline {9.6}デッドロックは三つの経路がある}{15}{subsection.9.6}%
+\contentsline {paragraph}{経路 1 ---- 循環待ち。}{15}{section*.23}%
+\contentsline {paragraph}{経路 2 ---- 返信されない待ち。}{15}{section*.24}%
+\contentsline {paragraph}{経路 3 ---- \texttt {select} が来ないメッセージを待つ。}{15}{section*.25}%
+\contentsline {subsection}{\numberline {9.7}二つは型で防げる}{15}{subsection.9.7}%
+\contentsline {paragraph}{経路 2 ---- \texttt {reply} の全域性。}{15}{section*.26}%
+\contentsline {paragraph}{経路 1 ---- 義務レベル。}{15}{section*.27}%
+\contentsline {paragraph}{注釈は推論できる。}{16}{section*.28}%
+\contentsline {subsection}{\numberline {9.8}「保証できる」と言うための条件}{16}{subsection.9.8}%
+\contentsline {subsection}{\numberline {9.9}経路 3 ---- \texttt {select} の待ち}{17}{subsection.9.9}%
+\contentsline {paragraph}{規律 1 ---- 期限を書く。}{17}{section*.29}%
+\contentsline {paragraph}{規律 2 ---- 送り手が居るか。}{17}{section*.30}%
+\contentsline {paragraph}{外部の送り手。}{17}{section*.31}%
+\contentsline {subsection}{\numberline {9.10}やり取りの順序 ---- セッション型}{17}{subsection.9.10}%
+\contentsline {paragraph}{既にあったものを持ち上げた。}{17}{section*.32}%
+\contentsline {paragraph}{誤検出を二度直した。}{18}{section*.33}%
+\contentsline {paragraph}{結果。}{18}{section*.34}%
+\contentsline {subsection}{\numberline {9.11}資源の取得順序 ---- 資源への全体順序}{18}{subsection.9.11}%
+\contentsline {paragraph}{入れ子が順序を語っている。}{18}{section*.35}%
+\contentsline {paragraph}{閉路が無い＝全体順序が作れる。}{19}{section*.36}%
+\contentsline {paragraph}{書きたい人のために。}{19}{section*.37}%
+\contentsline {paragraph}{見えないところ。}{19}{section*.38}%
+\contentsline {subsection}{\numberline {9.12}ノードをまたぐ待ち}{19}{subsection.9.12}%
+\contentsline {paragraph}{到達点。}{20}{section*.39}%
+\contentsline {section}{\numberline {10}代表的なサンプルプログラム}{20}{section.10}%
+\contentsline {subsection}{\numberline {10.1}s01 ---- アクターの基本}{20}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}s02 ---- 三種の送信}{21}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}s03 ---- \texttt {reply} の規律}{21}{subsection.10.3}%
+\contentsline {subsection}{\numberline {10.4}s04 ---- 効果}{21}{subsection.10.4}%
+\contentsline {subsection}{\numberline {10.5}s05 ---- 期限}{21}{subsection.10.5}%
+\contentsline {subsection}{\numberline {10.6}s06 ---- 実時間側の防壁}{21}{subsection.10.6}%
+\contentsline {subsection}{\numberline {10.7}s07 ---- \texttt {select}}{22}{subsection.10.7}%
+\contentsline {subsection}{\numberline {10.8}s08 ---- 状態機械（\texttt {become} を使わずに書く）}{22}{subsection.10.8}%
+\contentsline {subsection}{\numberline {10.9}s09 ---- アクターを引数に渡す}{23}{subsection.10.9}%
+\contentsline {subsection}{\numberline {10.10}s10 ---- 三段のパイプライン}{23}{subsection.10.10}%
+\contentsline {subsection}{\numberline {10.11}s11 ---- メッシュへの配備}{24}{subsection.10.11}%
+\contentsline {subsection}{\numberline {10.12}s12 ---- 失敗を型で表す}{24}{subsection.10.12}%
+\contentsline {subsection}{\numberline {10.13}s13 ---- 資源の取得と解放}{24}{subsection.10.13}%
+\contentsline {subsection}{\numberline {10.14}s14 ---- 返信先の委譲}{24}{subsection.10.14}%
+\contentsline {subsection}{\numberline {10.15}s15 ---- 義務レベル}{25}{subsection.10.15}%
+\contentsline {subsection}{\numberline {10.16}s18 ---- セッション型}{25}{subsection.10.16}%
+\contentsline {subsection}{\numberline {10.17}s19 ---- 資源への全体順序}{25}{subsection.10.17}%
+\contentsline {subsection}{\numberline {10.18}s17 ---- \texttt {select} の規律}{25}{subsection.10.18}%
+\contentsline {subsection}{\numberline {10.19}s16 ---- ノードをまたぐ義務レベル}{26}{subsection.10.19}%
+\contentsline {subsection}{\numberline {10.20}19 本を通して見えること}{27}{subsection.10.20}%
+\contentsline {section}{\numberline {11}三つの処理系と、揃っていることの確かめ方}{27}{section.11}%
+\contentsline {subsection}{\numberline {11.1}本稿の 10 本を三実装に通して見つかったもの}{27}{subsection.11.1}%
+\contentsline {subsection}{\numberline {11.2}現在の状態}{28}{subsection.11.2}%
+\contentsline {paragraph}{第 3 版で三実装に展開したもの。}{28}{section*.40}%
+\contentsline {section}{\numberline {12}考察}{28}{section.12}%
+\contentsline {subsection}{\numberline {12.1}採否の判断は一貫していたか}{28}{subsection.12.1}%
+\contentsline {subsection}{\numberline {12.2}「正」の実装という考え方の限界}{29}{subsection.12.2}%
+\contentsline {subsection}{\numberline {12.3}型・効果・期限という三点セットの評価}{29}{subsection.12.3}%
+\contentsline {subsection}{\numberline {12.4}三つの課題を片付けて分かったこと}{29}{subsection.12.4}%
+\contentsline {paragraph}{一つ目：どれも「型を厳しくする」話ではなかった。}{29}{section*.41}%
+\contentsline {paragraph}{二つ目：待ちグラフは既にそこにあった。}{29}{section*.42}%
+\contentsline {paragraph}{三つ目：それでもデッドロック自由は保証されない。}{29}{section*.43}%
+\contentsline {subsection}{\numberline {12.5}機械検証との距離は広がった}{30}{subsection.12.5}%
+\contentsline {subsection}{\numberline {12.6}残っている課題}{30}{subsection.12.6}%
+\contentsline {section}{\numberline {13}おわりに}{30}{section.13}%

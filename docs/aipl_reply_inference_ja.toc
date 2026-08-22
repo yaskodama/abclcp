@@ -1,0 +1,69 @@
+\contentsline {section}{\numberline {1}問題設定}{3}{section.1}%
+\contentsline {subsection}{\numberline {1.1}出発点：実装の現状}{4}{subsection.1.1}%
+\contentsline {section}{\numberline {2}推論できる部分}{4}{section.2}%
+\contentsline {section}{\numberline {3}推論では決まらないこと}{5}{section.3}%
+\contentsline {subsection}{\numberline {3.1}reply しないパスが黙って通る}{5}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}分岐ごとに異なる型を reply したときの blame}{5}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}アクター間の相互再帰}{5}{subsection.3.3}%
+\contentsline {subsection}{\numberline {3.4}リモートアクターと分離コンパイル}{5}{subsection.3.4}%
+\contentsline {subsection}{\numberline {3.5}\texttt {become} と複数実装}{6}{subsection.3.5}%
+\contentsline {subsection}{\numberline {3.6}session protocol への昇格}{6}{subsection.3.6}%
+\contentsline {section}{\numberline {4}型健全性の証明にとっての意味}{6}{section.4}%
+\contentsline {section}{\numberline {5}既存言語はどうしているか}{6}{section.5}%
+\contentsline {section}{\numberline {6}実装}{7}{section.6}%
+\contentsline {subsection}{\numberline {6.1}$\rho $ の表}{7}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}1 パス目：$\rho $ の確保と defaulting}{7}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}2 パス目：\texttt {reply} の単相束縛}{8}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}送信地点}{8}{subsection.6.4}%
+\contentsline {section}{\numberline {7}戻り値型注釈 \texttt {method m(x) : T}}{8}{section.7}%
+\contentsline {subsection}{\numberline {7.1}字句・構文・AST}{8}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}型検査への反映}{9}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}全パス被覆検査}{9}{subsection.7.3}%
+\contentsline {subsection}{\numberline {7.4}双方向型付け：宣言型を式へ流す}{9}{subsection.7.4}%
+\contentsline {section}{\numberline {8}リモート境界での注釈必須化}{10}{section.8}%
+\contentsline {subsection}{\numberline {8.1}境界を開いているのは \texttt {web\_expose} ではない}{10}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}既存コードの移行}{10}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}発見：\texttt {select} の case 本体の \texttt {reply} は別のメッセージに返る}{10}{subsection.8.3}%
+\contentsline {section}{\numberline {9}実行して分かったこと：評価器が型検査器と食い違っていた}{11}{section.9}%
+\contentsline {subsection}{\numberline {9.1}修正}{12}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}残る食い違いと、その境界}{12}{subsection.9.2}%
+\contentsline {section}{\numberline {10}副産物：\texttt {pick\_overload} の 2 つの欠陥}{13}{section.10}%
+\contentsline {section}{\numberline {11}型安全性をさらに上げる：3 つの追加}{14}{section.11}%
+\contentsline {subsection}{\numberline {11.1}select パターンをメソッド署名に照合する}{14}{subsection.11.1}%
+\contentsline {subsection}{\numberline {11.2}\texttt {reply} の線形性}{14}{subsection.11.2}%
+\contentsline {subsection}{\numberline {11.3}型と実行値の差分テスト}{15}{subsection.11.3}%
+\contentsline {section}{\numberline {12}文字列連結を \texttt {++} に分離する}{15}{section.12}%
+\contentsline {subsection}{\numberline {12.1}変更}{15}{subsection.12.1}%
+\contentsline {subsection}{\numberline {12.2}既存コードの移行}{16}{subsection.12.2}%
+\contentsline {subsection}{\numberline {12.3}どこまで消えたか}{16}{subsection.12.3}%
+\contentsline {section}{\numberline {13}仮引数の結線と、曖昧性の厳格化}{16}{section.13}%
+\contentsline {subsection}{\numberline {13.1}測って順序を決める}{16}{subsection.13.1}%
+\contentsline {subsection}{\numberline {13.2}曖昧 overload をエラーにする}{17}{subsection.13.2}%
+\contentsline {subsection}{\numberline {13.3}仮引数を署名に結線する}{17}{subsection.13.3}%
+\contentsline {section}{\numberline {14}実験}{18}{section.14}%
+\contentsline {subsection}{\numberline {14.1}サンプル}{18}{subsection.14.1}%
+\contentsline {subsection}{\numberline {14.2}退行試験}{18}{subsection.14.2}%
+\contentsline {subsection}{\numberline {14.3}型と実行値の差分テスト}{19}{subsection.14.3}%
+\contentsline {subsection}{\numberline {14.4}型検査の退行}{19}{subsection.14.4}%
+\contentsline {section}{\numberline {15}残る限界}{19}{section.15}%
+\contentsline {section}{\numberline {16}結論と次の一歩}{20}{section.16}%
+\contentsline {section}{\numberline {付録A}サンプル全文と実行結果}{20}{appendix.A}%
+\contentsline {subsection}{\numberline {A.1}s1\_ok.aipl --- reply からの推論}{21}{subsection.A.1}%
+\contentsline {subsection}{\numberline {A.2}s2\_missing\_reply.aipl --- reply の書き忘れ}{22}{subsection.A.2}%
+\contentsline {subsection}{\numberline {A.3}s3\_conflict.aipl --- 分岐ごとに異なる型を reply}{22}{subsection.A.3}%
+\contentsline {subsection}{\numberline {A.4}s4\_chain.aipl --- アクターを跨いだ伝播}{23}{subsection.A.4}%
+\contentsline {subsection}{\numberline {A.5}s5\_overload\_ambiguity.aipl --- principal type が無い例}{23}{subsection.A.5}%
+\contentsline {subsection}{\numberline {A.6}s6\_usable\_result.aipl --- 通るようになった正しいプログラム}{24}{subsection.A.6}%
+\contentsline {subsection}{\numberline {A.7}s7\_annotation\_ok.aipl --- 注釈が推論を助ける}{25}{subsection.A.7}%
+\contentsline {subsection}{\numberline {A.8}s8\_annotation\_conflict.aipl --- 宣言と食い違う reply}{26}{subsection.A.8}%
+\contentsline {subsection}{\numberline {A.9}s9\_missing\_path.aipl --- 全パス被覆検査}{26}{subsection.A.9}%
+\contentsline {subsection}{\numberline {A.10}s10\_expose\_unannotated.aipl --- リモート境界での注釈必須}{27}{subsection.A.10}%
+\contentsline {subsection}{\numberline {A.11}s11\_service.aipl --- 追加機能を一通り使う}{28}{subsection.A.11}%
+\contentsline {subsection}{\numberline {A.12}s12\_service\_exposed.aipl --- 同じものを外部公開する}{30}{subsection.A.12}%
+\contentsline {subsection}{\numberline {A.13}s13\_runtime\_mismatch.aipl --- 型検査器と評価器の食い違い}{31}{subsection.A.13}%
+\contentsline {subsection}{\numberline {A.14}s14\_select\_pattern.aipl --- select パターンの照合}{32}{subsection.A.14}%
+\contentsline {subsection}{\numberline {A.15}s15\_double\_reply.aipl --- reply の線形性}{32}{subsection.A.15}%
+\contentsline {subsection}{\numberline {A.16}s16\_concat.aipl --- 文字列連結 \texttt {++} と数値 \texttt {+}}{33}{subsection.A.16}%
+\contentsline {section}{\numberline {付録B}型検査ドライバ \texttt {tc\_main.ml}}{34}{appendix.B}%
+\contentsline {section}{\numberline {付録C}変更ファイル}{35}{appendix.C}%
+\contentsline {section}{\numberline {付録D}参照}{35}{appendix.D}%

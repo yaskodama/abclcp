@@ -1889,12 +1889,37 @@ let level_of_node (node : string) : int option =
    実行時にも二重取得・未取得の解放を捕まえられるようにしておく。 *)
 let held_res : (string, unit) Hashtbl.t = Hashtbl.create 8
 let held_mu = Mutex.create ()
+
+(* 宣言された全体順序。resource_order("a -> b") で 0, 1 と振る。
+   静的検査は名前が文字列リテラルの acquire しか追えないので、
+   追えなかったものはここで捕まえる。 *)
+let res_rank : (string, int) Hashtbl.t = Hashtbl.create 8
+let declare_res_order (names : string list) : unit =
+  List.iteri (fun i n -> Hashtbl.replace res_rank (String.trim n) i) names
+
 let acquire_res (r : string) : unit =
   Mutex.lock held_mu;
   let dup = Hashtbl.mem held_res r in
-  if not dup then Hashtbl.replace held_res r ();
+  (* 順序が宣言されているなら、下位を持ったまま上位へ、の向きだけ許す *)
+  let inversion =
+    match Hashtbl.find_opt res_rank r with
+    | None -> None
+    | Some rk ->
+        Hashtbl.fold (fun h () acc ->
+          match acc with
+          | Some _ -> acc
+          | None ->
+              (match Hashtbl.find_opt res_rank h with
+               | Some hk when hk >= rk -> Some h
+               | _ -> None)) held_res None in
+  if not dup && inversion = None then Hashtbl.replace held_res r ();
   Mutex.unlock held_mu;
-  if dup then failwith ("acquire: resource already held: " ^ r)
+  if dup then failwith ("acquire: resource already held: " ^ r);
+  (match inversion with
+   | Some h ->
+       failwith (Printf.sprintf
+         "acquire: %s is held, so %s must not be acquired now (declared order)" h r)
+   | None -> ())
 let release_res (r : string) : unit =
   Mutex.lock held_mu;
   let had = Hashtbl.mem held_res r in

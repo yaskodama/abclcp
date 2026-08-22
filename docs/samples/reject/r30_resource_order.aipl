@@ -1,0 +1,24 @@
+// 弾かれるべき: 同じ二つの資源を、二つのアクターが逆の順序で取る。
+// 対の検査（r16）は通る ---- 取ったものは全部返している。
+// しかし順序が逆なので、同時に走ると互いを待つ。
+class Writer {
+  method run() : int !{mut} {
+    acquire("db");
+    acquire("cache");
+    release("cache");
+    release("db");
+    reply(1);
+  }
+}
+class Reader {
+  method run() : int !{mut} {
+    acquire("cache");
+    acquire("db");                // ★ 逆順
+    release("db");
+    release("cache");
+    reply(2);
+  }
+}
+var w = new Writer();
+var r = new Reader();
+print("w = " ++ (now w.run() timeout 200 else -1));

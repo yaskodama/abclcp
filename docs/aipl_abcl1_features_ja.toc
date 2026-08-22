@@ -1,0 +1,84 @@
+\contentsline {part}{第I部\hspace {1\zw }express mode と \texttt {where} の再導入}{4}{part.1}%
+\contentsline {section}{\numberline {1}はじめに}{4}{section.1}%
+\contentsline {subsection}{\numberline {1.1}問い}{4}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}なぜこの二つなのか}{4}{subsection.1.2}%
+\contentsline {section}{\numberline {2}提案する形}{5}{section.2}%
+\contentsline {subsection}{\numberline {2.1}\texttt {where} ---- 状態依存の受理条件}{5}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}express mode ---- 割り込み}{5}{subsection.2.2}%
+\contentsline {section}{\numberline {3}実装への影響}{6}{section.3}%
+\contentsline {subsection}{\numberline {3.1}\texttt {where} の実装}{6}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}express mode の実装}{7}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}前提となる修正 ---- ローカル変数のスコープ}{7}{subsection.3.3}%
+\contentsline {section}{\numberline {4}型システムへの影響 ---- ほぼ無傷}{8}{section.4}%
+\contentsline {subsection}{\numberline {4.1}どちらも「型」の話ではない}{8}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}\texttt {where} の型付け}{8}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}express mode における \texttt {reply} の帰属}{8}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}ガードの純粋性という新しい要求}{9}{subsection.4.4}%
+\contentsline {section}{\numberline {5}形式的保証への影響}{9}{section.5}%
+\contentsline {subsection}{\numberline {5.1}保存定理 ---- 影響なし}{9}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}進行定理 ---- \texttt {where} は枝を一本増やす}{9}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}逐次性 ---- express mode は証明を壊さない}{9}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}危ういのはプログラム側の不変条件}{10}{subsection.5.4}%
+\contentsline {section}{\numberline {6}メリット}{10}{section.6}%
+\contentsline {subsection}{\numberline {6.1}\texttt {where} の利点}{10}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}express mode の利点}{10}{subsection.6.2}%
+\contentsline {section}{\numberline {7}デメリットと危険}{11}{section.7}%
+\contentsline {subsection}{\numberline {7.1}\texttt {where} の代償}{11}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}express mode の代償}{11}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}二機構の相互作用}{12}{subsection.7.3}%
+\contentsline {section}{\numberline {8}段階的な導入案}{12}{section.8}%
+\contentsline {section}{\numberline {9}結論}{12}{section.9}%
+\contentsline {subsection}{\numberline {9.1}どちらを先に入れるべきか}{12}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}全体としてどう評価するか}{13}{subsection.9.2}%
+\contentsline {part}{第II部\hspace {1\zw }二つの目的に向けた言語仕様の考察}{13}{part.2}%
+\contentsline {section}{\numberline {10}二つの目的とその要求}{13}{section.10}%
+\contentsline {subsection}{\numberline {10.1}分散 AI エージェント言語としての要求}{13}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}実時間 OS（フィジカル AI）としての要求}{14}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}両者は多くの点で正反対である}{14}{subsection.10.3}%
+\contentsline {section}{\numberline {11}提案 ---- 一つの中核と二つのプロファイル}{14}{section.11}%
+\contentsline {subsection}{\numberline {11.1}先例 ---- Ada の Ravenscar プロファイル}{14}{subsection.11.1}%
+\contentsline {subsection}{\numberline {11.2}すでにある土台 ---- capability 分類}{15}{subsection.11.2}%
+\contentsline {subsection}{\numberline {11.3}effect を静的にする}{15}{subsection.11.3}%
+\contentsline {section}{\numberline {12}中核に必要な仕様}{16}{section.12}%
+\contentsline {section}{\numberline {13}プロファイル A ---- 分散 AI エージェント}{16}{section.13}%
+\contentsline {subsection}{\numberline {13.1}無期限 \texttt {now} を禁止し、期限付きにする}{16}{subsection.13.1}%
+\contentsline {subsection}{\numberline {13.2}失敗を型に持つ}{16}{subsection.13.2}%
+\contentsline {subsection}{\numberline {13.3}セッションプロトコルを型へ上げる}{17}{subsection.13.3}%
+\contentsline {subsection}{\numberline {13.4}構造化出力のスキーマ検査}{17}{subsection.13.4}%
+\contentsline {section}{\numberline {14}プロファイル R ---- 実時間 OS／フィジカル AI}{17}{section.14}%
+\contentsline {subsection}{\numberline {14.1}時間を宣言する}{17}{subsection.14.1}%
+\contentsline {subsection}{\numberline {14.2}有界性を静的に強制する}{17}{subsection.14.2}%
+\contentsline {subsection}{\numberline {14.3}数値 ---- 固定小数点と単位}{18}{subsection.14.3}%
+\contentsline {subsection}{\numberline {14.4}割り込みとしての express mode}{18}{subsection.14.4}%
+\contentsline {subsection}{\numberline {14.5}有界メールボックスと溢れ方針}{18}{subsection.14.5}%
+\contentsline {section}{\numberline {15}二つのプロファイルの境界}{18}{section.15}%
+\contentsline {subsection}{\numberline {15.1}方向の規律}{19}{subsection.15.1}%
+\contentsline {subsection}{\numberline {15.2}境界アクター}{19}{subsection.15.2}%
+\contentsline {section}{\numberline {16}型健全性と証明への影響}{19}{section.16}%
+\contentsline {section}{\numberline {17}実装の順序}{20}{section.17}%
+\contentsline {section}{\numberline {18}まとめ ---- どのような言語仕様とすべきか}{20}{section.18}%
+\contentsline {part}{第III部\hspace {1\zw }AIPL 理想仕様（案）}{21}{part.3}%
+\contentsline {section}{\numberline {19}設計原則}{21}{section.19}%
+\contentsline {section}{\numberline {20}構文}{22}{section.20}%
+\contentsline {subsection}{\numberline {20.1}宣言}{22}{subsection.20.1}%
+\contentsline {subsection}{\numberline {20.2}型}{22}{subsection.20.2}%
+\contentsline {subsection}{\numberline {20.3}式}{23}{subsection.20.3}%
+\contentsline {subsection}{\numberline {20.4}文}{23}{subsection.20.4}%
+\contentsline {section}{\numberline {21}型システム}{24}{section.21}%
+\contentsline {subsection}{\numberline {21.1}判断の形}{24}{subsection.21.1}%
+\contentsline {subsection}{\numberline {21.2}主要な規則}{24}{subsection.21.2}%
+\contentsline {subsection}{\numberline {21.3}返信の規律}{24}{subsection.21.3}%
+\contentsline {subsection}{\numberline {21.4}物理単位}{25}{subsection.21.4}%
+\contentsline {section}{\numberline {22}効果}{25}{section.22}%
+\contentsline {section}{\numberline {23}プロファイル}{25}{section.23}%
+\contentsline {section}{\numberline {24}実行モデル}{26}{section.24}%
+\contentsline {subsection}{\numberline {24.1}アクターの状態}{26}{subsection.24.1}%
+\contentsline {subsection}{\numberline {24.2}受理規則 ---- 一本の経路}{26}{subsection.24.2}%
+\contentsline {subsection}{\numberline {24.3}\texttt {atomic}}{26}{subsection.24.3}%
+\contentsline {subsection}{\numberline {24.4}返信}{26}{subsection.24.4}%
+\contentsline {section}{\numberline {25}現状との差分}{27}{section.25}%
+\contentsline {subsection}{\numberline {25.1}足すもの}{27}{subsection.25.1}%
+\contentsline {subsection}{\numberline {25.2}変えるもの}{27}{subsection.25.2}%
+\contentsline {subsection}{\numberline {25.3}禁止するもの（プロファイル R）}{27}{subsection.25.3}%
+\contentsline {section}{\numberline {26}この仕様で言えるようになること}{28}{section.26}%
+\contentsline {section}{\numberline {27}最小の到達点}{28}{section.27}%

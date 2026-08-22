@@ -1,0 +1,35 @@
+// s19: 資源に全体順序を入れる ---- 逆順の取得を型で止める
+//
+//      s13 の対の検査は「取ったら返す」までしか見ない。
+//      二つのアクターが同じ二つの資源を逆の順序で取ると、
+//      どちらも対は正しいのに、実行するとお互いを待つ。
+//      取得の入れ子から辺を集め、閉路が無いことを見る。
+//      閉路が無い = 全体順序を作れる、である。
+class Writer {
+  method put(x) : int !{mut} {
+    acquire("bus");
+    acquire("dev");               // bus を持ったまま dev ---- bus < dev
+    var v = x * 2;
+    release("dev");
+    release("bus");
+    reply(v);
+  }
+}
+class Reader {
+  method get(x) : int !{mut} {
+    acquire("bus");
+    acquire("dev");               // 同じ向き。逆にすると型エラーになる
+    var v = x + 1;
+    release("dev");
+    release("bus");
+    reply(v);
+  }
+}
+// 宣言（書かなくても入れ子から推論する）。s18 と同じく、宣言は
+// クラスの後ろに置く ---- JS-I の構文がクラスを先に求めるため。
+resource_order("bus -> dev");
+
+var w = new Writer();
+var r = new Reader();
+print("w = " ++ (now w.put(20) timeout 200 else -1));
+print("r = " ++ (now r.get(20) timeout 200 else -1));

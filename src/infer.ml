@@ -1391,12 +1391,37 @@ let check_boundary_annotations (p : Ast.program) (env : env) : unit =
 
 exception Res_error of Location.t * string
 
+(* ---- 資源への全体順序 --------------------------------------
+   対の検査は「取ったら返す」までしか見ない。
+   二つのアクターが同じ二つの資源を逆の順序で取ると、
+   どちらも対は正しいのに、実行するとお互いを待つ。
+   そこで、取得の入れ子から辺を集める ----
+   r を持っているあいだに s を取ったなら r < s。
+   集めた辺に閉路があれば、逆順に取る場所が二つ以上あるということである。
+   閉路が無ければ、それは全体順序を作れるということ ----
+   位相順序がそのまま「レベル」の証人になる（§義務レベルと同じ形）。 *)
+
+(* (下位, 上位) -> (どこで入れ子になったか) *)
+let res_edges : (string * string, string * Location.t) Hashtbl.t = Hashtbl.create 16
+(* いま歩いている場所の名前（エラーに出す） *)
+let res_site : string ref = ref "top level"
+(* 追えない acquire（引数が文字列リテラルでない）を見つけた場所 *)
+let res_opaque : (Location.t * string) list ref = ref []
+
 let rec res_of_expr (e : Ast.expr) (held : SSet.t) : SSet.t =
   match e.desc with
   | Ast.Call ("acquire", [{ Ast.desc = Ast.String r; _ }]) ->
       if SSet.mem r held then
         raise (Res_error (e.loc, Printf.sprintf "resource %s is acquired twice" r));
+      (* すでに持っているものは、これより先に取られた＝下位である *)
+      SSet.iter (fun h ->
+        if h <> r && not (Hashtbl.mem res_edges (h, r)) then
+          Hashtbl.replace res_edges (h, r) (!res_site, e.loc)) held;
       SSet.add r held
+  | Ast.Call ("acquire", [arg]) ->
+      (* 資源の名前が実行時に決まる形は追えない。黙って通すが、覚えておく。 *)
+      res_opaque := (e.loc, !res_site) :: !res_opaque;
+      res_of_expr arg held
   | Ast.Call ("release", [{ Ast.desc = Ast.String r; _ }]) ->
       if not (SSet.mem r held) then
         raise (Res_error (e.loc,
@@ -1456,11 +1481,130 @@ let rec res_of_stmt (s : Ast.stmt) (held : SSet.t) : SSet.t =
        | None -> held)
 
 let check_resource_use (cls : string) (m : Ast.method_decl) : unit =
+  res_site := cls ^ "." ^ m.Ast.mname;
   let left = res_of_stmt m.Ast.body SSet.empty in
   if not (SSet.is_empty left) then
     raise (Res_error (m.Ast.body.Ast.sloc,
       Printf.sprintf "method %s.%s returns while still holding %s"
         cls m.Ast.mname (String.concat ", " (SSet.elements left))))
+
+(* "a -> b -> c" を [("a","b"); ("b","c")] にする *)
+let parse_res_order (spec : string) : (string * string) list =
+  let parts =
+    let n = String.length spec in
+    let rec go i start acc =
+      if i + 1 < n && spec.[i] = '-' && spec.[i+1] = '>' then
+        go (i+2) (i+2) (String.sub spec start (i-start) :: acc)
+      else if i >= n then List.rev (String.sub spec start (n-start) :: acc)
+      else go (i+1) start acc
+    in go 0 0 []
+  in
+  let names = List.filter (fun x -> x <> "") (List.map String.trim parts) in
+  let rec pairs = function
+    | a :: (b :: _ as rest) -> (a, b) :: pairs rest
+    | _ -> [] in
+  pairs names
+
+(* 閉路を一つ返す。[a; b; c] なら a -> b -> c -> a *)
+let res_cycle () : string list option =
+  let succ : (string, string list) Hashtbl.t = Hashtbl.create 16 in
+  Hashtbl.iter (fun (a, b) _ ->
+    Hashtbl.replace succ a (b :: (try Hashtbl.find succ a with Not_found -> [])))
+    res_edges;
+  let color : (string, int) Hashtbl.t = Hashtbl.create 16 in
+  let found = ref None in
+  let rec go n path =
+    if !found <> None then () else
+    match Hashtbl.find_opt color n with
+    | Some 2 -> ()
+    | Some _ ->
+        (* n はいま辿っている道の上にある = 閉路 *)
+        let rec take acc = function
+          | [] -> List.rev acc
+          | x :: rest -> if x = n then n :: acc else take (x :: acc) rest in
+        found := Some (take [] path)
+    | None ->
+        Hashtbl.replace color n 1;
+        List.iter (fun m -> go m (n :: path))
+          (try Hashtbl.find succ n with Not_found -> []);
+        Hashtbl.replace color n 2
+  in
+  Hashtbl.iter (fun (a, _) _ -> go a []) res_edges;
+  !found
+
+(* 閉路が無いなら、位相の高さがそのまま全体順序になる（証人） *)
+let res_levels () : (string * int) list =
+  let succ : (string, string list) Hashtbl.t = Hashtbl.create 16 in
+  let nodes = Hashtbl.create 16 in
+  Hashtbl.iter (fun (a, b) _ ->
+    Hashtbl.replace nodes a (); Hashtbl.replace nodes b ();
+    Hashtbl.replace succ a (b :: (try Hashtbl.find succ a with Not_found -> [])))
+    res_edges;
+  let lv = Hashtbl.create 16 in
+  let rec depth n =
+    match Hashtbl.find_opt lv n with
+    | Some d -> d
+    | None ->
+        Hashtbl.replace lv n 0;                     (* 閉路よけの仮置き *)
+        let d =
+          List.fold_left (fun acc m -> max acc (1 + depth m)) 0
+            (try Hashtbl.find succ n with Not_found -> []) in
+        Hashtbl.replace lv n d; d
+  in
+  Hashtbl.iter (fun n () -> ignore (depth n)) nodes;
+  (* 高さが大きいほど「先に取る」= 下位。見やすいように逆にして 0 から振る *)
+  let mx = Hashtbl.fold (fun _ d a -> max a d) lv 0 in
+  let items = Hashtbl.fold (fun n d acc -> (n, mx - d) :: acc) lv [] in
+  List.sort (fun (na, a) (nb, b) ->
+    if a <> b then compare a b else compare na nb) items
+
+(* 宣言 resource_order("a -> b -> c") を辺として取り込み、
+   集めた辺と合わせて閉路が無いことを見る。 *)
+let check_resource_order (p : Ast.program) : unit =
+  (* 1) 宣言された順序 *)
+  List.iter (function
+    | Ast.Global ({ Ast.sdesc =
+          Ast.CallStmt ("resource_order", [ { Ast.desc = Ast.String spec; _ } ]); _ } as st)
+    | Ast.Global ({ Ast.sdesc =
+          Ast.VarDecl (_, { Ast.desc =
+            Ast.Call ("resource_order", [ { Ast.desc = Ast.String spec; _ } ]); _ }); _ } as st) ->
+        List.iter (fun (a, b) ->
+          if not (Hashtbl.mem res_edges (a, b)) then
+            Hashtbl.replace res_edges (a, b) ("resource_order", st.Ast.sloc))
+          (parse_res_order spec)
+    | _ -> ()) p;
+  (* 2) 閉路 = 逆順に取る場所がある *)
+  (match res_cycle () with
+   | Some (n :: _ as cyc) ->
+       let rec edges = function
+         | a :: (b :: _ as rest) -> (a, b) :: edges rest
+         | [last] -> [(last, n)]
+         | [] -> [] in
+       let es = edges cyc in
+       let where =
+         String.concat "; "
+           (List.map (fun (a, b) ->
+              match Hashtbl.find_opt res_edges (a, b) with
+              | Some (site, _) -> Printf.sprintf "%s before %s (in %s)" a b site
+              | None -> Printf.sprintf "%s before %s" a b) es) in
+       let loc =
+         match Hashtbl.find_opt res_edges (List.hd es) with
+         | Some (_, l) -> l | None -> Location.dummy in
+       Types.type_error ~loc
+         (Printf.sprintf
+            "resource order: %s -> %s is circular; %s. Acquiring in opposite orders deadlocks"
+            (String.concat " -> " cyc) n where)
+   | _ -> ());
+  (* 3) 追えなかった acquire を知らせる（既定では黙る） *)
+  if Sys.getenv_opt "AIOS_STRICT_RESOURCE" = Some "1" then
+    List.iter (fun (loc, site) ->
+      Printf.eprintf
+        "[warn] %s: acquire with a name that is not a literal, in %s; its order is not checked\n%!"
+        (Location.to_string loc) site) (List.rev !res_opaque);
+  (* 4) 推論した全体順序を見せる *)
+  if Sys.getenv_opt "AIOS_SHOW_LEVELS" = Some "1" then
+    List.iter (fun (n, d) -> Printf.eprintf "[resource] %-20s @%d\n%!" n d)
+      (res_levels ())
 
 
 (* ============================================================ *)
@@ -1906,6 +2050,7 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
      end);
 
     (* ★ 資源の使用順序（acquire / release の対）。効果集合では表せない性質。 *)
+    Hashtbl.reset res_edges; res_opaque := []; res_site := "top level";
     List.iter (function
       | Ast.Class c ->
           List.iter (fun (m : Ast.method_decl) ->
@@ -1915,6 +2060,20 @@ let check_program (p: Ast.program) : (Types.tenv, string) result =
             (try check_reply_linearity c.Ast.cname m
              with Res_error (loc, msg) -> Types.type_error ~loc msg)) c.Ast.methods
       | _ -> ()) p;
+    (* トップレベルの並びも同じ規律で見る（ここも acquire できる） *)
+    res_site := "top level";
+    (try
+       let left =
+         List.fold_left (fun h -> function
+           | Ast.Global st -> res_of_stmt st h
+           | _ -> h) SSet.empty p in
+       if not (SSet.is_empty left) then
+         raise (Res_error (Location.dummy,
+           Printf.sprintf "the program ends while still holding %s"
+             (String.concat ", " (SSet.elements left))))
+     with Res_error (loc, msg) -> Types.type_error ~loc msg);
+    (* ★ 資源への全体順序。対だけでは逆順の取得を止められない。 *)
+    check_resource_order p;
     check_boundary_annotations p env0;      (* ★ リモート境界の注釈必須検査 *)
     if !verbose then Types.debug_print_method_rets ();
     if !verbose then debug_print_effects ();
