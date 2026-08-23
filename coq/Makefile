@@ -36,6 +36,10 @@ Print Assumptions AIPLSoundness2.type_safety.\n\
 Print Assumptions AIPLSoundness2.deadlock_free.\n\
 Print Assumptions AIPLSoundness2.progress_total.\n\
 Print Assumptions AIPLSoundness2.deadlock_free_star.\n\
+Print Assumptions AIPLSoundness2.effect_no_increase.\n\
+Print Assumptions AIPLSoundness2.effect_soundness.\n\
+Print Assumptions AIPLSoundness2.await_charges_callee.\n\
+Print Assumptions AIPLSoundness2.send_does_not_charge.\n\
 Print Assumptions ex_not_blocked.\n\
 Print Assumptions dining_no_deadlock.\n\
 Print Assumptions no_dead_state.\n\

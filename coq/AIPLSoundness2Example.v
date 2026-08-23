@@ -34,6 +34,11 @@ Definition ex_mlvl (c m : nat) : nat :=
   | _, _ => 0
   end.
 
+(* 宣言する効果。Svc.get は何もしない。
+   Caller.run は Svc.get を await するので、その効果を引き継ぐ ---- が、
+   引き継ぐ先が空なので、こちらも空でよい。 *)
+Definition ex_meff (c m : nat) : eff := e0.
+
 (* 起動時のオブジェクト表: 0 番に Svc が一つ居る *)
 Definition ex_ot0 : list nat := [0].
 
@@ -51,43 +56,47 @@ Lemma ex_sinit_value : forall c, value (ex_sinit c).
 Proof. intros. constructor. Qed.
 
 Lemma ex_sinit_ok : forall c ot ft C L G,
-  ht ex_stype ex_mtab ex_mlvl ot ft C L G (ex_sinit c) (ex_stype c).
+  ht ex_stype ex_mtab ex_mlvl ex_meff ot ft C L G (ex_sinit c) (ex_stype c) e0.
 Proof. intros. constructor. Qed.
 
 (* ★ 本体が、そのメソッドの義務レベルのもとで型検査を通る。
    Caller.run の await が 0 < 1 で通るのが要点である。 *)
 Lemma ex_bodies_ok : forall c m ta tr, ex_mtab c m = Some (ta, tr) ->
   forall ot ft, ext ex_ot0 ot ->
-    ht ex_stype ex_mtab ex_mlvl ot ft c (ex_mlvl c m)
-       (extend empty 0 ta) (ex_mbody c m) tr.
+    exists E, ht ex_stype ex_mtab ex_mlvl ex_meff ot ft c (ex_mlvl c m)
+                 (extend empty 0 ta) (ex_mbody c m) tr E
+           /\ incl E (ex_meff c m).
 Proof.
   intros c m ta tr Hm ot ft Hext.
   destruct c as [| [| c']]; destruct m as [| m']; simpl in Hm;
     try discriminate; inversion Hm; subst; simpl.
   - (* Svc.get: 引数をそのまま返す *)
+    exists e0. split; [ | apply incl_refl ].
     constructor. unfold extend. simpl. reflexivity.
   - (* Caller.run: while ... ; now svc.get(x) *)
-    eapply HSeq.
-    + eapply HWhile with (T1 := TUnit).
-      * econstructor; [ constructor; unfold extend; simpl; reflexivity
-                      | constructor ].
-      * constructor.
-    + eapply HAwait with (n := 1).
-      * eapply HSend with (c := 0) (ta := TInt) (tr := TInt).
-        -- constructor. apply Hext. simpl. reflexivity.
-        -- simpl. reflexivity.
-        -- constructor. unfold extend. simpl. reflexivity.
-      * auto.
+    eexists. split.
+    + eapply HSeq.
+      * eapply HWhile with (T1 := TUnit).
+        -- econstructor; [ constructor; unfold extend; simpl; reflexivity
+                         | constructor ].
+        -- constructor.
+      * eapply HAwait with (n := 1).
+        -- eapply HSend with (c := 0) (ta := TInt) (tr := TInt).
+           ++ constructor. apply Hext. simpl. reflexivity.
+           ++ simpl. reflexivity.
+           ++ constructor. unfold extend. simpl. reflexivity.
+        -- auto.
+    + simpl. apply incl_refl.
 Qed.
 
 (* 初期構成: Caller.run へのメッセージが一通、飛んでいる途中 *)
 Definition ex_heap : heap :=
-  Heap [0; 1] [ENum 0; ENum 0] [(TInt, 0)] [None].
+  Heap [0; 1] [ENum 0; ENum 0] [(TInt, 0, e0)] [None].
 Definition ex_conf : conf :=
   (ex_heap, [(1, 0, ENum 5, 0)], @nil task).
 
 Lemma ex_conf_ok :
-  conf_ok ex_stype ex_mtab ex_mlvl ex_ot0 ex_conf.
+  conf_ok ex_stype ex_mtab ex_mlvl ex_meff ex_ot0 ex_conf.
 Proof.
   unfold ex_conf, ex_heap, conf_ok. simpl.
   split; [ | split; [ | split; [ | split ] ] ].
@@ -124,7 +133,7 @@ Proof. eapply deadlock_free with (stype := ex_stype). apply ex_conf_ok. Qed.
 
 (* 一歩進める（終状態ではない） *)
 Corollary ex_can_step :
-  terminal ex_conf \/ exists C', cstep ex_sinit ex_mtab ex_mbody ex_mlvl ex_conf C'.
+  terminal ex_conf \/ exists C', cstep ex_sinit ex_mtab ex_mbody ex_mlvl ex_meff ex_conf C'.
 Proof.
   apply progress_total with (stype := ex_stype) (ot0 := ex_ot0).
   apply ex_conf_ok.

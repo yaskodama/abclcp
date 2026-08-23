@@ -12,9 +12,9 @@
 
   ---- 何を足したか ------------------------------------------------
 
-  1. future の型に、それを埋める側のレベルを持たせた。
+  1. future の型に、それを埋める側のレベルと効果を持たせた。
 
-       TFut : ty -> nat -> ty        future t @ n
+       TFut : ty -> nat -> eff -> ty     future t @ n ! E
 
   2. 型判断に「いま検査しているメソッドの義務レベル」を足した。
 
@@ -33,6 +33,16 @@
   5. 構文を広げた。逐次実行 (ESeq) と繰り返し (EWhile) を入れた。
      while は if へ展開する形にしたので、束縛を作らない
      （変数捕獲の心配が無い）。
+
+  6. 効果を判断に足した。
+
+       ht ot ft C L G e T E
+
+     規則の要は二つである。
+       ・send は呼び先の効果を引き継がない（待たないので）
+       ・await は引き継ぐ（Ee ++ Ec）
+     これは実装の挙動と同じである。bodies_ok には
+     「本体の効果は宣言した効果に収まる」を課す。
 
   ---- 証明の骨 ----------------------------------------------------
 
@@ -57,6 +67,12 @@
     deadlock_free_star        到達できる構成すべてについて同じことを言う
     state_type_invariant      どの時点でも各 actor の状態は宣言型を持つ
     future_type_invariant     解決済み future の値は宣言された返り値型を持つ
+    effect_no_increase        一歩進んでも効果は増えない（★効果の健全性）
+    effect_soundness          走っているタスクの効果は、担当する future に
+                              記録された効果に収まり続ける
+    await_charges_callee      待つと呼び先の効果を必ず引き継ぐ
+                              （＝一段隔てても隠せない）
+    send_does_not_charge      送るだけでは引き継がない（待たないので）
 
   いずれも Print Assumptions が Closed under the global context である。
 
@@ -107,13 +123,24 @@
   レベルを同じにすると本体の型検査が通らないことも確かめてある
   （条件が効いていることの対照）。
 
-  ---- 形式化から外した範囲（第 1 版と同じ）------------------------
+  ---- 形式化から外した範囲 ----------------------------------------
     any, send!, remote actor, sender, become, select, 配列, レコード,
-    overload, 多相（型スキーム）, timeout, protocol/session, 効果
+    overload, 多相（型スキーム）, timeout, protocol/session
 *)
 
 From Stdlib Require Import List Arith Bool Lia.
 Import ListNotations.
+
+(* ================================================================= *)
+(* 0. 効果                                                           *)
+(* ================================================================= *)
+
+(* 効果名の集合。実装の ai / net / io / mut / time / mem / fs / log に
+   対応するが、形式化では名前を自然数で表すだけでよい。
+   包含は incl（標準ライブラリ）、合併は ++ である。 *)
+Definition eff := list nat.
+Definition e0 : eff := [].
+Definition emut : nat := 0.        (* 自分の状態を書く *)
 
 (* ================================================================= *)
 (* 1. 型と式                                                         *)
@@ -124,7 +151,8 @@ Inductive ty : Type :=
 | TBool  : ty
 | TUnit  : ty
 | TActor : nat -> ty        (* actor[c] : クラス c の actor *)
-| TFut   : ty -> nat -> ty. (* future t @ n : レベル n のメソッドが埋める *)
+| TFut   : ty -> nat -> eff -> ty.
+  (* future t @ n ! E : レベル n のメソッドが埋め、その本体の効果は E に収まる *)
 
 Inductive tm : Type :=
 | ENum   : nat -> tm
@@ -182,7 +210,7 @@ Fixpoint subst (x : nat) (v : tm) (t : tm) : tm :=
 Record heap := Heap {
   hot : list nat;            (* actor 番号 -> クラス番号 *)
   hst : list tm;             (* actor 番号 -> 現在の状態値 *)
-  hft : list (ty * nat);     (* future 番号 -> (型, 埋める側のレベル) *)
+  hft : list (ty * nat * eff);  (* future 番号 -> (型, レベル, 効果) *)
   hfv : list (option tm)     (* future 番号 -> 解決済みの値 *)
 }.
 
@@ -256,6 +284,7 @@ Variable sinit : nat -> tm.                       (* クラス c の状態の初
 Variable mtab  : nat -> nat -> option (ty * ty).  (* c.m : 引数型 * 返り値型 *)
 Variable mbody : nat -> nat -> tm.                (* c.m の本体。引数は EVar 0 *)
 Variable mlvl  : nat -> nat -> nat.               (* c.m の義務レベル *)
+Variable meff  : nat -> nat -> eff.               (* c.m が宣言する効果 *)
 (* 起動時のオブジェクト表。メソッド本体はここに載っている actor を
    直接参照してよい（例: 哲学者がフォークを名前で知っている）。 *)
 Variable ot0  : list nat.
@@ -268,67 +297,76 @@ Variable ot0  : list nat.
      オブジェクト表 ot、future 表 ft のもとで、クラス C の本体の中で、
      型環境 G において式 e が型 T を持つ。 *)
 
-Inductive ht (ot : list nat) (ft : list (ty * nat)) (C : nat) (L : nat)
-  : env -> tm -> ty -> Prop :=
-| HNum  : forall G n, ht ot ft C L G (ENum n) TInt
-| HBool : forall G b, ht ot ft C L G (EBool b) TBool
-| HUnit : forall G,   ht ot ft C L G EUnit TUnit
-| HVar  : forall G x T, G x = Some T -> ht ot ft C L G (EVar x) T
-| HSelf : forall G, ht ot ft C L G ESelf (TActor C)
-| HORef : forall G o c, nth_error ot o = Some c -> ht ot ft C L G (EORef o) (TActor c)
-| HFRef : forall G k T n, nth_error ft k = Some (T, n) -> ht ot ft C L G (EFRef k) (TFut T n)
-| HAdd  : forall G a b, ht ot ft C L G a TInt -> ht ot ft C L G b TInt ->
-                        ht ot ft C L G (EAdd a b) TInt
-| HLt   : forall G a b, ht ot ft C L G a TInt -> ht ot ft C L G b TInt ->
-                        ht ot ft C L G (ELt a b) TBool
-| HIf   : forall G a b c T, ht ot ft C L G a TBool ->
-                            ht ot ft C L G b T -> ht ot ft C L G c T ->
-                            ht ot ft C L G (EIf a b c) T
-| HLet  : forall G x e1 e2 T1 T2,
-            ht ot ft C L G e1 T1 ->
-            ht ot ft C L (extend G x T1) e2 T2 ->
-            ht ot ft C L G (ELet x e1 e2) T2
-| HGet  : forall G, ht ot ft C L G EGet (stype C)
-| HSet  : forall G e, ht ot ft C L G e (stype C) -> ht ot ft C L G (ESet e) TUnit
-| HNew  : forall G c, ht ot ft C L G (ENew c) (TActor c)
-| HSend : forall G e0 m e1 c ta tr,
-            ht ot ft C L G e0 (TActor c) ->
+Inductive ht (ot : list nat) (ft : list (ty * nat * eff)) (C : nat) (L : nat)
+  : env -> tm -> ty -> eff -> Prop :=
+| HNum  : forall G n, ht ot ft C L G (ENum n) TInt e0
+| HBool : forall G b, ht ot ft C L G (EBool b) TBool e0
+| HUnit : forall G,   ht ot ft C L G EUnit TUnit e0
+| HVar  : forall G x T, G x = Some T -> ht ot ft C L G (EVar x) T e0
+| HSelf : forall G, ht ot ft C L G ESelf (TActor C) e0
+| HORef : forall G o c, nth_error ot o = Some c -> ht ot ft C L G (EORef o) (TActor c) e0
+| HFRef : forall G k T n E, nth_error ft k = Some (T, n, E) ->
+            ht ot ft C L G (EFRef k) (TFut T n E) e0
+| HAdd  : forall G a b Ea Eb, ht ot ft C L G a TInt Ea -> ht ot ft C L G b TInt Eb ->
+                        ht ot ft C L G (EAdd a b) TInt (Ea ++ Eb)
+| HLt   : forall G a b Ea Eb, ht ot ft C L G a TInt Ea -> ht ot ft C L G b TInt Eb ->
+                        ht ot ft C L G (ELt a b) TBool (Ea ++ Eb)
+| HIf   : forall G a b c T Ea Eb Ec, ht ot ft C L G a TBool Ea ->
+                            ht ot ft C L G b T Eb -> ht ot ft C L G c T Ec ->
+                            ht ot ft C L G (EIf a b c) T (Ea ++ Eb ++ Ec)
+| HLet  : forall G x e1 e2 T1 T2 E1 E2,
+            ht ot ft C L G e1 T1 E1 ->
+            ht ot ft C L (extend G x T1) e2 T2 E2 ->
+            ht ot ft C L G (ELet x e1 e2) T2 (E1 ++ E2)
+| HGet  : forall G, ht ot ft C L G EGet (stype C) e0
+(* 自分の状態を書くのは mut *)
+| HSet  : forall G e E, ht ot ft C L G e (stype C) E ->
+            ht ot ft C L G (ESet e) TUnit (emut :: E)
+| HNew  : forall G c, ht ot ft C L G (ENew c) (TActor c) e0
+(* 送るだけでは呼び先の効果を引き継がない（待たないので）。
+   引き継ぐのは await の側である。実装もこの区別をしている。 *)
+| HSend : forall G ea m e1 c ta tr Ea E1,
+            ht ot ft C L G ea (TActor c) Ea ->
             mtab c m = Some (ta, tr) ->
-            ht ot ft C L G e1 ta ->
-            ht ot ft C L G (EFSend e0 m e1) (TFut tr (mlvl c m))
+            ht ot ft C L G e1 ta E1 ->
+            ht ot ft C L G (EFSend ea m e1) (TFut tr (mlvl c m) (meff c m)) (Ea ++ E1)
 (* ★ 待ちは必ず「上」へ向かう。これがデッドロックフリーの要である。 *)
-| HAwait : forall G e T n,
-             ht ot ft C L G e (TFut T n) -> L < n ->
-             ht ot ft C L G (EAwait e) T
-| HSeq  : forall G a b T1 T2,
-            ht ot ft C L G a T1 -> ht ot ft C L G b T2 ->
-            ht ot ft C L G (ESeq a b) T2
-| HWhile : forall G a b T1,
-            ht ot ft C L G a TBool -> ht ot ft C L G b T1 ->
-            ht ot ft C L G (EWhile a b) TUnit.
+(* ★ 待つと、呼び先の効果を引き継ぐ *)
+| HAwait : forall G e T n Ee Ec,
+             ht ot ft C L G e (TFut T n Ec) Ee -> L < n ->
+             ht ot ft C L G (EAwait e) T (Ee ++ Ec)
+| HSeq  : forall G a b T1 T2 Ea Eb,
+            ht ot ft C L G a T1 Ea -> ht ot ft C L G b T2 Eb ->
+            ht ot ft C L G (ESeq a b) T2 (Ea ++ Eb)
+| HWhile : forall G a b T1 Ea Eb,
+            ht ot ft C L G a TBool Ea -> ht ot ft C L G b T1 Eb ->
+            ht ot ft C L G (EWhile a b) TUnit (Ea ++ Eb).
 
 (* プログラム全体が型検査を通っていること。
    Section の Hypothesis なので、End で各定理の前提に変わる。公理ではない。 *)
 
 Hypothesis sinit_value : forall c, value (sinit c).
 
-Hypothesis sinit_ok : forall c ot ft C L G, ht ot ft C L G (sinit c) (stype c).
+Hypothesis sinit_ok : forall c ot ft C L G, ht ot ft C L G (sinit c) (stype c) e0.
 
-(* 本体はそのメソッドの義務レベルのもとで型が付く *)
+(* 本体はそのメソッドの義務レベルのもとで型が付き、
+   その効果は宣言した効果に収まる。
+   実装は推論した効果を注釈と照合する。ここも同じ形である。 *)
 Hypothesis bodies_ok :
   forall c m ta tr, mtab c m = Some (ta, tr) ->
     forall ot ft, ext ot0 ot ->
-      ht ot ft c (mlvl c m) (extend empty 0 ta) (mbody c m) tr.
+      exists E, ht ot ft c (mlvl c m) (extend empty 0 ta) (mbody c m) tr E
+             /\ incl E (meff c m).
 
 (* ================================================================= *)
 (* 5. 型付けの基本補題                                               *)
 (* ================================================================= *)
 
 (* 型環境の外延性 *)
-Lemma ht_env_ext : forall ot ft C L G1 G2 e T,
-  (forall z, G1 z = G2 z) -> ht ot ft C L G1 e T -> ht ot ft C L G2 e T.
+Lemma ht_env_ext : forall ot ft C L G1 G2 e T E,
+  (forall z, G1 z = G2 z) -> ht ot ft C L G1 e T E -> ht ot ft C L G2 e T E.
 Proof.
-  intros ot ft C L G1 G2 e T Heq H. generalize dependent G2.
+  intros ot ft C L G1 G2 e T E Heq H. generalize dependent G2.
   induction H; intros G2 Heq; try (econstructor; eauto; fail).
   - constructor. rewrite <- Heq. assumption.
   - econstructor; [ eauto | ].
@@ -336,37 +374,45 @@ Proof.
 Qed.
 
 (* オブジェクト表・future 表の拡張に対する単調性 *)
-Lemma ht_mono : forall ot ft C L G e T ot' ft',
-  ht ot ft C L G e T -> ext ot ot' -> ext ft ft' -> ht ot' ft' C L G e T.
+Lemma ht_mono : forall ot ft C L G e T E ot' ft',
+  ht ot ft C L G e T E -> ext ot ot' -> ext ft ft' -> ht ot' ft' C L G e T E.
 Proof.
-  intros ot ft C L G e T ot' ft' H. generalize dependent ft'. generalize dependent ot'.
+  intros ot ft C L G e T E ot' ft' H. generalize dependent ft'. generalize dependent ot'.
   induction H; intros ot' ft' Ho Hf; try (econstructor; eauto; fail).
 Qed.
 
-(* 値の型付けはクラス文脈にも型環境にも依存しない *)
-Lemma value_ht_indep : forall ot ft C L G v T,
-  value v -> ht ot ft C L G v T -> forall C' L' G', ht ot ft C' L' G' v T.
+(* 値の効果は空である。値は何もしない。 *)
+Lemma value_eff : forall ot ft C L G v T E,
+  value v -> ht ot ft C L G v T E -> E = e0.
 Proof.
-  intros ot ft C L G v T Hv Ht. inversion Hv; subst; inversion Ht; subst;
+  intros ot ft C L G v T E Hv Ht.
+  inversion Hv; subst; inversion Ht; subst; reflexivity.
+Qed.
+
+(* 値の型付けはクラス文脈にも型環境にも依存しない *)
+Lemma value_ht_indep : forall ot ft C L G v T E,
+  value v -> ht ot ft C L G v T E -> forall C' L' G', ht ot ft C' L' G' v T e0.
+Proof.
+  intros ot ft C L G v T E Hv Ht. inversion Hv; subst; inversion Ht; subst;
     intros; econstructor; eauto.
 Qed.
 
-(* 代入補題 *)
-Lemma substitution : forall ot ft C L e T G x T1 v,
-  ht ot ft C L (extend G x T1) e T ->
+(* 代入補題。値の効果は空なので、代入しても効果は増えない。 *)
+Lemma substitution : forall ot ft C L e T E G x T1 v,
+  ht ot ft C L (extend G x T1) e T E ->
   value v ->
-  (forall C' L' G', ht ot ft C' L' G' v T1) ->
-  ht ot ft C L G (subst x v e) T.
+  (forall C' L' G', ht ot ft C' L' G' v T1 e0) ->
+  ht ot ft C L G (subst x v e) T E.
 Proof.
-  intros ot ft C L e. induction e; intros T G x T1 v Ht Hv Hvt;
+  intros ot ft C L e. induction e; intros T E G x T1 v Ht Hv Hvt;
     inversion Ht; subst; simpl; try (econstructor; eauto; fail).
   - (* EVar *)
-    unfold extend in H1. destruct (Nat.eqb n x) eqn:E.
+    unfold extend in H1. destruct (Nat.eqb n x) eqn:Q.
     + inversion H1; subst. apply Hvt.
     + constructor. assumption.
   - (* ELet *)
-    destruct (Nat.eqb n x) eqn:E.
-    + apply Nat.eqb_eq in E. subst n.
+    destruct (Nat.eqb n x) eqn:Q.
+    + apply Nat.eqb_eq in Q. subst n.
       econstructor; [ eapply IHe1; eauto | ].
       eapply ht_env_ext; [ | eassumption ].
       intros z. unfold extend. destruct (Nat.eqb z x); reflexivity.
@@ -374,28 +420,28 @@ Proof.
       apply IHe2 with (T1 := T1); auto.
       eapply ht_env_ext; [ | eassumption ].
       intros z. unfold extend.
-      destruct (Nat.eqb z n) eqn:E1; destruct (Nat.eqb z x) eqn:E2; try reflexivity.
-      apply Nat.eqb_eq in E1. apply Nat.eqb_eq in E2. subst.
-      rewrite Nat.eqb_refl in E. discriminate.
+      destruct (Nat.eqb z n) eqn:Q1; destruct (Nat.eqb z x) eqn:Q2; try reflexivity.
+      apply Nat.eqb_eq in Q1. apply Nat.eqb_eq in Q2. subst.
+      rewrite Nat.eqb_refl in Q. discriminate.
 Qed.
 
 (* 標準形 *)
-Lemma canon_int : forall ot ft C L G v,
-  value v -> ht ot ft C L G v TInt -> exists n, v = ENum n.
+Lemma canon_int : forall ot ft C L G v E,
+  value v -> ht ot ft C L G v TInt E -> exists n, v = ENum n.
 Proof. intros. inversion H; subst; inversion H0; subst; eauto. Qed.
 
-Lemma canon_bool : forall ot ft C L G v,
-  value v -> ht ot ft C L G v TBool -> exists b, v = EBool b.
+Lemma canon_bool : forall ot ft C L G v E,
+  value v -> ht ot ft C L G v TBool E -> exists b, v = EBool b.
 Proof. intros. inversion H; subst; inversion H0; subst; eauto. Qed.
 
-Lemma canon_actor : forall ot ft C L G v c,
-  value v -> ht ot ft C L G v (TActor c) ->
+Lemma canon_actor : forall ot ft C L G v c E,
+  value v -> ht ot ft C L G v (TActor c) E ->
   exists o, v = EORef o /\ nth_error ot o = Some c.
 Proof. intros. inversion H; subst; inversion H0; subst; eauto. Qed.
 
-Lemma canon_fut : forall ot ft C L G v T n,
-  value v -> ht ot ft C L G v (TFut T n) ->
-  exists k, v = EFRef k /\ nth_error ft k = Some (T, n).
+Lemma canon_fut : forall ot ft C L G v T n Ec E,
+  value v -> ht ot ft C L G v (TFut T n Ec) E ->
+  exists k, v = EFRef k /\ nth_error ft k = Some (T, n, Ec).
 Proof. intros. inversion H; subst; inversion H0; subst; eauto. Qed.
 
 (* ================================================================= *)
@@ -431,7 +477,7 @@ Inductive tstep : heap -> nat -> tm -> heap -> list msg -> tm -> Prop :=
     nth_error (hot H) o' = Some cc ->
     mtab cc m = Some (ta, tr) ->
     tstep H o (EFSend (EORef o') m v)
-      (Heap (hot H) (hst H) (hft H ++ [(tr, mlvl cc m)]) (hfv H ++ [None]))
+      (Heap (hot H) (hst H) (hft H ++ [(tr, mlvl cc m, meff cc m)]) (hfv H ++ [None]))
       [(o', m, v, length (hft H))]
       (EFRef (length (hft H)))
 | STAwait : forall H o k v,
@@ -512,36 +558,40 @@ Definition heap_ok (H : heap) : Prop :=
   length (hst H) = length (hot H) /\
   length (hfv H) = length (hft H) /\
   (forall o c v, nth_error (hot H) o = Some c -> nth_error (hst H) o = Some v ->
-     value v /\ forall C L G, ht (hot H) (hft H) C L G v (stype c)) /\
-  (forall k T n v, nth_error (hft H) k = Some (T, n) ->
+     value v /\ forall C L G, ht (hot H) (hft H) C L G v (stype c) e0) /\
+  (forall k T n E v, nth_error (hft H) k = Some (T, n, E) ->
      nth_error (hfv H) k = Some (Some v) ->
-     value v /\ forall C L G, ht (hot H) (hft H) C L G v T).
+     value v /\ forall C L G, ht (hot H) (hft H) C L G v T e0).
 
-(* メッセージが持つ future の型とレベルは、宛先メソッドのものと一致する。
-   「その future を埋めるのは c.m である」という約束がここに入る。 *)
+(* メッセージが持つ future の型・レベル・効果は、宛先メソッドのものと一致する。
+   「その future を埋めるのは c.m であり、その効果は meff c m に収まる」
+   という約束がここに入る。 *)
 Definition msg_ok (H : heap) (M : msg) : Prop :=
   let '(o, m, v, k) := M in
   exists c ta tr,
        nth_error (hot H) o = Some c
     /\ mtab c m = Some (ta, tr)
     /\ value v
-    /\ (forall C L G, ht (hot H) (hft H) C L G v ta)
-    /\ nth_error (hft H) k = Some (tr, mlvl c m).
+    /\ (forall C L G, ht (hot H) (hft H) C L G v ta e0)
+    /\ nth_error (hft H) k = Some (tr, mlvl c m, meff c m).
 
-(* タスクは、自分が埋める future のレベルのもとで型が付く。 *)
+(* タスクは、自分が埋める future のレベルのもとで型が付き、
+   その効果は、その future に記録された効果に収まる。
+   ★ これが効果の健全性の担い手である。 *)
 Definition task_ok (H : heap) (t : task) : Prop :=
   let '(o, k, e) := t in
-  exists c T L,
+  exists c T L EF E,
        nth_error (hot H) o = Some c
-    /\ nth_error (hft H) k = Some (T, L)
-    /\ ht (hot H) (hft H) c L empty e T.
+    /\ nth_error (hft H) k = Some (T, L, EF)
+    /\ ht (hot H) (hft H) c L empty e T E
+    /\ incl E EF.
 
 (* ★ 未解決の future には必ず「埋める者」がいる。
    メールボックスの中のメッセージか、走っているタスクのどちらかである。
    これがデッドロックフリーの証明の骨である。 *)
 Definition prod_ok (H : heap) (ms : list msg) (ts : list task) : Prop :=
-  forall k T n,
-    nth_error (hft H) k = Some (T, n) ->
+  forall k T n E,
+    nth_error (hft H) k = Some (T, n, E) ->
     nth_error (hfv H) k = Some None ->
     (exists o m v, In (o, m, v, k) ms) \/ (exists o e, In (o, k, e) ts).
 
@@ -578,14 +628,14 @@ Lemma nth_error_lt : forall A (l : list A) n (x : A),
   nth_error l n = Some x -> n < length l.
 Proof. intros. apply nth_error_Some. rewrite H. discriminate. Qed.
 
-Lemma local_progress : forall H o c L G e T,
+Lemma local_progress : forall H o c L G e T E,
   heap_ok H ->
   nth_error (hot H) o = Some c ->
-  ht (hot H) (hft H) c L G e T ->
+  ht (hot H) (hft H) c L G e T E ->
   (forall x, G x = None) ->
   value e \/ (exists H' out e', tstep H o e H' out e') \/ awaiting H e.
 Proof.
-  intros H o c L G e T Hh Ho Ht.
+  intros H o c L G e T E Hh Ho Ht.
   destruct Hh as [Hl1 [Hl2 [Hstok Hfvok]]].
   induction Ht; intros Hcl; try (left; constructor; fail).
   - (* HVar *) rewrite Hcl in H0. discriminate.
@@ -595,9 +645,9 @@ Proof.
     destruct (IHHt1 Hcl) as [Hv1 | [[H1 [o1 [a1 Hs1]]] | Ha1]].
     2:{ left. eauto using tstep. }
     2:{ right. constructor. assumption. }
-    destruct (canon_int _ _ _ _ _ _ Hv1 Ht1) as [n ->].
+    destruct (canon_int _ _ _ _ _ _ _ Hv1 Ht1) as [n ->].
     destruct (IHHt2 Hcl) as [Hv2 | [[H2 [o2 [b2 Hs2]]] | Ha2]].
-    + destruct (canon_int _ _ _ _ _ _ Hv2 Ht2) as [k ->].
+    + destruct (canon_int _ _ _ _ _ _ _ Hv2 Ht2) as [k ->].
       left. eauto using tstep.
     + left. eexists; eexists; eexists. apply STAdd2; [ constructor | eassumption ].
     + right. apply AwAdd2; [ constructor | assumption ].
@@ -606,16 +656,16 @@ Proof.
     destruct (IHHt1 Hcl) as [Hv1 | [[H1 [o1 [a1 Hs1]]] | Ha1]].
     2:{ left. eauto using tstep. }
     2:{ right. constructor. assumption. }
-    destruct (canon_int _ _ _ _ _ _ Hv1 Ht1) as [n ->].
+    destruct (canon_int _ _ _ _ _ _ _ Hv1 Ht1) as [n ->].
     destruct (IHHt2 Hcl) as [Hv2 | [[H2 [o2 [b2 Hs2]]] | Ha2]].
-    + destruct (canon_int _ _ _ _ _ _ Hv2 Ht2) as [k ->].
+    + destruct (canon_int _ _ _ _ _ _ _ Hv2 Ht2) as [k ->].
       left. eauto using tstep.
     + left. eexists; eexists; eexists. apply STLt2; [ constructor | eassumption ].
     + right. apply AwLt2; [ constructor | assumption ].
   - (* HIf *)
     right.
     destruct (IHHt1 Hcl) as [Hv1 | [[H1 [o1 [a1 Hs1]]] | Ha1]].
-    + destruct (canon_bool _ _ _ _ _ _ Hv1 Ht1) as [[|] ->].
+    + destruct (canon_bool _ _ _ _ _ _ _ Hv1 Ht1) as [[|] ->].
       * left. eauto using tstep.
       * left. eauto using tstep.
     + left. eauto using tstep.
@@ -644,7 +694,7 @@ Proof.
     destruct (IHHt1 Hcl) as [Hv1 | [[H1 [o1 [a1 Hs1]]] | Ha1]].
     2:{ left. eauto using tstep. }
     2:{ right. constructor. assumption. }
-    destruct (canon_actor _ _ _ _ _ _ _ Hv1 Ht1) as [o' [-> Hoc]].
+    destruct (canon_actor _ _ _ _ _ _ _ _ Hv1 Ht1) as [o' [-> Hoc]].
     destruct (IHHt2 Hcl) as [Hv2 | [[H2 [o2 [b2 Hs2]]] | Ha2]].
     + left. eexists; eexists; eexists. eapply STSend; eassumption.
     + left. eexists; eexists; eexists. apply STSend2; [ constructor | eassumption ].
@@ -653,7 +703,7 @@ Proof.
     destruct (IHHt Hcl) as [Hv | [[H1 [o1 [a1 Hs1]]] | Ha]].
     2:{ right. left. eauto using tstep. }
     2:{ right. right. constructor. assumption. }
-    destruct (canon_fut _ _ _ _ _ _ _ _ Hv Ht) as [k [-> Hk]].
+    destruct (canon_fut _ _ _ _ _ _ _ _ _ _ Hv Ht) as [k [-> Hk]].
     assert (Hlt : k < length (hfv H)).
     { rewrite Hl2. eapply nth_error_lt; eauto. }
     destruct (nth_error_ex _ _ _ Hlt) as [ov Hov].
@@ -695,66 +745,80 @@ Lemma heap_len_fv : forall H, heap_ok H -> length (hfv H) = length (hft H).
 Proof. intros H [_ [A _]]; exact A. Qed.
 Lemma heap_st_ok : forall H o c v, heap_ok H ->
   nth_error (hot H) o = Some c -> nth_error (hst H) o = Some v ->
-  value v /\ forall C L G, ht (hot H) (hft H) C L G v (stype c).
+  value v /\ forall C L G, ht (hot H) (hft H) C L G v (stype c) e0.
 Proof. intros H o c v [_ [_ [A _]]]; apply A. Qed.
-Lemma heap_fv_ok : forall H k T n v, heap_ok H ->
-  nth_error (hft H) k = Some (T, n) -> nth_error (hfv H) k = Some (Some v) ->
-  value v /\ forall C L G, ht (hot H) (hft H) C L G v T.
-Proof. intros H k T n v [_ [_ [_ A]]]; apply A. Qed.
+Lemma heap_fv_ok : forall H k T n E v, heap_ok H ->
+  nth_error (hft H) k = Some (T, n, E) -> nth_error (hfv H) k = Some (Some v) ->
+  value v /\ forall C L G, ht (hot H) (hft H) C L G v T e0.
+Proof. intros H k T n E v [_ [_ [_ A]]]; apply A. Qed.
 
 (* 型付けの反転補題。証明を仮説名に依存させないため *)
-Lemma ht_oref_inv : forall ot ft C L G o T,
-  ht ot ft C L G (EORef o) T -> exists c, T = TActor c /\ nth_error ot o = Some c.
+Lemma ht_oref_inv : forall ot ft C L G o T E,
+  ht ot ft C L G (EORef o) T E ->
+  exists c, T = TActor c /\ E = e0 /\ nth_error ot o = Some c.
 Proof. intros. inversion H; subst; eauto. Qed.
-Lemma ht_fref_inv : forall ot ft C L G k T,
-  ht ot ft C L G (EFRef k) T ->
-  exists T0 n0, T = TFut T0 n0 /\ nth_error ft k = Some (T0, n0).
+Lemma ht_fref_inv : forall ot ft C L G k T E,
+  ht ot ft C L G (EFRef k) T E ->
+  exists T0 n0 E0, T = TFut T0 n0 E0 /\ E = e0
+                /\ nth_error ft k = Some (T0, n0, E0).
+Proof. intros. inversion H; subst; eauto 10. Qed.
+Lemma ht_add_inv : forall ot ft C L G a b T E,
+  ht ot ft C L G (EAdd a b) T E ->
+  exists Ea Eb, T = TInt /\ E = Ea ++ Eb
+             /\ ht ot ft C L G a TInt Ea /\ ht ot ft C L G b TInt Eb.
+Proof. intros. inversion H; subst; eauto 10. Qed.
+Lemma ht_lt_inv : forall ot ft C L G a b T E,
+  ht ot ft C L G (ELt a b) T E ->
+  exists Ea Eb, T = TBool /\ E = Ea ++ Eb
+             /\ ht ot ft C L G a TInt Ea /\ ht ot ft C L G b TInt Eb.
+Proof. intros. inversion H; subst; eauto 10. Qed.
+Lemma ht_if_inv : forall ot ft C L G a b d T E,
+  ht ot ft C L G (EIf a b d) T E ->
+  exists Ea Eb Ed, E = Ea ++ Eb ++ Ed
+                /\ ht ot ft C L G a TBool Ea
+                /\ ht ot ft C L G b T Eb /\ ht ot ft C L G d T Ed.
+Proof. intros. inversion H; subst; eauto 10. Qed.
+Lemma ht_let_inv : forall ot ft C L G x e1 e2 T E,
+  ht ot ft C L G (ELet x e1 e2) T E ->
+  exists T1 E1 E2, E = E1 ++ E2 /\ ht ot ft C L G e1 T1 E1
+                /\ ht ot ft C L (extend G x T1) e2 T E2.
+Proof. intros. inversion H; subst; eauto 10. Qed.
+Lemma ht_self_inv : forall ot ft C L G T E,
+  ht ot ft C L G ESelf T E -> T = TActor C /\ E = e0.
+Proof. intros. inversion H; subst; auto. Qed.
+Lemma ht_get_inv : forall ot ft C L G T E,
+  ht ot ft C L G EGet T E -> T = stype C /\ E = e0.
+Proof. intros. inversion H; subst; auto. Qed.
+Lemma ht_set_inv : forall ot ft C L G e T E,
+  ht ot ft C L G (ESet e) T E ->
+  exists E1, T = TUnit /\ E = emut :: E1 /\ ht ot ft C L G e (stype C) E1.
 Proof. intros. inversion H; subst; eauto. Qed.
-Lemma ht_add_inv : forall ot ft C L G a b T,
-  ht ot ft C L G (EAdd a b) T ->
-  T = TInt /\ ht ot ft C L G a TInt /\ ht ot ft C L G b TInt.
+Lemma ht_new_inv : forall ot ft C L G cn T E,
+  ht ot ft C L G (ENew cn) T E -> T = TActor cn /\ E = e0.
 Proof. intros. inversion H; subst; auto. Qed.
-Lemma ht_lt_inv : forall ot ft C L G a b T,
-  ht ot ft C L G (ELt a b) T ->
-  T = TBool /\ ht ot ft C L G a TInt /\ ht ot ft C L G b TInt.
-Proof. intros. inversion H; subst; auto. Qed.
-Lemma ht_if_inv : forall ot ft C L G a b d T,
-  ht ot ft C L G (EIf a b d) T ->
-  ht ot ft C L G a TBool /\ ht ot ft C L G b T /\ ht ot ft C L G d T.
-Proof. intros. inversion H; subst; auto. Qed.
-Lemma ht_let_inv : forall ot ft C L G x e1 e2 T,
-  ht ot ft C L G (ELet x e1 e2) T ->
-  exists T1, ht ot ft C L G e1 T1 /\ ht ot ft C L (extend G x T1) e2 T.
-Proof. intros. inversion H; subst; eauto. Qed.
-Lemma ht_self_inv : forall ot ft C L G T, ht ot ft C L G ESelf T -> T = TActor C.
-Proof. intros. inversion H; subst; auto. Qed.
-Lemma ht_get_inv : forall ot ft C L G T, ht ot ft C L G EGet T -> T = stype C.
-Proof. intros. inversion H; subst; auto. Qed.
-Lemma ht_set_inv : forall ot ft C L G e T,
-  ht ot ft C L G (ESet e) T -> T = TUnit /\ ht ot ft C L G e (stype C).
-Proof. intros. inversion H; subst; auto. Qed.
-Lemma ht_new_inv : forall ot ft C L G cn T, ht ot ft C L G (ENew cn) T -> T = TActor cn.
-Proof. intros. inversion H; subst; auto. Qed.
-Lemma ht_send_inv : forall ot ft C L G e0 m e1 T,
-  ht ot ft C L G (EFSend e0 m e1) T ->
-  exists c1 ta1 tr1, ht ot ft C L G e0 (TActor c1)
-                  /\ mtab c1 m = Some (ta1, tr1)
-                  /\ ht ot ft C L G e1 ta1
-                  /\ T = TFut tr1 (mlvl c1 m).
-Proof. intros. inversion H; subst. exists c, ta, tr. auto. Qed.
-Lemma ht_await_inv : forall ot ft C L G e T,
-  ht ot ft C L G (EAwait e) T ->
-  exists n, ht ot ft C L G e (TFut T n) /\ L < n.
-Proof. intros. inversion H; subst; eauto. Qed.
-
-Lemma ht_seq_inv : forall ot ft C L G a b T,
-  ht ot ft C L G (ESeq a b) T ->
-  exists T1, ht ot ft C L G a T1 /\ ht ot ft C L G b T.
-Proof. intros. inversion H; subst; eauto. Qed.
-Lemma ht_while_inv : forall ot ft C L G a b T,
-  ht ot ft C L G (EWhile a b) T ->
-  T = TUnit /\ ht ot ft C L G a TBool /\ exists T1, ht ot ft C L G b T1.
-Proof. intros. inversion H; subst; eauto. Qed.
+Lemma ht_send_inv : forall ot ft C L G e0' m e1 T E,
+  ht ot ft C L G (EFSend e0' m e1) T E ->
+  exists c1 ta1 tr1 Ea E1,
+       ht ot ft C L G e0' (TActor c1) Ea
+    /\ mtab c1 m = Some (ta1, tr1)
+    /\ ht ot ft C L G e1 ta1 E1
+    /\ T = TFut tr1 (mlvl c1 m) (meff c1 m)
+    /\ E = Ea ++ E1.
+Proof. intros. inversion H; subst. exists c, ta, tr, Ea, E1. auto. Qed.
+Lemma ht_await_inv : forall ot ft C L G e T E,
+  ht ot ft C L G (EAwait e) T E ->
+  exists n Ee Ec, ht ot ft C L G e (TFut T n Ec) Ee /\ L < n /\ E = Ee ++ Ec.
+Proof. intros. inversion H; subst; eauto 10. Qed.
+Lemma ht_seq_inv : forall ot ft C L G a b T E,
+  ht ot ft C L G (ESeq a b) T E ->
+  exists T1 Ea Eb, E = Ea ++ Eb
+                /\ ht ot ft C L G a T1 Ea /\ ht ot ft C L G b T Eb.
+Proof. intros. inversion H; subst; eauto 10. Qed.
+Lemma ht_while_inv : forall ot ft C L G a b T E,
+  ht ot ft C L G (EWhile a b) T E ->
+  exists T1 Ea Eb, T = TUnit /\ E = Ea ++ Eb
+                /\ ht ot ft C L G a TBool Ea /\ ht ot ft C L G b T1 Eb.
+Proof. intros. inversion H; subst; eauto 10. Qed.
 
 Ltac split5 := split; [ | split; [ | split; [ | split ] ] ].
 Ltac split4 := split; [ | split; [ | split ] ].
@@ -762,48 +826,71 @@ Ltac lift := eapply ht_mono; [ eassumption | try assumption; apply ext_refl
                              | try assumption; apply ext_refl ].
 Ltac nomsg := intros ? [].
 
-Lemma local_preservation : forall H o c L e T H' out e',
+(* 効果の合併に対する単調性 *)
+Lemma incl_app2 : forall (a a' b b' : eff),
+  incl a a' -> incl b b' -> incl (a ++ b) (a' ++ b').
+Proof.
+  intros a a' b b' Ha Hb. apply incl_app;
+    [ apply incl_appl | apply incl_appr ]; assumption.
+Qed.
+
+Lemma incl_e0 : forall (l : eff), incl e0 l.
+Proof. intros l x []. Qed.
+
+(* 一歩進んでも、型は変わらず、効果は増えない。
+   「増えない」が効果の健全性の中身である。 *)
+Lemma local_preservation : forall H o c L e T E H' out e',
   heap_ok H ->
   nth_error (hot H) o = Some c ->
-  ht (hot H) (hft H) c L empty e T ->
+  ht (hot H) (hft H) c L empty e T E ->
   tstep H o e H' out e' ->
   heap_ok H'
   /\ ext (hot H) (hot H')
   /\ ext (hft H) (hft H')
-  /\ ht (hot H') (hft H') c L empty e' T
+  /\ (exists E', ht (hot H') (hft H') c L empty e' T E' /\ incl E' E)
   /\ (forall M, In M out -> msg_ok H' M).
 Proof.
-  intros H o c L e T H' out e' Hh Ho Ht Hs.
-  generalize dependent T. revert Ho. revert Hh.
-  induction Hs; intros Hh Ho T Ht.
+  intros H o c L e T E H' out e' Hh Ho Ht Hs.
+  generalize dependent T. generalize dependent E. revert Ho. revert Hh.
+  induction Hs; intros Hh Ho E T Ht.
   - (* STAdd *)
-    apply ht_add_inv in Ht as [-> _].
-    split5; [ assumption | apply ext_refl | apply ext_refl | constructor | nomsg ].
+    apply ht_add_inv in Ht as [Ea [Eb [-> [-> _]]]].
+    split5; [ assumption | apply ext_refl | apply ext_refl
+            | exists e0; split; [ constructor | apply incl_e0 ] | nomsg ].
   - (* STLt *)
-    apply ht_lt_inv in Ht as [-> _].
-    split5; [ assumption | apply ext_refl | apply ext_refl | constructor | nomsg ].
+    apply ht_lt_inv in Ht as [Ea [Eb [-> [-> _]]]].
+    split5; [ assumption | apply ext_refl | apply ext_refl
+            | exists e0; split; [ constructor | apply incl_e0 ] | nomsg ].
   - (* STIfT *)
-    apply ht_if_inv in Ht as [_ [Hb _]].
-    split5; [ assumption | apply ext_refl | apply ext_refl | assumption | nomsg ].
+    apply ht_if_inv in Ht as [Ea [Eb [Ed [-> [_ [Hb _]]]]]].
+    split5; [ assumption | apply ext_refl | apply ext_refl
+            | exists Eb; split; [ assumption | ] | nomsg ].
+    apply incl_appr. apply incl_appl. apply incl_refl.
   - (* STIfF *)
-    apply ht_if_inv in Ht as [_ [_ Hd]].
-    split5; [ assumption | apply ext_refl | apply ext_refl | assumption | nomsg ].
+    apply ht_if_inv in Ht as [Ea [Eb [Ed [-> [_ [_ Hd]]]]]].
+    split5; [ assumption | apply ext_refl | apply ext_refl
+            | exists Ed; split; [ assumption | ] | nomsg ].
+    apply incl_appr. apply incl_appr. apply incl_refl.
   - (* STLet *)
-    apply ht_let_inv in Ht as [T1 [Hv1 Hb]].
-    split5; [ assumption | apply ext_refl | apply ext_refl | | nomsg ].
+    apply ht_let_inv in Ht as [T1 [E1 [E2 [-> [Hv1 Hb]]]]].
+    assert (E1 = e0) by (eapply value_eff; eassumption). subst E1.
+    split5; [ assumption | apply ext_refl | apply ext_refl
+            | exists E2; split; [ | simpl; apply incl_refl ] | nomsg ].
     eapply substitution; [ eassumption | assumption | ].
     intros C' L' G'. eapply value_ht_indep; eassumption.
   - (* STSelf *)
-    apply ht_self_inv in Ht as ->.
+    apply ht_self_inv in Ht as [-> ->].
     split5; [ assumption | apply ext_refl | apply ext_refl
-            | constructor; assumption | nomsg ].
+            | exists e0; split; [ constructor; assumption | apply incl_refl ]
+            | nomsg ].
   - (* STGet *)
-    apply ht_get_inv in Ht as ->.
+    apply ht_get_inv in Ht as [-> ->].
     destruct (heap_st_ok _ _ _ _ Hh Ho H0) as [Hvv Hvt].
-    split5; [ assumption | apply ext_refl | apply ext_refl | apply Hvt | nomsg ].
+    split5; [ assumption | apply ext_refl | apply ext_refl
+            | exists e0; split; [ apply Hvt | apply incl_refl ] | nomsg ].
   - (* STSet *)
-    apply ht_set_inv in Ht as [-> Hv0].
-    assert (Hvt : forall C' L' G', ht (hot H) (hft H) C' L' G' v (stype c)).
+    apply ht_set_inv in Ht as [E1 [-> [-> Hv0]]].
+    assert (Hvt : forall C' L' G', ht (hot H) (hft H) C' L' G' v (stype c) e0).
     { intros C' L' G'. eapply value_ht_indep; eassumption. }
     assert (Hex : exists w, nth_error (hst H) o = Some w).
     { apply nth_error_ex. rewrite (heap_len_st _ Hh). eapply nth_error_lt; eauto. }
@@ -819,13 +906,13 @@ Proof.
            split; [ assumption | apply Hvt ].
         -- rewrite nth_upd_neq in Hsv by auto.
            apply (heap_st_ok _ _ _ _ Hh Hoc Hsv).
-      * intros k2 T2 n2 w2 Hk Hw2. apply (heap_fv_ok _ _ _ _ _ Hh Hk Hw2).
+      * intros k2 T2 n2 E2 w2 Hk Hw2. apply (heap_fv_ok _ _ _ _ _ _ Hh Hk Hw2).
     + apply ext_refl.
     + apply ext_refl.
-    + constructor.
+    + exists e0. split; [ constructor | apply incl_e0 ].
     + nomsg.
   - (* STNew *)
-    apply ht_new_inv in Ht as ->.
+    apply ht_new_inv in Ht as [-> ->].
     assert (Hext : ext (hot H) (hot H ++ [cn])) by apply ext_app.
     split5.
     + unfold heap_ok; simpl; split4.
@@ -840,22 +927,25 @@ Proof.
         -- subst o2 c2. rewrite <- (heap_len_st _ Hh) in Hsv.
            rewrite nth_app_last in Hsv. inversion Hsv; subst.
            split; [ apply sinit_value | intros C' L' G'; apply sinit_ok ].
-      * intros k2 T2 n2 w2 Hk Hw2.
-        destruct (heap_fv_ok _ _ _ _ _ Hh Hk Hw2) as [Hvv Hvt].
+      * intros k2 T2 n2 E2 w2 Hk Hw2.
+        destruct (heap_fv_ok _ _ _ _ _ _ Hh Hk Hw2) as [Hvv Hvt].
         split; [ assumption | ].
         intros C' L' G'. eapply ht_mono; [ apply Hvt | assumption | apply ext_refl ].
     + assumption.
     + apply ext_refl.
-    + simpl. constructor. rewrite nth_app_last. reflexivity.
+    + exists e0. split; [ | apply incl_refl ].
+      simpl. constructor. rewrite nth_app_last. reflexivity.
     + nomsg.
   - (* STSend *)
-    apply ht_send_inv in Ht as [c1 [ta1 [tr1 [Hto [Hmt [Htv ->]]]]]].
-    apply ht_oref_inv in Hto as [c2 [Heq Hoc2]]. inversion Heq; subst c2.
+    apply ht_send_inv in Ht as [c1 [ta1 [tr1 [Ea [E1 [Hto [Hmt [Htv [-> ->]]]]]]]]].
+    apply ht_oref_inv in Hto as [c2 [Heq [_ Hoc2]]]. inversion Heq; subst c2.
     assert (Hcc : c1 = cc) by congruence. subst c1.
     assert (Hpair : (ta1, tr1) = (ta, tr)) by congruence.
     inversion Hpair; subst ta1 tr1.
-    assert (Hextf : ext (hft H) (hft H ++ [(tr, mlvl cc m)])) by apply ext_app.
-    assert (Hvt : forall C' L' G', ht (hot H) (hft H ++ [(tr, mlvl cc m)]) C' L' G' v ta).
+    assert (Hextf : ext (hft H) (hft H ++ [(tr, mlvl cc m, meff cc m)]))
+      by apply ext_app.
+    assert (Hvt : forall C' L' G',
+              ht (hot H) (hft H ++ [(tr, mlvl cc m, meff cc m)]) C' L' G' v ta e0).
     { intros C' L' G'. eapply ht_mono;
         [ eapply value_ht_indep; eassumption | apply ext_refl | assumption ]. }
     split5.
@@ -866,77 +956,114 @@ Proof.
         destruct (heap_st_ok _ _ _ _ Hh Hoc Hsv) as [Hvv Hv2].
         split; [ assumption | ].
         intros C' L' G'. eapply ht_mono; [ apply Hv2 | apply ext_refl | assumption ].
-      * intros k2 T2 n2 w2 Hk Hw2.
+      * intros k2 T2 n2 E2 w2 Hk Hw2.
         destruct (nth_app1_inv _ _ _ _ _ Hw2) as [[Hlt Hw0] | [Heq2 Hbad]];
           [ | discriminate ].
         rewrite nth_error_app1 in Hk by (rewrite <- (heap_len_fv _ Hh); lia).
-        destruct (heap_fv_ok _ _ _ _ _ Hh Hk Hw0) as [Hvv Hv2].
+        destruct (heap_fv_ok _ _ _ _ _ _ Hh Hk Hw0) as [Hvv Hv2].
         split; [ assumption | ].
         intros C' L' G'. eapply ht_mono; [ apply Hv2 | apply ext_refl | assumption ].
     + apply ext_refl.
     + assumption.
-    + simpl. constructor. rewrite nth_app_last. reflexivity.
+    + exists e0. split; [ | apply incl_e0 ].
+      simpl. constructor. rewrite nth_app_last. reflexivity.
     + intros M HM. simpl in HM. destruct HM as [<- | []].
       exists cc, ta, tr. simpl.
       split; [ assumption | ]. split; [ assumption | ]. split; [ assumption | ].
       split; [ apply Hvt | ]. rewrite nth_app_last. reflexivity.
   - (* STAwait *)
-    apply ht_await_inv in Ht as [nn [Ht _]].
-    apply ht_fref_inv in Ht as [T0 [n0 [Heq Hk]]]. inversion Heq; subst T0 n0.
-    destruct (heap_fv_ok _ _ _ _ _ Hh Hk H0) as [Hvv Hvt].
-    split5; [ assumption | apply ext_refl | apply ext_refl | apply Hvt | nomsg ].
+    apply ht_await_inv in Ht as [nn [Ee [Ec [Ht [_ ->]]]]].
+    apply ht_fref_inv in Ht as [T0 [n0 [E0 [Heq [-> Hk]]]]].
+    inversion Heq; subst T0 n0 E0.
+    destruct (heap_fv_ok _ _ _ _ _ _ Hh Hk H0) as [Hvv Hvt].
+    split5; [ assumption | apply ext_refl | apply ext_refl
+            | exists e0; split; [ apply Hvt | apply incl_e0 ] | nomsg ].
+  (* --- 合同規則 --- *)
   - (* STAdd1 *)
-    apply ht_add_inv in Ht as [-> [Ha Hb]].
-    destruct (IHHs Hh Ho TInt Ha) as [Hh' [Ho1 [Hf1 [Ha1 Hm1]]]].
-    split5; try assumption. constructor; [ assumption | lift ].
+    apply ht_add_inv in Ht as [Ea [Eb [-> [-> [Ha Hb]]]]].
+    destruct (IHHs Hh Ho Ea TInt Ha) as [Hh' [Ho1 [Hf1 [[Ea' [Ha1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (Ea' ++ Eb). split; [ econstructor; [ eassumption | lift ] | ].
+    apply incl_app2; [ assumption | apply incl_refl ].
   - (* STAdd2 *)
-    apply ht_add_inv in Ht as [-> [Ha Hb]].
-    destruct (IHHs Hh Ho TInt Hb) as [Hh' [Ho1 [Hf1 [Hb1 Hm1]]]].
-    split5; try assumption. constructor; [ lift | assumption ].
+    apply ht_add_inv in Ht as [Ea [Eb [-> [-> [Ha Hb]]]]].
+    destruct (IHHs Hh Ho Eb TInt Hb) as [Hh' [Ho1 [Hf1 [[Eb' [Hb1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (Ea ++ Eb'). split; [ econstructor; [ lift | eassumption ] | ].
+    apply incl_app2; [ apply incl_refl | assumption ].
   - (* STLt1 *)
-    apply ht_lt_inv in Ht as [-> [Ha Hb]].
-    destruct (IHHs Hh Ho TInt Ha) as [Hh' [Ho1 [Hf1 [Ha1 Hm1]]]].
-    split5; try assumption. constructor; [ assumption | lift ].
+    apply ht_lt_inv in Ht as [Ea [Eb [-> [-> [Ha Hb]]]]].
+    destruct (IHHs Hh Ho Ea TInt Ha) as [Hh' [Ho1 [Hf1 [[Ea' [Ha1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (Ea' ++ Eb). split; [ econstructor; [ eassumption | lift ] | ].
+    apply incl_app2; [ assumption | apply incl_refl ].
   - (* STLt2 *)
-    apply ht_lt_inv in Ht as [-> [Ha Hb]].
-    destruct (IHHs Hh Ho TInt Hb) as [Hh' [Ho1 [Hf1 [Hb1 Hm1]]]].
-    split5; try assumption. constructor; [ lift | assumption ].
+    apply ht_lt_inv in Ht as [Ea [Eb [-> [-> [Ha Hb]]]]].
+    destruct (IHHs Hh Ho Eb TInt Hb) as [Hh' [Ho1 [Hf1 [[Eb' [Hb1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (Ea ++ Eb'). split; [ econstructor; [ lift | eassumption ] | ].
+    apply incl_app2; [ apply incl_refl | assumption ].
   - (* STIf1 *)
-    apply ht_if_inv in Ht as [Ha [Hb Hd]].
-    destruct (IHHs Hh Ho TBool Ha) as [Hh' [Ho1 [Hf1 [Ha1 Hm1]]]].
-    split5; try assumption. constructor; [ assumption | lift | lift ].
+    apply ht_if_inv in Ht as [Ea [Eb [Ed [-> [Ha [Hb Hd]]]]]].
+    destruct (IHHs Hh Ho Ea TBool Ha) as [Hh' [Ho1 [Hf1 [[Ea' [Ha1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (Ea' ++ Eb ++ Ed).
+    split; [ econstructor; [ eassumption | lift | lift ] | ].
+    apply incl_app2; [ assumption | apply incl_refl ].
   - (* STLet1 *)
-    apply ht_let_inv in Ht as [T1 [Ha Hb]].
-    destruct (IHHs Hh Ho T1 Ha) as [Hh' [Ho1 [Hf1 [Ha1 Hm1]]]].
-    split5; try assumption. econstructor; [ eassumption | lift ].
+    apply ht_let_inv in Ht as [T1 [E1 [E2 [-> [Ha Hb]]]]].
+    destruct (IHHs Hh Ho E1 T1 Ha) as [Hh' [Ho1 [Hf1 [[E1' [Ha1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (E1' ++ E2). split; [ econstructor; [ eassumption | lift ] | ].
+    apply incl_app2; [ assumption | apply incl_refl ].
   - (* STSet1 *)
-    apply ht_set_inv in Ht as [-> Ha].
-    destruct (IHHs Hh Ho (stype c) Ha) as [Hh' [Ho1 [Hf1 [Ha1 Hm1]]]].
-    split5; try assumption. constructor. assumption.
+    apply ht_set_inv in Ht as [E1 [-> [-> Ha]]].
+    destruct (IHHs Hh Ho E1 (stype c) Ha) as [Hh' [Ho1 [Hf1 [[E1' [Ha1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (emut :: E1'). split; [ constructor; assumption | ].
+    intros z Hz. destruct Hz as [<- | Hz]; [ left; reflexivity | right; auto ].
   - (* STSend1 *)
-    apply ht_send_inv in Ht as [c1 [ta1 [tr1 [Hto [Hmt [Htv ->]]]]]].
-    destruct (IHHs Hh Ho (TActor c1) Hto) as [Hh' [Ho1 [Hf1 [Ha1 Hm1]]]].
-    split5; try assumption. econstructor; [ eassumption | eassumption | lift ].
+    apply ht_send_inv in Ht as [c1 [ta1 [tr1 [Ea [E1 [Hto [Hmt [Htv [-> ->]]]]]]]]].
+    destruct (IHHs Hh Ho Ea (TActor c1) Hto)
+      as [Hh' [Ho1 [Hf1 [[Ea' [Ha1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (Ea' ++ E1).
+    split; [ econstructor; [ eassumption | eassumption | lift ] | ].
+    apply incl_app2; [ assumption | apply incl_refl ].
   - (* STSend2 *)
-    apply ht_send_inv in Ht as [c1 [ta1 [tr1 [Hto [Hmt [Htv ->]]]]]].
-    destruct (IHHs Hh Ho ta1 Htv) as [Hh' [Ho1 [Hf1 [Hb1 Hm1]]]].
-    split5; try assumption. econstructor; [ lift | eassumption | eassumption ].
+    apply ht_send_inv in Ht as [c1 [ta1 [tr1 [Ea [E1 [Hto [Hmt [Htv [-> ->]]]]]]]]].
+    destruct (IHHs Hh Ho E1 ta1 Htv) as [Hh' [Ho1 [Hf1 [[E1' [Hb1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (Ea ++ E1').
+    split; [ econstructor; [ lift | eassumption | eassumption ] | ].
+    apply incl_app2; [ apply incl_refl | assumption ].
   - (* STAwait1 *)
-    apply ht_await_inv in Ht as [nn [Ht Hlt]].
-    destruct (IHHs Hh Ho (TFut T nn) Ht) as [Hh' [Ho1 [Hf1 [Ha1 Hm1]]]].
-    split5; try assumption. econstructor; eassumption.
+    apply ht_await_inv in Ht as [nn [Ee [Ec [Ha [Hlt ->]]]]].
+    destruct (IHHs Hh Ho Ee (TFut T nn Ec) Ha)
+      as [Hh' [Ho1 [Hf1 [[Ee' [Ha1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (Ee' ++ Ec). split; [ econstructor; eassumption | ].
+    apply incl_app2; [ assumption | apply incl_refl ].
   - (* STSeq *)
-    apply ht_seq_inv in Ht as [T1 [Ha Hb]].
-    split5; [ assumption | apply ext_refl | apply ext_refl | assumption | nomsg ].
+    apply ht_seq_inv in Ht as [T1 [Ea [Eb [-> [Ha Hb]]]]].
+    assert (Ea = e0) by (eapply value_eff; eassumption). subst Ea.
+    split5; [ assumption | apply ext_refl | apply ext_refl
+            | exists Eb; split; [ assumption | simpl; apply incl_refl ] | nomsg ].
   - (* STSeq1 *)
-    apply ht_seq_inv in Ht as [T1 [Ha Hb]].
-    destruct (IHHs Hh Ho T1 Ha) as [Hh' [Ho1 [Hf1 [Ha1 Hm1]]]].
-    split5; try assumption. econstructor; [ eassumption | lift ].
+    apply ht_seq_inv in Ht as [T1 [Ea [Eb [-> [Ha Hb]]]]].
+    destruct (IHHs Hh Ho Ea T1 Ha) as [Hh' [Ho1 [Hf1 [[Ea' [Ha1 Hi]] Hm1]]]].
+    split5; try assumption.
+    exists (Ea' ++ Eb). split; [ econstructor; [ eassumption | lift ] | ].
+    apply incl_app2; [ assumption | apply incl_refl ].
   - (* STWhile *)
-    apply ht_while_inv in Ht as [-> [Hc [T1 Hb]]].
+    apply ht_while_inv in Ht as [T1 [Ea [Eb [-> [-> [Hc Hb]]]]]].
     split5; [ assumption | apply ext_refl | apply ext_refl | | nomsg ].
-    econstructor; [ assumption | | constructor ].
-    econstructor; [ eassumption | ]. econstructor; eassumption.
+    exists (Ea ++ (Eb ++ (Ea ++ Eb)) ++ e0). split.
+    + econstructor; [ eassumption | | constructor ].
+      econstructor; [ eassumption | ]. econstructor; eassumption.
+    + apply incl_app; [ apply incl_appl; apply incl_refl | ].
+      apply incl_app; [ | apply incl_e0 ].
+      apply incl_app; [ apply incl_appr; apply incl_refl | apply incl_refl ].
 Qed.
 
 (* ================================================================= *)
@@ -958,8 +1085,9 @@ Lemma task_ok_mono : forall H H' t,
   task_ok H t -> ext (hot H) (hot H') -> ext (hft H) (hft H') -> task_ok H' t.
 Proof.
   intros H H' [[o k] e] Ht Ho Hf. simpl in *.
-  destruct Ht as [c [T [L [A [B Cc]]]]].
-  exists c, T, L. split; [ auto | ]. split; [ auto | ].
+  destruct Ht as [c [T [L [EF [E [A [B [Cc Hi]]]]]]]].
+  exists c, T, L, EF, E. split; [ auto | ]. split; [ auto | ].
+  split; [ | auto ].
   eapply ht_mono; [ apply Cc | auto | auto ].
 Qed.
 
@@ -969,13 +1097,13 @@ Qed.
 Lemma tstep_fut : forall H o e H' out e',
   heap_ok H ->
   tstep H o e H' out e' ->
-  forall k T n,
-    nth_error (hft H') k = Some (T, n) ->
+  forall k T n E,
+    nth_error (hft H') k = Some (T, n, E) ->
     nth_error (hfv H') k = Some None ->
     nth_error (hfv H) k = Some None \/ (exists o' m' v', In (o', m', v', k) out).
 Proof.
   intros H o e H' out e' Hh Hs.
-  induction Hs; intros k0 T0 n0 Hk Hu; simpl in *;
+  induction Hs; intros k0 T0 n0 E0 Hk Hu; simpl in *;
     try (left; exact Hu); try (eapply IHHs; eassumption).
   - (* STSend: future を一つ増やし、同時にメッセージを出す *)
     destruct (nth_app1_inv _ _ _ _ _ Hu) as [[Hlt Hu0] | [Heq Hbad]].
@@ -991,8 +1119,8 @@ Theorem no_method_not_understood : forall H ms ts o m v k,
   exists c ta tr,
        nth_error (hot H) o = Some c
     /\ mtab c m = Some (ta, tr)
-    /\ (forall C L G, ht (hot H) (hft H) C L G v ta)
-    /\ nth_error (hft H) k = Some (tr, mlvl c m).
+    /\ (forall C L G, ht (hot H) (hft H) C L G v ta e0)
+    /\ nth_error (hft H) k = Some (tr, mlvl c m, meff c m).
 Proof.
   intros H ms ts o m v k [_ [_ [Hms _]]] Hin.
   destruct (Hms _ Hin) as [c [ta [tr [A [B [Cv [D E]]]]]]].
@@ -1009,9 +1137,10 @@ Proof.
     destruct Hok as [Hh [Hb [Hms [Hts Hpr]]]].
   - (* CTask *)
     assert (Hte : task_ok H (o, k, e)) by (apply Hts; apply in_app_middle).
-    simpl in Hte. destruct Hte as [cc [T [LL [Hoc [Hk Hte]]]]].
-    destruct (local_preservation _ _ _ _ _ _ _ _ _ Hh Hoc Hte H0)
-      as [Hh' [Hxo [Hxf [Hte' Hout]]]].
+    simpl in Hte.
+    destruct Hte as [cc [T [LL [EF [E [Hoc [Hk [Hte Hi]]]]]]]].
+    destruct (local_preservation _ _ _ _ _ _ _ _ _ _ Hh Hoc Hte H0)
+      as [Hh' [Hxo [Hxf [[E' [Hte' Hi']] Hout]]]].
     split; [ assumption | ]. split; [ eapply ext_trans; eassumption | ].
     split; [ | split ].
     + intros M HM. apply in_app_or in HM. destruct HM as [HM | HM].
@@ -1020,19 +1149,22 @@ Proof.
     + intros t HT. apply in_app_or in HT. destruct HT as [HT | [Heq | HT]].
       * eapply task_ok_mono; [ apply Hts; apply in_or_app; left; eassumption
                             | assumption | assumption ].
-      * subst t. simpl. exists cc, T, LL. auto.
+      * subst t. simpl. exists cc, T, LL, EF, E'.
+        split; [ apply Hxo; assumption | ]. split; [ apply Hxf; assumption | ].
+        split; [ assumption | ].
+        (* ★ 効果は増えない。E' ⊆ E ⊆ EF *)
+        eapply incl_tran; eassumption.
       * eapply task_ok_mono; [ apply Hts; apply in_or_app; right; right; eassumption
                             | assumption | assumption ].
-    + (* prod_ok: 新しい future は出したメッセージが埋め、
-         古い future の埋め手はそのまま残っている *)
-      intros k2 T2 n2 Hk2 Hu2.
-      destruct (tstep_fut _ _ _ _ _ _ Hh H0 _ _ _ Hk2 Hu2) as [Hold | Hnew].
-      * assert (Hk2' : exists T3 n3, nth_error (hft H) k2 = Some (T3, n3)).
+    + (* prod_ok *)
+      intros k2 T2 n2 E2 Hk2 Hu2.
+      destruct (tstep_fut _ _ _ _ _ _ Hh H0 _ _ _ _ Hk2 Hu2) as [Hold | Hnew].
+      * assert (Hk2' : exists T3 n3 E3, nth_error (hft H) k2 = Some (T3, n3, E3)).
         { assert (Hlt : k2 < length (hft H)).
           { rewrite <- (heap_len_fv _ Hh). eapply nth_error_lt; eauto. }
-          destruct (nth_error_ex _ _ _ Hlt) as [[T3 n3] E]. eauto. }
-        destruct Hk2' as [T3 [n3 E3]].
-        destruct (Hpr _ _ _ E3 Hold) as [[o3 [m3 [v3 Hin]]] | [o3 [e3 Hin]]].
+          destruct (nth_error_ex _ _ _ Hlt) as [[[T3 n3] E3] Eq]. eauto. }
+        destruct Hk2' as [T3 [n3 [E3 E3q]]].
+        destruct (Hpr _ _ _ _ E3q Hold) as [[o3 [m3 [v3 Hin]]] | [o3 [e3 Hin]]].
         -- left. exists o3, m3, v3. apply in_or_app. left. assumption.
         -- right. apply in_app_or in Hin. destruct Hin as [Hin | [Heq | Hin]].
            ++ exists o3, e3. apply in_or_app. left. assumption.
@@ -1043,8 +1175,9 @@ Proof.
         left. exists o3, m3, v3. apply in_or_app. right. assumption.
   - (* CFinish *)
     assert (Hte : task_ok H (o, k, v)) by (apply Hts; apply in_app_middle).
-    simpl in Hte. destruct Hte as [cc [T [LL [Hoc [Hk Hte]]]]].
-    assert (Hvt : forall C' L' G', ht (hot H) (hft H) C' L' G' v T).
+    simpl in Hte.
+    destruct Hte as [cc [T [LL [EF [E [Hoc [Hk [Hte Hi]]]]]]]].
+    assert (Hvt : forall C' L' G', ht (hot H) (hft H) C' L' G' v T e0).
     { intros C' L' G'. eapply value_ht_indep; eassumption. }
     assert (Hkl : k < length (hfv H)).
     { rewrite (heap_len_fv _ Hh). eapply nth_error_lt; eauto. }
@@ -1054,23 +1187,22 @@ Proof.
       * apply (heap_len_st _ Hh).
       * rewrite upd_length. apply (heap_len_fv _ Hh).
       * intros o2 c2 v2 A B. apply (heap_st_ok _ _ _ _ Hh A B).
-      * intros k2 T2 n2 w2 A B.
-        destruct (Nat.eq_dec k2 k) as [-> | Hne].
-        -- rewrite (nth_upd_eq _ _ _ _ _ Hov) in B. inversion B; subst.
+      * intros k2 T2 n2 E2 w2 A B.
+        destruct (Nat.eq_dec k2 k) as [Heqk | Hne].
+        -- subst k2. rewrite (nth_upd_eq _ _ _ _ _ Hov) in B. inversion B; subst.
            rewrite Hk in A. inversion A; subst.
            split; [ assumption | apply Hvt ].
         -- rewrite nth_upd_neq in B by auto.
-           apply (heap_fv_ok _ _ _ _ _ Hh A B).
+           apply (heap_fv_ok _ _ _ _ _ _ Hh A B).
     + intros M HM. simpl. apply Hms. assumption.
     + intros t HT. simpl. apply Hts. apply in_app_or in HT.
       apply in_or_app. destruct HT as [HT | HT]; [ left; auto | right; right; auto ].
-    + (* prod_ok: 解決した k はもう義務が無い。他は埋め手が残る *)
-      simpl. intros k2 T2 n2 Hk2 Hu2. simpl in Hk2, Hu2.
+    + simpl. intros k2 T2 n2 E2 Hk2 Hu2. simpl in Hk2, Hu2.
       destruct (Nat.eq_dec k2 k) as [Heqk | Hne].
       * subst k2.
         rewrite (nth_upd_eq _ _ _ _ _ Hov) in Hu2. discriminate.
       * rewrite nth_upd_neq in Hu2 by auto.
-        destruct (Hpr _ _ _ Hk2 Hu2) as [Hmsg | [o3 [e3 Hin]]].
+        destruct (Hpr _ _ _ _ Hk2 Hu2) as [Hmsg | [o3 [e3 Hin]]].
         -- left. assumption.
         -- right. apply in_app_or in Hin. destruct Hin as [Hin | [Heq | Hin]].
            ++ exists o3, e3. apply in_or_app. left. assumption.
@@ -1087,14 +1219,16 @@ Proof.
       apply in_or_app. destruct HM as [HM | HM]; [ left; auto | right; right; auto ].
     + intros t HT. apply in_app_or in HT. destruct HT as [HT | [Heq | []]].
       * apply Hts. assumption.
-      * subst t. simpl. exists c, tr, (mlvl c m).
+      * subst t. simpl.
+        destruct (bodies_ok _ _ _ _ B (hot H) (hft H) Hb) as [Ebody [Hbody Hbi]].
+        exists c, tr, (mlvl c m), (meff c m), Ebody.
         split; [ assumption | ]. split; [ assumption | ].
-        eapply substitution;
-          [ eapply bodies_ok; eassumption | assumption | ].
+        split; [ | assumption ].
+        eapply substitution; [ eassumption | assumption | ].
         intros C' L' G'. apply D.
     + (* prod_ok: 配送されたメッセージの役目は、起きたタスクが引き継ぐ *)
-      intros k2 T2 n2 Hk2 Hu2.
-      destruct (Hpr _ _ _ Hk2 Hu2) as [[o3 [m3 [v3 Hin]]] | [o3 [e3 Hin]]].
+      intros k2 T2 n2 E2 Hk2 Hu2.
+      destruct (Hpr _ _ _ _ Hk2 Hu2) as [[o3 [m3 [v3 Hin]]] | [o3 [e3 Hin]]].
       * apply in_app_or in Hin. destruct Hin as [Hin | [Heq | Hin]].
         -- left. exists o3, m3, v3. apply in_or_app. left. assumption.
         -- inversion Heq; subst o3 m3 v3 k2.
@@ -1122,8 +1256,8 @@ Proof.
   - right. intros o k e [].
   - destruct t as [[o k] e].
     assert (Hte : task_ok H (o, k, e)) by (apply Hts; left; reflexivity).
-    simpl in Hte. destruct Hte as [c [T [LL [Hoc [Hk Hte]]]]].
-    destruct (local_progress _ _ _ _ _ _ _ Hh Hoc Hte (fun _ => eq_refl))
+    simpl in Hte. destruct Hte as [c [T [LL [EF [E [Hoc [Hk [Hte Hi]]]]]]]].
+    destruct (local_progress _ _ _ _ _ _ _ _ Hh Hoc Hte (fun _ => eq_refl))
       as [Hv | [Hst | Haw]].
     + left. exists (@nil task), o, k, e, ts. split; [ reflexivity | left; assumption ].
     + left. exists (@nil task), o, k, e, ts. split; [ reflexivity | right; assumption ].
@@ -1171,7 +1305,7 @@ Qed.
 Theorem state_type_invariant : forall C H' ms' ts',
   conf_ok C -> csteps C (H', ms', ts') ->
   forall o c v, nth_error (hot H') o = Some c -> nth_error (hst H') o = Some v ->
-    value v /\ forall C0 L0 G, ht (hot H') (hft H') C0 L0 G v (stype c).
+    value v /\ forall C0 L0 G, ht (hot H') (hft H') C0 L0 G v (stype c) e0.
 Proof.
   intros C H' ms' ts' Hok Hs o c v Hoc Hsv.
   assert (Hok' : conf_ok (H', ms', ts')) by (eapply preservation_star; eassumption).
@@ -1182,13 +1316,13 @@ Qed.
    これが reply と now/future の戻り値型の一致である。 *)
 Theorem future_type_invariant : forall C H' ms' ts',
   conf_ok C -> csteps C (H', ms', ts') ->
-  forall k T n v, nth_error (hft H') k = Some (T, n) ->
-                  nth_error (hfv H') k = Some (Some v) ->
-    value v /\ forall C0 L0 G, ht (hot H') (hft H') C0 L0 G v T.
+  forall k T n E v, nth_error (hft H') k = Some (T, n, E) ->
+                    nth_error (hfv H') k = Some (Some v) ->
+    value v /\ forall C0 L0 G, ht (hot H') (hft H') C0 L0 G v T e0.
 Proof.
-  intros C H' ms' ts' Hok Hs k T n v Hk Hv.
+  intros C H' ms' ts' Hok Hs k T n E v Hk Hv.
   assert (Hok' : conf_ok (H', ms', ts')) by (eapply preservation_star; eassumption).
-  destruct Hok' as [Hh _]. apply (heap_fv_ok _ _ _ _ _ Hh Hk Hv).
+  destruct Hok' as [Hh _]. apply (heap_fv_ok _ _ _ _ _ _ Hh Hk Hv).
 Qed.
 
 (* ================================================================= *)
@@ -1213,7 +1347,7 @@ Qed.
 (* タスクのレベル: 自分が埋める future に記録されているもの *)
 Definition tlvl (H : heap) (t : task) : nat :=
   let '(_, k, _) := t in
-  match nth_error (hft H) k with Some (_, n) => n | None => 0 end.
+  match nth_error (hft H) k with Some (_, n, _) => n | None => 0 end.
 
 (* 有限のリストにはレベル最大の要素がある *)
 Lemma exists_max_task : forall H ts,
@@ -1236,33 +1370,36 @@ Qed.
 
 (* 待っている式は、必ず「未解決の future をひとつ」名指ししている。
    その future のレベルは、いま型が付いているレベルより真に大きい。 *)
-Lemma awaiting_fut : forall H c L e T,
+Lemma awaiting_fut : forall H c L e T E,
   heap_ok H ->
-  ht (hot H) (hft H) c L empty e T ->
+  ht (hot H) (hft H) c L empty e T E ->
   awaiting H e ->
-  exists k Tk nk,
-       nth_error (hft H) k = Some (Tk, nk)
+  exists k Tk nk Ek,
+       nth_error (hft H) k = Some (Tk, nk, Ek)
     /\ nth_error (hfv H) k = Some None
     /\ L < nk.
 Proof.
-  intros H c L e T Hh Ht Haw. revert T Ht.
-  induction Haw; intros T Ht.
+  intros H c L e T E Hh Ht Haw. revert T E Ht.
+  induction Haw; intros T E Ht.
   - (* AwHere: await (EFRef k) を、まさにここで待っている *)
-    apply ht_await_inv in Ht as [n0 [Ht0 Hlt]].
-    apply ht_fref_inv in Ht0 as [T0 [n1 [Heq Hk]]]. inversion Heq; subst T0 n1.
-    exists k, T, n0. split; [ exact Hk | ]. split; [ assumption | exact Hlt ].
-  - apply ht_add_inv in Ht as [_ [Ha _]]. eapply IHHaw; eassumption.
-  - apply ht_add_inv in Ht as [_ [_ Hb]]. eapply IHHaw; eassumption.
-  - apply ht_lt_inv in Ht as [_ [Ha _]]. eapply IHHaw; eassumption.
-  - apply ht_lt_inv in Ht as [_ [_ Hb]]. eapply IHHaw; eassumption.
-  - apply ht_if_inv in Ht as [Ha _]. eapply IHHaw; eassumption.
-  - apply ht_let_inv in Ht as [T1 [Ha _]]. eapply IHHaw; eassumption.
-  - apply ht_set_inv in Ht as [_ Ha]. eapply IHHaw; eassumption.
-  - apply ht_send_inv in Ht as [c1 [ta1 [tr1 [Ha _]]]]. eapply IHHaw; eassumption.
-  - apply ht_send_inv in Ht as [c1 [ta1 [tr1 [_ [_ [Hb _]]]]]].
+    apply ht_await_inv in Ht as [n0 [Ee [Ec [Ht0 [Hlt _]]]]].
+    apply ht_fref_inv in Ht0 as [T0 [n1 [E1 [Heq [_ Hk]]]]].
+    inversion Heq; subst T0 n1 E1.
+    exists k, T, n0, Ec.
+    split; [ exact Hk | ]. split; [ assumption | exact Hlt ].
+  - apply ht_add_inv in Ht as [Ea [Eb [_ [_ [Ha _]]]]]. eapply IHHaw; eassumption.
+  - apply ht_add_inv in Ht as [Ea [Eb [_ [_ [_ Hb]]]]]. eapply IHHaw; eassumption.
+  - apply ht_lt_inv in Ht as [Ea [Eb [_ [_ [Ha _]]]]]. eapply IHHaw; eassumption.
+  - apply ht_lt_inv in Ht as [Ea [Eb [_ [_ [_ Hb]]]]]. eapply IHHaw; eassumption.
+  - apply ht_if_inv in Ht as [Ea [Eb [Ed [_ [Ha _]]]]]. eapply IHHaw; eassumption.
+  - apply ht_let_inv in Ht as [T1 [E1 [E2 [_ [Ha _]]]]]. eapply IHHaw; eassumption.
+  - apply ht_set_inv in Ht as [E1 [_ [_ Ha]]]. eapply IHHaw; eassumption.
+  - apply ht_send_inv in Ht as [c1 [ta1 [tr1 [Ea [E1 [Ha _]]]]]].
     eapply IHHaw; eassumption.
-  - apply ht_await_inv in Ht as [n0 [Ha _]]. eapply IHHaw; eassumption.
-  - apply ht_seq_inv in Ht as [T1 [Ha _]]. eapply IHHaw; eassumption.
+  - apply ht_send_inv in Ht as [c1 [ta1 [tr1 [Ea [E1 [_ [_ [Hb _]]]]]]]].
+    eapply IHHaw; eassumption.
+  - apply ht_await_inv in Ht as [n0 [Ee [Ec [Ha _]]]]. eapply IHHaw; eassumption.
+  - apply ht_seq_inv in Ht as [T1 [Ea [Eb [_ [Ha _]]]]]. eapply IHHaw; eassumption.
 Qed.
 
 (* --- 定理 7: デッドロック自由 ------------------------------------
@@ -1275,12 +1412,12 @@ Proof.
   destruct (exists_max_task H ts Hne) as [[[o k] e] [Hin Hmax]].
   assert (Haw : awaiting H e) by (apply (Hall o k e); assumption).
   assert (Hte : task_ok H (o, k, e)) by (apply Hts; assumption).
-  simpl in Hte. destruct Hte as [c [T [L [Hoc [Hk Ht]]]]].
+  simpl in Hte. destruct Hte as [c [T [L [EF [E [Hoc [Hk [Ht Hi]]]]]]]].
   (* そのタスクが待っている future は、自分より上のレベルである *)
-  destruct (awaiting_fut _ _ _ _ _ Hh Ht Haw)
-    as [k2 [T2 [n2 [Hk2 [Hu2 Hlt]]]]].
+  destruct (awaiting_fut _ _ _ _ _ _ Hh Ht Haw)
+    as [k2 [T2 [n2 [E2 [Hk2 [Hu2 Hlt]]]]]].
   (* その future には埋める者がいる *)
-  destruct (Hpr _ _ _ Hk2 Hu2) as [[o3 [m3 [v3 Hin3]]] | [o3 [e3 Hin3]]].
+  destruct (Hpr _ _ _ _ Hk2 Hu2) as [[o3 [m3 [v3 Hin3]]] | [o3 [e3 Hin3]]].
   - (* メッセージだとすると、メールボックスは空ではない ---- 矛盾 *)
     subst ms. destruct Hin3.
   - (* タスクだとすると、そのレベルは n2。L < n2 なのに最大性から n2 <= L *)
@@ -1309,6 +1446,79 @@ Proof.
   intros C C' Hok Hs.
   assert (Hok' : conf_ok C') by (eapply preservation_star; eassumption).
   split; [ eapply deadlock_free; eassumption | apply progress_total; assumption ].
+Qed.
+
+(* ================================================================= *)
+(* 12. 効果の健全性                                                  *)
+(* ================================================================= *)
+
+(* --- 定理 10: 一歩進んでも効果は増えない ------------------------- *)
+Theorem effect_no_increase : forall H o c L e T E H' out e',
+  heap_ok H ->
+  nth_error (hot H) o = Some c ->
+  ht (hot H) (hft H) c L empty e T E ->
+  tstep H o e H' out e' ->
+  exists E', ht (hot H') (hft H') c L empty e' T E' /\ incl E' E.
+Proof.
+  intros H o c L e T E H' out e' Hh Ho Ht Hs.
+  destruct (local_preservation _ _ _ _ _ _ _ _ _ _ Hh Ho Ht Hs)
+    as [_ [_ [_ [Hex _]]]]. exact Hex.
+Qed.
+
+(* --- 定理 11: 待つと呼び先の効果を必ず引き継ぐ -------------------
+   これが「効果は一段隔てても隠せない」の中身である。
+   send は待たないので引き継がないが、await は引き継ぐ。 *)
+Theorem await_charges_callee : forall ot ft C L G e T E,
+  ht ot ft C L G (EAwait e) T E ->
+  exists n Ee Ec,
+       ht ot ft C L G e (TFut T n Ec) Ee
+    /\ L < n
+    /\ incl Ec E /\ incl Ee E.
+Proof.
+  intros ot ft C L G e T E Ht.
+  apply ht_await_inv in Ht as [n [Ee [Ec [Ht [Hlt ->]]]]].
+  exists n, Ee, Ec.
+  split; [ assumption | ]. split; [ assumption | ].
+  split; [ apply incl_appr; apply incl_refl
+         | apply incl_appl; apply incl_refl ].
+Qed.
+
+(* --- 定理 12: 走っているタスクの効果は、担当する future に
+       記録された効果に収まり続ける ---------------------------------
+   配送のときに bodies_ok（本体の効果は宣言した効果に収まる）が入り、
+   以後は effect_no_increase で保たれる。
+   したがって「メソッドが宣言した効果は、そのメソッドが実際に行うことを
+   ---- now で呼んだ先も含めて ---- 覆っている」。 *)
+Theorem effect_soundness : forall C H' ms' ts',
+  conf_ok C -> csteps C (H', ms', ts') ->
+  forall o k e, In (o, k, e) ts' ->
+    exists c T L EF E,
+         nth_error (hot H') o = Some c
+      /\ nth_error (hft H') k = Some (T, L, EF)
+      /\ ht (hot H') (hft H') c L empty e T E
+      /\ incl E EF.
+Proof.
+  intros C H' ms' ts' Hok Hs o k e Hin.
+  assert (Hok' : conf_ok (H', ms', ts')) by (eapply preservation_star; eassumption).
+  destruct Hok' as [_ [_ [_ [Hts _]]]].
+  apply (Hts (o, k, e) Hin).
+Qed.
+
+(* 送信は呼び先の効果を引き継がない（待たないので）。
+   規則 HSend の結論の効果が Ea ++ E1 であって meff を含まないことが、
+   そのまま主張になっている。 *)
+Theorem send_does_not_charge : forall ot ft C L G ea m e1 T E,
+  ht ot ft C L G (EFSend ea m e1) T E ->
+  exists c ta tr Ea E1,
+       mtab c m = Some (ta, tr)
+    /\ T = TFut tr (mlvl c m) (meff c m)
+    /\ E = Ea ++ E1
+    /\ ht ot ft C L G ea (TActor c) Ea
+    /\ ht ot ft C L G e1 ta E1.
+Proof.
+  intros. apply ht_send_inv in H
+    as [c1 [ta1 [tr1 [Ea [E1 [Hto [Hmt [Htv [-> ->]]]]]]]]].
+  exists c1, ta1, tr1, Ea, E1. auto.
 Qed.
 
 End AIPL.
