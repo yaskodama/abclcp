@@ -128,18 +128,22 @@
 \contentsline {subsection}{\numberline {9.20}s20 --- アクターをまたぐセッション}{34}{subsection.9.20}%
 \contentsline {subsection}{\numberline {9.21}20 本を通して見えること}{35}{subsection.9.21}%
 \contentsline {section}{\numberline {10}三つの処理系と、揃っていることの確かめ方}{35}{section.10}%
-\contentsline {subsection}{\numberline {10.1}現在の状態}{35}{subsection.10.1}%
-\contentsline {subsection}{\numberline {10.2}仕様を変えるときの手順}{36}{subsection.10.2}%
-\contentsline {subsection}{\numberline {10.3}機械検証との距離}{36}{subsection.10.3}%
-\contentsline {section}{\numberline {11}考察}{36}{section.11}%
-\contentsline {subsection}{\numberline {11.1}採否の判断は一貫していたか}{36}{subsection.11.1}%
-\contentsline {paragraph}{軸 1 --- 反例が AIPL の言葉で出るか。}{36}{section*.64}%
-\contentsline {paragraph}{軸 2 --- 証明の構造を壊さないか。}{36}{section*.65}%
-\contentsline {paragraph}{軸 3 --- 実際に書かれているか。}{37}{section*.66}%
-\contentsline {subsection}{\numberline {11.2}型・効果・期限という三点セットの評価}{37}{subsection.11.2}%
-\contentsline {subsection}{\numberline {11.3}足した機構に共通していたこと}{37}{subsection.11.3}%
-\contentsline {subsection}{\numberline {11.4}「正」の実装という考え方の限界}{37}{subsection.11.4}%
-\contentsline {subsection}{\numberline {11.5}残っている課題}{38}{subsection.11.5}%
-\contentsline {section}{\numberline {12}おわりに}{38}{section.12}%
-\contentsline {paragraph}{分かったこと。}{38}{section*.67}%
-\contentsline {paragraph}{仕様は、書くだけでは検査されない。}{39}{section*.68}%
+\contentsline {subsection}{\numberline {10.1}三実装は同じ言語ではない --- 二層である}{35}{subsection.10.1}%
+\contentsline {paragraph}{分類は機械的に決まる。}{36}{section*.64}%
+\contentsline {paragraph}{核では書けないもの。}{36}{section*.65}%
+\contentsline {subsection}{\numberline {10.2}現在の状態}{36}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}仕様を変えるときの手順}{36}{subsection.10.3}%
+\contentsline {subsection}{\numberline {10.4}機械検証との距離}{37}{subsection.10.4}%
+\contentsline {section}{\numberline {11}考察}{37}{section.11}%
+\contentsline {subsection}{\numberline {11.1}採否の判断は一貫していたか}{37}{subsection.11.1}%
+\contentsline {paragraph}{軸 1 --- 反例が AIPL の言葉で出るか。}{37}{section*.66}%
+\contentsline {paragraph}{軸 2 --- 証明の構造を壊さないか。}{37}{section*.67}%
+\contentsline {paragraph}{軸 3 --- 実際に書かれているか。}{37}{section*.68}%
+\contentsline {subsection}{\numberline {11.2}型・効果・期限という三点セットの評価}{38}{subsection.11.2}%
+\contentsline {subsection}{\numberline {11.3}足した機構に共通していたこと}{38}{subsection.11.3}%
+\contentsline {subsection}{\numberline {11.4}「正」の実装という考え方の限界}{38}{subsection.11.4}%
+\contentsline {paragraph}{実例 --- 二つが正しく、正が間違っていた。}{38}{section*.69}%
+\contentsline {subsection}{\numberline {11.5}残っている課題}{39}{subsection.11.5}%
+\contentsline {section}{\numberline {12}おわりに}{40}{section.12}%
+\contentsline {paragraph}{分かったこと。}{40}{section*.70}%
+\contentsline {paragraph}{仕様は、書くだけでは検査されない。}{40}{section*.71}%

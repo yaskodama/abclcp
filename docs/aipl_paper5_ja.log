@@ -1,4 +1,4 @@
-This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  23 AUG 2026 08:48
+This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  23 AUG 2026 11:06
  restricted system commands enabled.
 **aipl_paper5_ja.tex
 (./aipl_paper5_ja.tex
@@ -1330,18 +1330,18 @@ LaTeX Font Info:    Font shape `JY3/mc/m/n' will be
 {/opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/map/pdftex/updmap/
 pdftex.map}]
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 9.24713pt on input line 112.
+(Font)              scaled to size 9.24713pt on input line 115.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 9.24713pt on input line 112.
+(Font)              scaled to size 9.24713pt on input line 115.
 (load cache: extra_lmsans10-regular.luc)
 LaTeX Font Info:    Font shape `JT3/mc/m/n' will be
-(Font)              scaled to size 13.31584pt on input line 112.
+(Font)              scaled to size 13.31584pt on input line 115.
 LaTeX Font Info:    Font shape `JY3/mc/m/n' will be
-(Font)              scaled to size 13.31584pt on input line 112.
+(Font)              scaled to size 13.31584pt on input line 115.
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 13.31584pt on input line 112.
+(Font)              scaled to size 13.31584pt on input line 115.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 13.31584pt on input line 112.
+(Font)              scaled to size 13.31584pt on input line 115.
 (load cache: extra_lmsans12-regular.luc) (./aipl_paper5_ja.toc
 LaTeX Font Info:    Calculating math sizes for size <10.95001> on input line 2.
 
@@ -1364,25 +1364,25 @@ LaTeX Font Info:    Font shape `JY3/mc/m/n' will be
 \openout5 = aipl_paper5_ja.toc
  [4]
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 11.09656pt on input line 119.
+(Font)              scaled to size 11.09656pt on input line 122.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 11.09656pt on input line 119.
+(Font)              scaled to size 11.09656pt on input line 122.
 LaTeX Font Info:    Font shape `TU/lmtt/bx/n' in size <10> not available
-(Font)              Font shape `TU/lmtt/b/n' tried instead on input line 159.
+(Font)              Font shape `TU/lmtt/b/n' tried instead on input line 162.
 (load cache: extra_lmmonolt10-bold.luc)
 LaTeX Font Info:    Font shape `JT3/gt/bx/n' in size <10> not available
-(Font)              Font shape `JT3/gt/m/n' tried instead on input line 159.
+(Font)              Font shape `JT3/gt/m/n' tried instead on input line 162.
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 8.44485pt on input line 159.
+(Font)              scaled to size 8.44485pt on input line 162.
 LaTeX Font Info:    Font shape `JY3/gt/bx/n' in size <10> not available
-(Font)              Font shape `JY3/gt/m/n' tried instead on input line 159.
+(Font)              Font shape `JY3/gt/m/n' tried instead on input line 162.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 8.44485pt on input line 159.
+(Font)              scaled to size 8.44485pt on input line 162.
  [5] [6](load cache: extra_lmmono8-regular.luc)
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 7.3977pt on input line 308.
+(Font)              scaled to size 7.3977pt on input line 311.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 7.3977pt on input line 308.
+(Font)              scaled to size 7.3977pt on input line 311.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
@@ -1391,24 +1391,24 @@ Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 LaTeX Font Info:    Font shape `TU/lmtt/bx/n' in size <9> not available
-(Font)              Font shape `TU/lmtt/b/n' tried instead on input line 343.
+(Font)              Font shape `TU/lmtt/b/n' tried instead on input line 346.
 LaTeX Font Info:    Font shape `JT3/gt/b/n' in size <9> not available
-(Font)              Font shape `JT3/gt/m/n' tried instead on input line 343.
+(Font)              Font shape `JT3/gt/m/n' tried instead on input line 346.
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 7.60036pt on input line 343.
+(Font)              scaled to size 7.60036pt on input line 346.
 LaTeX Font Info:    Font shape `JY3/gt/b/n' in size <9> not available
-(Font)              Font shape `JY3/gt/m/n' tried instead on input line 343.
+(Font)              Font shape `JY3/gt/m/n' tried instead on input line 346.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 7.60036pt on input line 343.
+(Font)              scaled to size 7.60036pt on input line 346.
 (load cache: extra_lmmono10-italic.luc)
 LaTeX Font Info:    Font shape `JT3/gt/m/it' in size <9> not available
-(Font)              Font shape `JT3/gt/m/n' tried instead on input line 348.
+(Font)              Font shape `JT3/gt/m/n' tried instead on input line 351.
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 7.60036pt on input line 348.
+(Font)              scaled to size 7.60036pt on input line 351.
 LaTeX Font Info:    Font shape `JY3/gt/m/it' in size <9> not available
-(Font)              Font shape `JY3/gt/m/n' tried instead on input line 348.
+(Font)              Font shape `JY3/gt/m/n' tried instead on input line 351.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 7.60036pt on input line 348.
+(Font)              scaled to size 7.60036pt on input line 351.
 Removing  `ltj.listings_unicode' from `process_input_buffer'.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
@@ -1416,13 +1416,13 @@ Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'. [8](load cache: ex
 tra_lmmono12-regular.luc)
 LaTeX Font Info:    Font shape `JT3/gt/m/it' in size <10> not available
-(Font)              Font shape `JT3/gt/m/n' tried instead on input line 422.
+(Font)              Font shape `JT3/gt/m/n' tried instead on input line 425.
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 8.44485pt on input line 422.
+(Font)              scaled to size 8.44485pt on input line 425.
 LaTeX Font Info:    Font shape `JY3/gt/m/it' in size <10> not available
-(Font)              Font shape `JY3/gt/m/n' tried instead on input line 422.
+(Font)              Font shape `JY3/gt/m/n' tried instead on input line 425.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 8.44485pt on input line 422.
+(Font)              scaled to size 8.44485pt on input line 425.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
@@ -1437,25 +1437,25 @@ Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'.(load cache: extra_
 lmroman7-regular.luc)
 LaTeX Font Info:    Font shape `JT3/mc/m/n' will be
-(Font)              scaled to size 6.47295pt on input line 476.
+(Font)              scaled to size 6.47295pt on input line 479.
 (load cache: extra_lmroman5-regular.luc)
 LaTeX Font Info:    Font shape `JT3/mc/m/n' will be
-(Font)              scaled to size 4.62357pt on input line 476.
+(Font)              scaled to size 4.62357pt on input line 479.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'.
 LaTeX Font Info:    Font shape `TU/lmss/m/it' in size <12> not available
-(Font)              Font shape `TU/lmss/m/sl' tried instead on input line 504.
+(Font)              Font shape `TU/lmss/m/sl' tried instead on input line 507.
 (load cache: extra_lmsans10-oblique.luc)
 LaTeX Font Info:    Font shape `JT3/gt/m/it' in size <12> not available
-(Font)              Font shape `JT3/gt/m/n' tried instead on input line 504.
+(Font)              Font shape `JT3/gt/m/n' tried instead on input line 507.
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 10.13382pt on input line 504.
+(Font)              scaled to size 10.13382pt on input line 507.
 LaTeX Font Info:    Font shape `JY3/gt/m/it' in size <12> not available
-(Font)              Font shape `JY3/gt/m/n' tried instead on input line 504.
+(Font)              Font shape `JY3/gt/m/n' tried instead on input line 507.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 10.13382pt on input line 504.
+(Font)              scaled to size 10.13382pt on input line 507.
  [10]
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
@@ -1465,7 +1465,7 @@ Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'.
-Overfull \hbox (4.7638pt too wide) in paragraph at lines 579--592
+Overfull \hbox (4.7638pt too wide) in paragraph at lines 582--595
  [][][] 
  []
 
@@ -1522,7 +1522,7 @@ Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'.
-Overfull \hbox (4.76378pt too wide) in paragraph at lines 957--972
+Overfull \hbox (4.76378pt too wide) in paragraph at lines 960--975
  [][][] 
  []
 
@@ -1547,7 +1547,7 @@ Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'. [17]
-Overfull \hbox (10.21002pt too wide) in paragraph at lines 1070--1077
+Overfull \hbox (10.21002pt too wide) in paragraph at lines 1073--1080
 |\JY3/gt/m/it/10.95001 ■[]|名 |前 |を |解 |決 |す |る [][] |\JY3/mc/m/
 it/10.95001 手 |順 |は \TU/lmtt/m/n/10.95001 "main_thread.run" |\JY3/mc/m/it
 /10.95001 と |ア |ク |タ |ー |の |変 |数 |名 |で |書 |か |れ []  |
@@ -1590,12 +1590,12 @@ Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'.
-Overfull \hbox (4.76376pt too wide) in alignment at lines 1261--1265
+Overfull \hbox (4.76376pt too wide) in alignment at lines 1264--1268
  [][][][] 
  []
 
 
-Overfull \hbox (4.76376pt too wide) in alignment at lines 1265--1308
+Overfull \hbox (4.76376pt too wide) in alignment at lines 1268--1311
  [][][][] 
  []
 
@@ -1784,11 +1784,19 @@ Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'. [34]
-[35] [36] [37] [38]
+[35] [36] [37]
+Removing  `ltj.process_input_buffer' from `process_input_buffer'.
+Inserting `ltj.listings_unicode' in `process_input_buffer'.
+Inserting `ltj.process_input_buffer' in `process_input_buffer'. [38]
+Removing  `ltj.listings_unicode' from `process_input_buffer'.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
-Removing  `ltj.listings_unicode' from `process_input_buffer'. [39] [40] (./aipl
+Removing  `ltj.listings_unicode' from `process_input_buffer'. [39]
+Removing  `ltj.process_input_buffer' from `process_input_buffer'.
+Inserting `ltj.listings_unicode' in `process_input_buffer'.
+Inserting `ltj.process_input_buffer' in `process_input_buffer'.
+Removing  `ltj.listings_unicode' from `process_input_buffer'. [40] [41] (./aipl
 _paper5_ja.aux)
  ***********
 LaTeX2e <2025-11-01>
@@ -1800,18 +1808,18 @@ LaTeX Font Warning: Size substitutions with differences
 (Font)              up to 0.5pt have occurred.
 
 Package rerunfilecheck Info: File `aipl_paper5_ja.out' has not changed.
-(rerunfilecheck)             Checksum: F0C473A19FDF3022C571FA5478C17A55;12324.
+(rerunfilecheck)             Checksum: 05611CC1FBEE016BBFFC0511D9D9FC90;12544.
 )
 
 Here is how much of LuaTeX's memory you used:
- 15617 strings out of 476076
- 746610,662416 words of node,token memory allocated
+ 15656 strings out of 476076
+ 746642,662416 words of node,token memory allocated
  1061 words of node memory still in use:
    10 hlist, 2 vlist, 5 rule, 2 glue, 4 kern, 1 glyph, 190 attribute, 62 glue_sp
 ec, 28 attribute_list, 1 write, 13 user_defined nodes
-   avail lists: 1:43,2:103052,3:877,4:28744,5:9484,6:162,7:16373,8:19,9:26432,10
+   avail lists: 1:45,2:103052,3:877,4:28744,5:9485,6:162,7:16706,8:19,9:26432,10
 :56,11:875
- 37046 multiletter control sequences out of 65536+600000
+ 37069 multiletter control sequences out of 65536+600000
  116 fonts using 90772623 bytes
  119i,9n,112p,2066b,1013s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/opentype/public/lm
@@ -1849,10 +1857,10 @@ share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></opt/homebrew/Cellar/
 texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy9.pfb></opt
 /homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/c
 m/cmtt10.pfb>
-Output written on aipl_paper5_ja.pdf (40 pages, 605469 bytes).
+Output written on aipl_paper5_ja.pdf (41 pages, 619029 bytes).
 
-PDF statistics: 1448 PDF objects out of 1728 (max. 8388607)
- 1327 compressed objects within 14 object streams
- 717 named destinations out of 1000 (max. 1048576)
- 633 words of extra memory for PDF output out of 10000 (max. 100000000)
+PDF statistics: 1477 PDF objects out of 1728 (max. 8388607)
+ 1355 compressed objects within 14 object streams
+ 733 named destinations out of 1000 (max. 1048576)
+ 641 words of extra memory for PDF output out of 10000 (max. 100000000)
 
