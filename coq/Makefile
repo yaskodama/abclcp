@@ -20,7 +20,7 @@ AIPLSoundness2.vo: AIPLSoundness2.v
 	$(COQC) $(COQFLAGS) AIPLSoundness2.v
 AIPLSoundness2Example.vo: AIPLSoundness2Example.v AIPLSoundness2.vo
 	$(COQC) $(COQFLAGS) AIPLSoundness2Example.v
-AIPLDining.vo: AIPLDining.v AIPLSoundness.vo
+AIPLDining.vo: AIPLDining.v AIPLSoundness2.vo
 	$(COQC) $(COQFLAGS) AIPLDining.v
 ABCMEmbedding.vo: ABCMEmbedding.v AIPLSoundness.vo ABCM.vo
 	$(COQC) $(COQFLAGS) ABCMEmbedding.v
@@ -46,6 +46,7 @@ Print Assumptions AIPLSoundness2.await_charges_callee.\n\
 Print Assumptions AIPLSoundness2.send_does_not_charge.\n\
 Print Assumptions ex_not_blocked.\n\
 Print Assumptions dining_no_deadlock.\n\
+Print Assumptions dining_effects_declared.\n\
 Print Assumptions no_dead_state.\n\
 Print Assumptions ordering_is_necessary_and_sufficient.\n\
 Print Assumptions tr_ht.\n\

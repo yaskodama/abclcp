@@ -1,13 +1,22 @@
 (*
-  哲学者の食事問題 (dining philosophers) を AIPL^- で書き、
+  哲学者の食事問題 (dining philosophers) を AIPL^-2 で書き、
   デッドロックを起こさないことを証明する。
+
+  土台は AIPLSoundness2.v（第 2 版）である。
+  第 1 版に載せていたときは、デッドロック自由を言うために
+  「本体が await を一切使わない」という断片（afree）に閉じこもる必要があった。
+  第 2 版は義務レベルで await を含んだまま言えるので、その制限が要らない。
+  ここでの証明も async_deadlock_free ではなく deadlock_free_star を使う。
 
   二つの層に分けて述べる。
 
   第 1 層  機械的デッドロック自由 (dining_no_deadlock)
-      AIPL^- のプログラムそのものについての定理。初期構成から到達できる
+      AIPL^-2 のプログラムそのものについての定理。初期構成から到達できる
       どの構成も blocked でなく、終状態でなければ必ず一歩進める。
-      プログラムが await を一切使わない（完全非同期）ことによる。
+
+      併せて効果の健全性も出る (dining_effects_declared) ----
+      走っている各タスクの効果は、担当するメソッドが宣言した効果
+      （このプログラムでは mut だけ）に収まる。
 
   第 2 層  資源デッドロック自由 (no_dead_state)
       フォーク割り当てプロトコルについての定理。番号順取得
@@ -21,7 +30,7 @@
 
 From Stdlib Require Import List Arith Lia.
 Import ListNotations.
-Require Import AIPLSoundness.
+Require Import AIPLSoundness2.
 
 (* ================================================================= *)
 (* 第 I 部  AIPL^- のプログラム                                      *)
@@ -140,10 +149,16 @@ Proof.
   destruct (c <? 6); constructor.
 Qed.
 
-Lemma dp_sinit_ok : forall c ot ft C G,
-  ht dp_stype dp_mtab ot ft C G (dp_sinit c) (dp_stype c).
+(* 義務レベル: この版の哲学者は send しか使わない（await が無い）ので
+   レベルの条件は自明に満たされる。0 に揃えておく。 *)
+Definition dp_mlvl (c m : nat) : nat := 0.
+(* 効果: どの本体も自分の状態を書く。それ以外はしない。 *)
+Definition dp_meff (c m : nat) : eff := [emut].
+
+Lemma dp_sinit_ok : forall c ot ft C L G,
+  ht dp_stype dp_mtab dp_mlvl dp_meff ot ft C L G (dp_sinit c) (dp_stype c) e0.
 Proof.
-  intros c ot ft C G. unfold dp_sinit, dp_stype.
+  intros c ot ft C L G. unfold dp_sinit, dp_stype.
   destruct (c <? 3); [ constructor | ].
   destruct (c <? 6); constructor.
 Qed.
@@ -156,7 +171,9 @@ Ltac dpty Hext :=
 
 Lemma dp_bodies_ok : forall c m ta tr, dp_mtab c m = Some (ta, tr) ->
   forall ot ft, ext dp_ot0 ot ->
-    ht dp_stype dp_mtab ot ft c (extend empty 0 ta) (dp_mbody c m) tr.
+    exists E, ht dp_stype dp_mtab dp_mlvl dp_meff ot ft c (dp_mlvl c m)
+                 (extend empty 0 ta) (dp_mbody c m) tr E
+           /\ incl E (dp_meff c m).
 Proof.
   intros c m ta tr Hm ot ft Hext.
   destruct c as [|[|[|[|[|[|c]]]]]];
@@ -164,18 +181,14 @@ Proof.
     simpl in Hm; try discriminate; inversion Hm; subst; clear Hm;
     simpl; unfold forkReq, forkRel, philGo, philGranted, philDenied, philEat,
                   sendTo, philObj, forkObj, cliA, cliB, dlo, dhi;
-    dpty Hext.
+    (eexists; split;
+      [ dpty Hext
+      | unfold dp_meff, e0; intros x Hx; simpl in Hx; simpl; tauto ]).
 Qed.
 
-Lemma dp_mbody_afree : forall c m, afree (dp_mbody c m).
-Proof.
-  intros c m.
-  destruct c as [|[|[|[|[|[|c]]]]]];
-    destruct m as [|[|[|[|[|[|m]]]]]];
-    simpl; unfold forkReq, forkRel, philGo, philGranted, philDenied, philEat,
-                  sendTo;
-    repeat constructor.
-Qed.
+(* 第 1 版では、デッドロック自由を言うために本体から await を
+   取り除いた断片（afree）に閉じこもる必要があった。
+   第 2 版は義務レベルで await を含んだまま言えるので、この補題は要らない。 *)
 
 (* ================================================================= *)
 (* 初期構成                                                          *)
@@ -184,7 +197,9 @@ Qed.
 Definition dp_H0 : heap :=
   Heap dp_ot0
        [EBool true; EBool true; EBool true; ENum 0; ENum 0; ENum 0]
-       [TUnit; TUnit; TUnit]
+       [(TUnit, dp_mlvl (philObj 0) 2, dp_meff (philObj 0) 2);
+        (TUnit, dp_mlvl (philObj 1) 2, dp_meff (philObj 1) 2);
+        (TUnit, dp_mlvl (philObj 2) 2, dp_meff (philObj 2) 2)]
        [None; None; None].
 
 (* 3 人の哲学者に go を送った状態から始める *)
@@ -193,7 +208,7 @@ Definition dp_C0 : conf :=
    [(philObj 0, 2, EUnit, 0); (philObj 1, 2, EUnit, 1); (philObj 2, 2, EUnit, 2)],
    []).
 
-Lemma dp_heap_ok : heap_ok dp_stype dp_mtab dp_H0.
+Lemma dp_heap_ok : heap_ok dp_stype dp_mtab dp_mlvl dp_meff dp_H0.
 Proof.
   unfold heap_ok, dp_H0, dp_ot0; simpl.
   split; [ reflexivity | ].
@@ -205,46 +220,69 @@ Proof.
       inversion Ho; inversion Hv; subst; unfold dp_stype; simpl;
       split; try (apply VBool); try (apply VNum);
       intros; try (apply HBool); try (apply HNum). }
-  { intros k T v Hk Hv.
+  { intros k T n v Hk Hv.
     destruct k as [|[|[|k]]]; simpl in Hk, Hv;
       try discriminate; destruct k; discriminate. }
 Qed.
 
-Lemma dp_conf_ok : conf_ok dp_stype dp_mtab dp_ot0 dp_C0.
+Lemma dp_conf_ok : conf_ok dp_stype dp_mtab dp_mlvl dp_meff dp_ot0 dp_C0.
 Proof.
   unfold conf_ok, dp_C0. split; [ apply dp_heap_ok | ].
-  split; [ simpl; apply ext_refl | ]. split.
+  split; [ simpl; apply ext_refl | ]. split; [ | split ].
   - intros M HM. simpl in HM.
     destruct HM as [<- | [<- | [<- | []]]];
       simpl; unfold philObj; simpl;
       [ exists 3, TUnit, TUnit | exists 4, TUnit, TUnit | exists 5, TUnit, TUnit ];
       repeat split; try reflexivity; try constructor; intros; constructor.
   - intros t [].
+  - (* prod_ok: 未解決の future 0,1,2 には、飛んでいる go のメッセージが対応する *)
+    intros k T n Hk Hu. left.
+    destruct k as [|[|[|k]]]; simpl in Hk, Hu; try discriminate.
+    + exists (philObj 0), 2, EUnit. simpl. auto.
+    + exists (philObj 1), 2, EUnit. simpl. auto.
+    + exists (philObj 2), 2, EUnit. simpl. auto.
+    + destruct k; discriminate.
 Qed.
-
-Lemma dp_conf_afree : conf_afree dp_C0.
-Proof. intros o k e []. Qed.
 
 (* ================================================================= *)
 (* 第 1 層の定理: 機械的デッドロック自由                             *)
 (* ================================================================= *)
 
+(* 第 1 版は async_deadlock_free（await を除いた断片の定理）を使っていた。
+   第 2 版は deadlock_free_star をそのまま使える ---- 断片に閉じこもらない。 *)
 Theorem dining_no_deadlock : forall C',
-  csteps dp_sinit dp_mtab dp_mbody dp_C0 C' ->
-     conf_ok dp_stype dp_mtab dp_ot0 C'
-  /\ conf_afree C'
+  csteps dp_sinit dp_mtab dp_mbody dp_mlvl dp_meff dp_C0 C' ->
+     conf_ok dp_stype dp_mtab dp_mlvl dp_meff dp_ot0 C'
   /\ ~ blocked C'
-  /\ (terminal C' \/ exists C'', cstep dp_sinit dp_mtab dp_mbody C' C'').
+  /\ (terminal C' \/ exists C'',
+        cstep dp_sinit dp_mtab dp_mbody dp_mlvl dp_meff C' C'').
 Proof.
   intros C' Hs.
-  eapply async_deadlock_free with (C := dp_C0).
-  - apply dp_sinit_value.
-  - apply dp_sinit_ok.
-  - apply dp_bodies_ok.
-  - apply dp_mbody_afree.
-  - apply dp_conf_ok.
-  - apply dp_conf_afree.
-  - exact Hs.
+  assert (Hok : conf_ok dp_stype dp_mtab dp_mlvl dp_meff dp_ot0 C').
+  { eapply preservation_star with (C := dp_C0);
+      [ apply dp_sinit_value | apply dp_sinit_ok | apply dp_bodies_ok
+      | apply dp_conf_ok | exact Hs ]. }
+  split; [ exact Hok | ].
+  eapply deadlock_free_star with (C := dp_C0);
+    [ apply dp_sinit_value | apply dp_sinit_ok | apply dp_bodies_ok
+    | apply dp_conf_ok | exact Hs ].
+Qed.
+
+(* 効果の健全性も、この具体プログラムについてそのまま出る。
+   走っている各タスクの効果は、担当するメソッドが宣言した効果に収まる。 *)
+Theorem dining_effects_declared : forall H' ms' ts',
+  csteps dp_sinit dp_mtab dp_mbody dp_mlvl dp_meff dp_C0 (H', ms', ts') ->
+  forall o k e, In (o, k, e) ts' ->
+    exists c T L EF E,
+         nth_error (hot H') o = Some c
+      /\ nth_error (hft H') k = Some (T, L, EF)
+      /\ ht dp_stype dp_mtab dp_mlvl dp_meff (hot H') (hft H') c L empty e T E
+      /\ incl E EF.
+Proof.
+  intros H' ms' ts' Hs.
+  eapply effect_soundness with (C := dp_C0);
+    [ apply dp_sinit_value | apply dp_sinit_ok | apply dp_bodies_ok
+    | apply dp_conf_ok | exact Hs ].
 Qed.
 
 (* ================================================================= *)
