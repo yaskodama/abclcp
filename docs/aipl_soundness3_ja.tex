@@ -1,0 +1,668 @@
+% AIPL の型健全性と型安全性（第2版）
+%   lualatex -interaction=nonstopmode aipl_soundness2_ja.tex   （2回）
+\documentclass[11pt,a4paper]{ltjsarticle}
+\usepackage{amsmath,amssymb}
+\usepackage{amsthm}
+\usepackage{mathpartir}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage[hidelinks]{hyperref}
+\geometry{margin=22mm}
+
+\newtheorem{theorem}{定理}
+\newtheorem{lemma}[theorem]{補題}
+\newtheorem{corollary}[theorem]{系}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{定義}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{注意}
+\newtheorem{finding}[theorem]{所見}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  basicstyle=\ttfamily\small, backgroundcolor=\color{codebg},
+  frame=single, framesep=4pt, rulecolor=\color{gray},
+  breaklines=true, showstringspaces=false,
+  columns=fullflexible, keepspaces=true,
+  keywordstyle=\bfseries, commentstyle=\itshape\color{gray!130},
+}
+\lstdefinelanguage{AIPL}{
+  morekeywords={class,method,var,new,now,future,await,reply,send,
+    timeout,else,if,while,do,select,case,self,sender,remote,print,
+    int,float,string,bool,unit,any,true,false},
+  sensitive=true, morecomment=[l]{//}, morestring=[b]",
+}
+
+% --- 記法（第1版を踏襲） ---
+\newcommand{\tint}{\ensuremath{\mathtt{int}}}
+\newcommand{\tbool}{\ensuremath{\mathtt{bool}}}
+\newcommand{\tunit}{\ensuremath{\mathtt{unit}}}
+\newcommand{\tstr}{\ensuremath{\mathtt{string}}}
+\newcommand{\tact}[1]{\ensuremath{\mathtt{actor}[#1]}}
+\newcommand{\tfut}[2]{\ensuremath{\mathtt{future}\langle #1 \,!\, #2 \rangle}}
+\newcommand{\Om}{\Omega}
+\newcommand{\Sm}{\Sigma}
+\newcommand{\Ph}{\Phi}
+\newcommand{\Ps}{\Psi}
+\newcommand{\mtab}{\mathrm{mtab}}
+\newcommand{\stype}{\mathrm{stype}}
+\newcommand{\mret}{\mathrm{ret}}
+\newcommand{\meff}{\mathrm{eff}}
+\newcommand{\heapok}{\mathrm{heap\_ok}}
+\newcommand{\msgok}{\mathrm{msg\_ok}}
+\newcommand{\taskok}{\mathrm{task\_ok}}
+\newcommand{\confok}{\mathrm{conf\_ok}}
+\newcommand{\futok}{\mathrm{fut\_ok}}
+\newcommand{\stuck}{\mathrm{stuck}}
+\newcommand{\cstep}{\Longrightarrow}
+\newcommand{\subs}[2]{[#1 := #2]}
+\newcommand{\Eff}{\mathcal{E}}
+
+\newcommand{\tfutl}[2]{\ensuremath{\mathtt{future}\langle #1 \rangle @ #2}}
+\newcommand{\lvl}{\mathrm{lvl}}
+\newcommand{\prodok}{\mathrm{prod\_ok}}
+
+\title{AIPL の型健全性・型安全性・デッドロック自由（第 3 版）\\
+{\large ---\ 待ちを取り除かずにデッドロック自由を証明する。
+AIPL$^{-2}$ の機械検証 ---}}
+\author{児玉工房 / AICE $\cdot$ AIPL プロジェクト}
+\date{2026年08月23日}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+第 1 版（2026 年 7 月 28 日）は、\texttt{reply} と戻り値型を結んだ部分言語
+AIPL$^-$ について型健全性と型安全性を Coq で機械検証した。
+ただし\textbf{デッドロック自由は \texttt{await} を言語から取り除いた断片
+についてしか言えていなかった}。待てる構文を捨てて「待ちが返らない」を
+消していたのだから、当然である。
+
+第 2 版（同年 7 月 30 日）は、期限を必須にすることで進行定理を二択にした。
+ただしこれは紙の上の証明であり、しかも得られる性質は
+\emph{デッドロックが有限時間の失敗に変わる}ことであって、
+\emph{詰まらない}ことではない。互いに待ち合う二者は両方が期限切れになる。
+
+本稿（第 3 版）は\textbf{待ちを取り除かず、期限にも頼らず}、
+デッドロック自由そのものを機械検証する。
+道具は\textbf{義務レベル}である --- \texttt{future} の型に
+「それを埋める側のレベル」を持たせ、待ちは必ずレベルの高い方へ向かうことを
+型で要求する。加えて実行時の不変条件を一つ置く ---
+\textbf{未解決の \texttt{future} には必ずそれを埋める者がいる}。
+この二つから、全タスクが待ち状態になることはない。
+
+主結果は\textbf{進行定理から枝が一つ消える}ことである。
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+& 進行定理の主張 \\
+\midrule
+第 1 版 & 終状態 $\lor$ 一歩進める $\lor$ \textbf{全タスクが待ち} \\
+第 3 版 & 終状態 $\lor$ 一歩進める \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+定理は九つあり、いずれも \texttt{Print Assumptions} が
+\texttt{Closed under the global context}（公理なし）である。
+併せて、三つの性質（健全性・安全性・デッドロック自由）が同時に成り立つ
+\textbf{最大の構文}を機構ごとに調べ、
+\texttt{select}・\texttt{timeout}・\texttt{any}／多相・\texttt{become} を
+入れると何が壊れるかを明記する。
+
+定理が空虚でないことも確かめた。\texttt{await} と \texttt{while} を実際に使う
+プログラムを形式化し、仮定をすべて満たすことを示し、
+併せて\textbf{レベルを揃えると本体の型検査が通らない}ことを確かめた ---
+条件が実際に効いていることの対照である。
+\end{abstract}
+
+\tableofcontents
+
+% =====================================================================
+\part{位置づけ}
+\label{part:place}
+
+\section{三つの版の関係}
+\label{sec:versions}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lllp{5.2cm}@{}}
+\toprule
+版 & 日付 & 証明の形 & デッドロック自由の言い方 \\
+\midrule
+第 1 版 & 2026-07-28 & 機械検証（Coq） &
+  \texttt{await} を\textbf{言語から除いた}断片についてのみ \\
+第 2 版 & 2026-07-30 & 紙 &
+  期限を必須にして、\textbf{有限時間の失敗}に変換する \\
+\textbf{第 3 版（本稿）} & 2026-08-23 & \textbf{機械検証（Coq）} &
+  \texttt{await} を含んだまま、\textbf{そもそも詰まらない}ことを言う \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+三つは重なっているが同じではない。違いは\textbf{何によって詰まらないと言うか}である。
+
+\begin{itemize}
+\item 第 1 版は\textbf{待つ構文を捨てた}。待たなければ詰まらない。
+\item 第 2 版は\textbf{待ちに上限を置いた}。上限があれば有限時間で終わる。
+      ただし終わり方が失敗でもよい。
+\item 第 3 版は\textbf{待ちの向きを揃えた}。循環しなければ詰まらない。
+      失敗に変換する必要が無い。
+\end{itemize}
+
+\begin{remark}[名前について]
+第 2 版も、そこで切り出した部分言語を AIPL$^{-2}$ と呼んでいる。
+本稿の AIPL$^{-2}$ とは中身が違う --- 第 2 版のそれは
+\textbf{効果と期限}を持ち、本稿のそれは\textbf{義務レベル}を持つ。
+名前が衝突しているのは、どちらも「第 1 版の次」を意味していたためである。
+
+本稿では、\textbf{機械検証された言語}を AIPL$^{-2}$ と呼ぶ。
+第 2 版の言語を区別して指す必要があるときは AIPL$^{-\mathcal{E}}$（効果つき）と書く。
+両者は排他ではない --- 効果を本稿の形式化に足せば一本化できる
+（\S\ref{sec:remains}）。
+\end{remark}
+
+\section{何を証明したいのか}
+
+三つある。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.4cm}@{}}
+\toprule
+性質 & 主張 \\
+\midrule
+\textbf{型健全性} & 型の付いた構成が一歩進んでも、型の付いた構成のままである
+  （保存）。加えて、各アクターの状態と解決済み \texttt{future} の値は
+  常に宣言された型を持つ \\
+\textbf{型安全性} & 型の付いた構成から到達できる構成は $\stuck$ でない。
+  「終わってもいないのに一歩も進めない」ことが起きない \\
+\textbf{デッドロック自由} & 型の付いた構成が \textbf{blocked} にならない。
+  すなわち「メールボックスが空で、全タスクが待ち状態」という構成が現れない \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+三つ目が本稿の主題である。第 1 版はこれを、待てる構文を除いた断片について
+しか言えなかった。
+
+% =====================================================================
+\part{定式化}
+\label{part:form}
+
+\section{構文}
+\label{sec:syntax}
+
+型と項は次のとおりである。実装の \texttt{src/ast.ml} と
+\texttt{src/types.ml} のアクター核を取り出したものである。
+
+\[
+\tau ::= \tint \mid \tbool \mid \tunit \mid \tact{c} \mid \tfutl{\tau}{n}
+\]
+
+\[
+\begin{array}{rcl}
+e &::=& n \mid b \mid () \mid x \mid \mathtt{self}
+      \mid \mathtt{o}_o \mid \mathtt{f}_k \\
+  &\mid& e + e \mid e < e \mid \mathtt{if}\ e\ e\ e
+      \mid \mathtt{var}\ x = e;\ e \\
+  &\mid& \mathtt{get} \mid \mathtt{set}\ e \mid \mathtt{new}\ c \\
+  &\mid& \mathtt{future}\ e.m(e) \mid \mathtt{await}\ e \\
+  &\mid& e ; e \mid \mathtt{while}\ e\ \mathtt{do}\ e
+\end{array}
+\]
+
+$\mathtt{o}_o$ と $\mathtt{f}_k$ は実行時にだけ現れる参照である。
+$\tfutl{\tau}{n}$ が本稿の要で、
+「型 $\tau$ の値を、\textbf{レベル $n$ のメソッドが}埋める \texttt{future}」を表す。
+
+\subsection{糖衣}
+
+次の三つは規則を増やさずに書ける。
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+書き方 & 展開 \\
+\midrule
+\texttt{now t.m(e)} & $\mathtt{await}\ (\mathtt{future}\ t.m(e))$ \\
+\texttt{send t.m(e);} & $(\mathtt{future}\ t.m(e))\, ;\, ()$ \\
+\texttt{e1; e2} & 逐次実行（構文として持つ） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{while} は \texttt{if} へ展開する形にした。
+束縛を作らないので変数捕獲の心配が無い。
+
+\[
+\mathtt{while}\ c\ \mathtt{do}\ b
+\;\longrightarrow\;
+\mathtt{if}\ c\ (b\, ;\, \mathtt{while}\ c\ \mathtt{do}\ b)\ ()
+\]
+
+\section{表と構成}
+
+プログラムは五つの表で与える。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+表 & 内容 \\
+\midrule
+$\stype(c)$ & クラス $c$ の状態の型 \\
+$\mathrm{sinit}(c)$ & クラス $c$ の状態の初期値 \\
+$\mtab(c,m)$ & $c.m$ の引数型と返り値型 \\
+$\mathrm{body}(c,m)$ & $c.m$ の本体（引数は変数 $0$） \\
+$\lvl(c,m)$ & \textbf{$c.m$ の義務レベル} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+実行時の構成は $(\Om, \mathit{ms}, \mathit{ts})$ である。
+$\Om$ はヒープで、アクター表・状態表・\texttt{future} 表・\texttt{future} の値を持つ。
+\texttt{future} 表は $(\tau, n)$ の対を持つ --- 型と、\textbf{埋める側のレベル}である。
+$\mathit{ms}$ はメールボックス（飛んでいるメッセージの並び）、
+$\mathit{ts}$ は走っているタスクの並びである。
+タスクは $(o, k, e)$ の三つ組で、
+「アクター $o$ の上で式 $e$ を評価し、その値で \texttt{future} $k$ を埋める」を意味する。
+
+\section{型付け}
+\label{sec:typing}
+
+判断は
+\[
+\Om;\Ph \vdash_{c,L}\ \Gamma \vdash e : \tau
+\]
+と読む。$\Om$ はアクター表、$\Ph$ は \texttt{future} 表、
+$c$ は\textbf{いま検査しているメソッドが属するクラス}、
+$L$ は\textbf{そのメソッドの義務レベル}である。
+$L$ を判断に持たせたのが第 1 版との違いである。
+
+主要な規則だけ挙げる。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.0cm}@{}}
+\toprule
+規則 & 内容 \\
+\midrule
+参照 & $\Ph(k) = (\tau, n)$ ならば $\mathtt{f}_k : \tfutl{\tau}{n}$ \\
+\addlinespace
+送信 & $e_0 : \tact{c'}$ かつ $\mtab(c',m) = (\tau_a,\tau_r)$ かつ $e_1 : \tau_a$
+  ならば\newline
+  $\mathtt{future}\ e_0.m(e_1) : \tfutl{\tau_r}{\lvl(c',m)}$ \\
+\addlinespace
+\textbf{待ち} & $e : \tfutl{\tau}{n}$ かつ $\boldsymbol{L < n}$ ならば
+  $\mathtt{await}\ e : \tau$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}
+\fbox{\parbox{0.93\textwidth}{
+\textbf{待ちは必ず上へ向かう。} レベル $L$ のメソッドが待てるのは、
+レベルが $L$ より\emph{真に大きい}メソッドが埋める \texttt{future} だけである。
+これがデッドロック自由の全部である。}}
+\end{center}
+
+プログラム全体が型検査を通っているとは、次を満たすことである。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.4cm}@{}}
+\toprule
+仮定 & 内容 \\
+\midrule
+$\mathrm{sinit\_value}$ & 状態の初期値は値である \\
+$\mathrm{sinit\_ok}$ & 状態の初期値は宣言された型を持つ \\
+$\mathrm{bodies\_ok}$ & $\mtab(c,m) = (\tau_a,\tau_r)$ ならば、
+  $c.m$ の本体は\textbf{レベル $\lvl(c,m)$ のもとで} $\tau_r$ の型を持つ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+これらは Coq の \texttt{Section} の \texttt{Hypothesis} であり、
+\texttt{End} で各定理の前提に変わる。\textbf{公理ではない}。
+
+\section{操作的意味論}
+
+タスク一歩の関係 $\Om; o \vdash e \to \Om'; \mathit{out}; e'$ と、
+構成一歩の関係 $\cstep$ の二段である。$\mathit{out}$ は新たに送出される
+メッセージの並びである。
+
+構成の一歩は三つしかない。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.8cm}@{}}
+\toprule
+規則 & 内容 \\
+\midrule
+CTask & タスクが一歩進む。送出されたメッセージはメールボックスに入る \\
+CFinish & タスクの式が値になった。その値が \texttt{reply} の値であり、
+  担当していた \texttt{future} を埋めてタスクは消える \\
+CDeliver & メッセージを配送し、メソッド本体を新しいタスクとして起こす \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+送信の規則が要点である。
+
+\[
+\Om; o \vdash \mathtt{future}\ \mathtt{o}_{o'}.m(v)
+\;\to\;
+\Om[\Ph \mathbin{+\!\!+} (\tau_r, \lvl(c',m))];\;
+[(o', m, v, |\Ph|)];\;
+\mathtt{f}_{|\Ph|}
+\]
+
+すなわち\textbf{\texttt{future} を一つ増やすのと同時に、
+それを埋めるためのメッセージを必ず一通出す}。
+この対応が次節の不変条件になる。
+
+\section{不変条件}
+\label{sec:inv}
+
+構成が正しいとは、次の五つを満たすことである。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.6cm}@{}}
+\toprule
+条件 & 内容 \\
+\midrule
+$\heapok$ & 表の長さが揃い、各アクターの状態は宣言された型を持ち、
+  解決済み \texttt{future} の値は記録された型を持つ \\
+$\msgok$ & 飛んでいるメッセージの宛先は実在し、そのクラスはそのメソッドを持ち、
+  引数の型が合い、\textbf{担当する \texttt{future} のレベルが $\lvl(c,m)$ に一致する} \\
+$\taskok$ & タスクは、\textbf{自分が埋める \texttt{future} のレベルのもとで}型が付く \\
+$\prodok$ & \textbf{未解決の \texttt{future} には必ず「埋める者」がいる} ---
+  メールボックスの中のメッセージか、走っているタスクのどちらかである \\
+$\mathrm{ext}$ & 起動時のアクター表は現在のアクター表に含まれる \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+$\prodok$ が第 3 版で足したものである。
+送信が \texttt{future} とメッセージを同時に作るので初期状態で成り立ち、
+配送はメッセージをタスクに変え（担い手が移る）、
+完了は \texttt{future} を埋める（義務が消える）ので、一歩ごとに保たれる。
+
+% =====================================================================
+\part{証明}
+\label{part:proof}
+
+\section{主定理}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.4cm}@{}}
+\toprule
+定理 & 主張 \\
+\midrule
+\texttt{no\_method\_not\_understood} &
+  型の付いた構成を飛ぶメッセージは、宛先が実在し、そのクラスがそのメソッドを持ち、
+  引数と \texttt{future} の型もレベルも合っている \\
+\texttt{preservation} & 一歩進んでも $\confok$ が保たれる \\
+\texttt{preservation\_star} & 何歩進んでも保たれる \\
+\texttt{type\_safety} & 到達できる構成は $\stuck$ でない \\
+\textbf{\texttt{deadlock\_free}} & 型の付いた構成は blocked にならない \\
+\textbf{\texttt{progress\_total}} & 終状態か、一歩進めるか、の二択 \\
+\texttt{deadlock\_free\_star} & 到達できる構成すべてについて同じことを言う \\
+\texttt{state\_type\_invariant} & どの時点でも各アクターの状態は宣言型を持つ \\
+\texttt{future\_type\_invariant} & 解決済み \texttt{future} の値は宣言された返り値型を持つ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{デッドロック自由の証明}
+\label{sec:df}
+
+\begin{theorem}[デッドロック自由]
+$\confok(C)$ ならば $C$ は blocked でない。
+\end{theorem}
+
+\begin{proof}
+$C = (\Om, \mathit{ms}, \mathit{ts})$ が blocked だと仮定する。
+定義より $\mathit{ms} = []$、$\mathit{ts} \neq []$、
+そして $\mathit{ts}$ のすべてのタスクが待ち状態である。
+
+タスクの\textbf{レベル}を、そのタスクが埋める \texttt{future} に
+記録されているレベルと定める。
+$\mathit{ts}$ は空でない有限の並びなので、
+\textbf{レベルが最大のタスク} $t = (o,k,e)$ が取れる。
+
+$t$ も待ち状態である。待っている式は必ず未解決の \texttt{future} を
+ひとつ名指ししており、$\taskok$ よりタスクはレベル $L = \lvl(k)$ のもとで
+型が付いているから、待ちの規則によりその \texttt{future} のレベル $n$ は
+$L < n$ を満たす。
+
+$\prodok$ より、その \texttt{future} には埋める者がいる。
+$\mathit{ms} = []$ だからメッセージではありえず、したがってタスクである。
+そのタスクが埋める \texttt{future} のレベルは $n$ であり、$n > L$ である。
+これは $t$ のレベル最大性に反する。
+\end{proof}
+
+\begin{corollary}[進行、二択]
+$\confok(C)$ ならば、$C$ は終状態であるか、一歩進める。
+\end{corollary}
+
+\begin{proof}
+第 1 版の進行定理は三択（終状態・一歩進める・blocked）である。
+上の定理が第三の枝を消す。
+\end{proof}
+
+\begin{finding}
+証明に効いているのは二つだけである --- \textbf{待ちの規則}（$L < n$）と、
+\textbf{$\prodok$}（未解決の \texttt{future} には埋める者がいる）である。
+前者は型の側、後者は実行時の側にある。
+片方だけでは足りない。
+待ちの向きが揃っていても、埋める者が居なければ待ちは返らない。
+埋める者が居ても、向きが循環していれば互いを待つ。
+\textbf{型と実行時の不変条件が噛み合って初めて言える}性質である。
+\end{finding}
+
+\section{公理を使っていないこと}
+
+九つの定理すべてについて \texttt{Print Assumptions} を実行し、
+\texttt{Closed under the global context} を確認した。
+\texttt{Makefile} の \texttt{check} ターゲットがこれを自動で行う。
+
+% =====================================================================
+\part{範囲}
+\label{part:scope}
+
+\section{証明できる最大の構文}
+\label{sec:max}
+
+三つの性質が\emph{同時に}成り立つ範囲はどこまでか。
+機構ごとに調べた。
+
+\subsection{入れても保たれるもの}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.6cm}@{}}
+\toprule
+機構 & 理由 \\
+\midrule
+\texttt{while} / 逐次実行 &
+  止まらない繰り返しは「デッドロック」ではなく「停止しない」である。
+  進行定理は一歩進めることしか言っていないので、三つとも保たれる。
+  \texttt{while} は \texttt{if} へ展開する形にしたので束縛を作らず、
+  変数捕獲が起きない \\
+動的なアクター生成 & \texttt{new} はヒープを伸ばすだけである \\
+\texttt{future} の入れ子 &
+  \texttt{await} の中に \texttt{await} があってもよい。
+  レベルは式の位置ではなく\textbf{メソッド}に付くので、
+  入れ子でも同じ条件で足りる \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{入れると壊れるもの}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.6cm}@{}}
+\toprule
+機構 & 壊れるもの \\
+\midrule
+\texttt{select} &
+  待つ相手が誰かは型に現れないので、レベルが効かない。
+  進行の枝が一つ増え、デッドロック自由が壊れる。
+  実装では期限の義務づけと送り手の存在検査で補っている \\
+\texttt{timeout} &
+  時間を意味論に入れる必要がある。進行は保てるが、
+  主張が「詰まらない」から「詰まっても諦める」に変わる ---
+  第 2 版がまさにこれである \\
+\texttt{any} / 多重定義 / 多相 &
+  標準形補題が壊れる。値の形が型から決まらないので進行が通らない \\
+\texttt{become} &
+  受け手のクラスが実行時に変わると、配送時に型が合っている保証が崩れる
+  （\texttt{no\_method\_not\_understood} が壊れる）。
+  なお実装では \texttt{become} 自体を言語から外した \\
+他アクターの状態への直接代入 &
+  $\heapok$ の「各アクターの状態は宣言型を持つ」が、
+  自分のメソッド内でしか保てなくなる \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{finding}
+この線引きは、言語の設計として機構を採るか落とすかを決めた判断とは
+\textbf{独立に}引いたのに、ほぼ同じところに落ちた。
+\texttt{become} も \texttt{any} も多相も、設計として落とした理由と、
+証明が通らない理由が一致している。
+\textbf{証明の通る範囲は、設計判断の後追いではなく、その裏づけであった}。
+\end{finding}
+
+\section{空虚でないことの確認}
+\label{sec:nonvacuous}
+
+定理はすべて「プログラムが型検査を通っている」という仮定のもとにある。
+レベルの条件が満たせないなら定理は空虚なので、確かめた。
+
+\begin{lstlisting}[language=AIPL]
+class Svc    { method get(x) : int { reply(x); } }                  // レベル 1
+class Caller { method run(x) : int {                                // レベル 0
+    while (x < 0) { }                    // 第3版で広げた構文
+    reply(now svc.get(x));               // await を含む
+} }
+\end{lstlisting}
+
+このプログラムについて、$\mathrm{sinit\_value}$・$\mathrm{sinit\_ok}$・
+$\mathrm{bodies\_ok}$ をすべて Coq で証明し、
+初期構成が $\confok$ であることを示した。
+したがってデッドロック自由が適用でき、進行も二択で言える。
+
+\textbf{対照実験}も行った。$\lvl(\mathrm{Svc},\mathrm{get})$ を $1$ から $0$ に
+変えると（すなわち待ちの向きを平らにすると）、
+$\mathrm{bodies\_ok}$ の証明が通らなくなる ---
+$0 < 0$ が示せないからである。条件が実際に効いている。
+
+\section{言えないこと}
+\label{sec:cannot}
+
+\begin{itemize}
+\item \textbf{停止性}。デッドロック自由は「詰まらない」であって
+  「必ず終わる」ではない。\texttt{while}\ $1>0$\ \texttt{do}\ $\{\}$ は
+  止まらないが、それは待ちではないので進行定理と矛盾しない。
+\item \textbf{飢餓}。あるタスクが永久に選ばれない可能性は排除していない。
+  進行定理は「どれかが進める」しか言わない。
+\item \textbf{宛先が動的な場合}。レベルは $\mtab$ から引くので、
+  宛先のクラスが静的に決まらなければ効かない。
+\item \textbf{同じクラスの別インスタンス}。レベルはメソッド単位なので、
+  親が子を待つ木構造のような場合も一律に扱われる。
+  緩めるにはレベル変数が要る。
+\item \textbf{効果と期限}。本稿の形式化には入っていない（次節）。
+\end{itemize}
+
+\section{残っていること}
+\label{sec:remains}
+
+\subsection{効果を足す}
+
+第 2 版（AIPL$^{-\mathcal{E}}$）は効果と期限を持つが紙の証明であり、
+本稿は機械検証だが効果を持たない。両者は排他ではない。
+
+効果を足す道筋は見えている。\texttt{future} の型に
+\textbf{レベルと同じやり方で}効果を載せればよい。
+
+\[
+\tfutl{\tau}{n} \;\longrightarrow\;
+\mathtt{future}\langle \tau \rangle @ n\, !\, \varepsilon
+\]
+
+送信のとき $\varepsilon = \meff(c,m)$ を記録し、
+\textbf{待ちのときに課金する}。これは実装がすでにやっていることと同じである
+（送信は呼び先の効果を引き継がず、\texttt{await} が引き継ぐ）。
+$\mathrm{bodies\_ok}$ に「本体の効果は宣言した効果に収まる」を足せば、
+効果の健全性が保存定理から出る。
+
+この作業に着手し、型付け規則までは入れた。基本補題の途中で止めている。
+
+\subsection{期限を足す}
+
+期限を入れると時間を意味論に持ち込む必要がある。
+得られるのは「詰まっても有限時間で失敗する」であって、
+本稿の「詰まらない」より弱い。
+両方を持つ形（レベルで循環を止め、期限で残りを救う）が実装の姿なので、
+形式化としてもそこが終着点になる。
+
+\subsection{名前の整理}
+
+効果を足した時点で、第 2 版の AIPL$^{-\mathcal{E}}$ と本稿の AIPL$^{-2}$ は
+一本化できる。それまでは本稿の記法（AIPL$^{-2}$ は機械検証された言語、
+AIPL$^{-\mathcal{E}}$ は第 2 版の言語）で区別する。
+
+% =====================================================================
+\section{まとめ}
+
+第 1 版はデッドロック自由を、\texttt{await} を言語から取り除いた断片に
+ついてしか言えなかった。第 2 版は期限で有限時間の失敗に変換した。
+本稿は\textbf{待ちを取り除かず、期限にも頼らず}、
+デッドロック自由そのものを機械検証した。
+
+足したのは四つだけである ---
+\texttt{future} の型にレベルを持たせ、判断にレベルを足し、
+待ちに $L < n$ を要求し、
+「未解決の \texttt{future} には埋める者がいる」を不変条件に置いた。
+証明の骨は「レベルが最大のタスクを取る」ことである。
+
+そして三つの性質が同時に成り立つ最大の構文を調べたところ、
+その境界は\textbf{言語の設計判断と独立に引いたのに、ほぼ同じところに落ちた}。
+証明の通る範囲は、設計の後追いではなく、その裏づけであった。
+
+\subsection*{再現方法}
+
+\begin{lstlisting}[language=]
+cd ~/aios/abclcp/coq
+make            # AIPLSoundness2.v と AIPLSoundness2Example.v を含めてビルド
+make check      # 主定理の Print Assumptions を確認
+\end{lstlisting}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+ファイル & 内容 \\
+\midrule
+\texttt{coq/AIPLSoundness2.v} & 本稿の形式化と証明（1{,}314 行） \\
+\texttt{coq/AIPLSoundness2Example.v} & 空虚でないことの確認（123 行） \\
+\texttt{coq/AIPLSoundness.v} & 第 1 版（1{,}121 行） \\
+\texttt{docs/aipl\_soundness2\_ja.pdf} & 第 2 版（紙の証明。効果と期限） \\
+\texttt{docs/aipl\_paper5\_ja.pdf} & 論文。言語全体の設計と採否 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}
