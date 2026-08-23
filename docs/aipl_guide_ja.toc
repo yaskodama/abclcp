@@ -1,58 +1,80 @@
-\contentsline {part}{第I部\hspace {1\zw }はじめに}{3}{part.1}%
-\contentsline {section}{\numberline {1}AIPL とは}{3}{section.1}%
-\contentsline {section}{\numberline {2}三つの静的な仕組み}{4}{section.2}%
-\contentsline {subsection}{\numberline {2.1}型 --- 何を返すか}{4}{subsection.2.1}%
-\contentsline {subsection}{\numberline {2.2}効果 --- 世界に何をするか}{4}{subsection.2.2}%
-\contentsline {subsection}{\numberline {2.3}期限 --- いつまで待つか}{4}{subsection.2.3}%
-\contentsline {section}{\numberline {3}5 分で動かす}{5}{section.3}%
-\contentsline {subsection}{\numberline {3.1}処理系のビルド}{5}{subsection.3.1}%
-\contentsline {subsection}{\numberline {3.2}プログラムを走らせる}{5}{subsection.3.2}%
-\contentsline {subsection}{\numberline {3.3}型検査だけを走らせる}{5}{subsection.3.3}%
-\contentsline {part}{第II部\hspace {1\zw }言語ガイド}{5}{part.2}%
-\contentsline {section}{\numberline {4}プログラムの構成}{6}{section.4}%
-\contentsline {section}{\numberline {5}字句}{7}{section.5}%
-\contentsline {section}{\numberline {6}型}{7}{section.6}%
-\contentsline {section}{\numberline {7}式}{8}{section.7}%
-\contentsline {subsection}{\numberline {7.1}優先順位}{8}{subsection.7.1}%
-\contentsline {subsection}{\numberline {7.2}\texttt {+} と \texttt {++} を混同しない}{8}{subsection.7.2}%
-\contentsline {subsection}{\numberline {7.3}曖昧なオーバーロード}{9}{subsection.7.3}%
-\contentsline {section}{\numberline {8}文}{9}{section.8}%
-\contentsline {section}{\numberline {9}アクターと通信}{9}{section.9}%
-\contentsline {subsection}{\numberline {9.1}三つの送信}{9}{subsection.9.1}%
-\contentsline {subsection}{\numberline {9.2}\texttt {reply}}{10}{subsection.9.2}%
-\contentsline {subsection}{\numberline {9.3}\texttt {select}}{10}{subsection.9.3}%
-\contentsline {section}{\numberline {10}期限付きの待ち}{10}{section.10}%
-\contentsline {subsection}{\numberline {10.1}なぜ必要か}{10}{subsection.10.1}%
-\contentsline {subsection}{\numberline {10.2}規則}{11}{subsection.10.2}%
-\contentsline {subsection}{\numberline {10.3}型健全性との関係}{11}{subsection.10.3}%
-\contentsline {section}{\numberline {11}効果}{11}{section.11}%
-\contentsline {subsection}{\numberline {11.1}8 種類の効果}{11}{subsection.11.1}%
-\contentsline {subsection}{\numberline {11.2}書き方}{11}{subsection.11.2}%
-\contentsline {subsection}{\numberline {11.3}何が効果になるか}{12}{subsection.11.3}%
-\contentsline {subsection}{\numberline {11.4}これで何が禁止できるか}{12}{subsection.11.4}%
-\contentsline {section}{\numberline {12}型検査が見るもの}{13}{section.12}%
-\contentsline {section}{\numberline {13}外部公開}{13}{section.13}%
-\contentsline {section}{\numberline {14}組込み関数と、その効果}{14}{section.14}%
-\contentsline {part}{第III部\hspace {1\zw }サンプルプログラム}{14}{part.3}%
-\contentsline {section}{\numberline {15}g1: クラス・フィールド・\texttt {send}・文字列連結}{14}{section.15}%
-\contentsline {section}{\numberline {16}g2: \texttt {now} / \texttt {future} / \texttt {await} と注釈}{15}{section.16}%
-\contentsline {section}{\numberline {17}g3: 複数アクターと、アクターを跨いだ \texttt {now}}{16}{section.17}%
-\contentsline {section}{\numberline {18}g4: \texttt {select} と \texttt {reply} の帰属}{17}{section.18}%
-\contentsline {section}{\numberline {19}g5: 外部公開と注釈の必須化}{17}{section.19}%
-\contentsline {section}{\numberline {20}g6: 効果注釈と伝播}{18}{section.20}%
-\contentsline {section}{\numberline {21}g7: 期限付き \texttt {now} / \texttt {await}}{20}{section.21}%
-\contentsline {section}{\numberline {22}g8: 等値比較・単項マイナス・真偽値リテラル}{21}{section.22}%
-\contentsline {section}{\numberline {23}負例の一覧}{22}{section.23}%
-\contentsline {part}{第IV部\hspace {1\zw }ビルドと実行}{22}{part.4}%
-\contentsline {section}{\numberline {24}処理系のビルド}{22}{section.24}%
-\contentsline {section}{\numberline {25}プログラムの実行}{22}{section.25}%
-\contentsline {section}{\numberline {26}型検査だけを走らせる}{22}{section.26}%
-\contentsline {section}{\numberline {27}型と実行値の差分テスト}{23}{section.27}%
-\contentsline {section}{\numberline {28}環境変数}{23}{section.28}%
-\contentsline {part}{第V部\hspace {1\zw }付録}{23}{part.5}%
-\contentsline {section}{\numberline {29}文法の要約}{23}{section.29}%
-\contentsline {section}{\numberline {30}処理系の環境変数}{24}{section.30}%
-\contentsline {section}{\numberline {31}よくある落とし穴}{25}{section.31}%
-\contentsline {section}{\numberline {32}現状の限界}{25}{section.32}%
-\contentsline {section}{\numberline {33}前版からの変更点}{25}{section.33}%
-\contentsline {section}{\numberline {34}関連文書}{26}{section.34}%
+\contentsline {part}{第I部\hspace {1\zw }はじめに}{4}{part.1}%
+\contentsline {section}{\numberline {1}AIPL とは}{4}{section.1}%
+\contentsline {section}{\numberline {2}三つの静的な仕組み}{5}{section.2}%
+\contentsline {subsection}{\numberline {2.1}型 --- 何を返すか}{5}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}効果 --- 世界に何をするか}{5}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}期限 --- いつまで待つか}{5}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}そのうえに七つの規律がある}{5}{subsection.2.4}%
+\contentsline {section}{\numberline {3}5 分で動かす}{6}{section.3}%
+\contentsline {subsection}{\numberline {3.1}処理系のビルド}{6}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}プログラムを走らせる}{6}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}型検査だけを走らせる}{6}{subsection.3.3}%
+\contentsline {part}{第II部\hspace {1\zw }言語ガイド}{6}{part.2}%
+\contentsline {section}{\numberline {4}プログラムの構成}{7}{section.4}%
+\contentsline {section}{\numberline {5}字句}{8}{section.5}%
+\contentsline {section}{\numberline {6}型}{8}{section.6}%
+\contentsline {section}{\numberline {7}式}{9}{section.7}%
+\contentsline {subsection}{\numberline {7.1}優先順位}{9}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}\texttt {+} と \texttt {++} を混同しない}{9}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}曖昧なオーバーロード}{10}{subsection.7.3}%
+\contentsline {section}{\numberline {8}文}{10}{section.8}%
+\contentsline {section}{\numberline {9}アクターと通信}{10}{section.9}%
+\contentsline {subsection}{\numberline {9.1}三つの送信}{10}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}\texttt {reply}}{11}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}\texttt {select}}{11}{subsection.9.3}%
+\contentsline {section}{\numberline {10}期限付きの待ち}{11}{section.10}%
+\contentsline {subsection}{\numberline {10.1}なぜ必要か}{11}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}規則}{12}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}型健全性との関係}{12}{subsection.10.3}%
+\contentsline {section}{\numberline {11}効果}{12}{section.11}%
+\contentsline {subsection}{\numberline {11.1}8 種類の効果}{12}{subsection.11.1}%
+\contentsline {subsection}{\numberline {11.2}書き方}{13}{subsection.11.2}%
+\contentsline {subsection}{\numberline {11.3}何が効果になるか}{13}{subsection.11.3}%
+\contentsline {subsection}{\numberline {11.4}これで何が禁止できるか}{13}{subsection.11.4}%
+\contentsline {part}{第III部\hspace {1\zw }七つの規律}{14}{part.3}%
+\contentsline {section}{\numberline {12}失敗を型に出す --- \texttt {result}$\langle \tau \rangle $}{14}{section.12}%
+\contentsline {section}{\numberline {13}返信先を一級の値にする}{14}{section.13}%
+\contentsline {section}{\numberline {14}資源の順序}{15}{section.14}%
+\contentsline {subsection}{\numberline {14.1}全体順序 --- 逆順の取得を止める}{15}{subsection.14.1}%
+\contentsline {section}{\numberline {15}義務レベル --- 待ちの循環を止める}{16}{section.15}%
+\contentsline {subsection}{\numberline {15.1}ノードをまたぐ待ち}{16}{subsection.15.1}%
+\contentsline {subsection}{\numberline {15.2}どこまで保証されるか}{17}{subsection.15.2}%
+\contentsline {section}{\numberline {16}セッション型 --- やり取りの順序}{17}{section.16}%
+\contentsline {subsection}{\numberline {16.1}アクターをまたぐ場合}{17}{subsection.16.1}%
+\contentsline {section}{\numberline {17}\texttt {select} の規律}{17}{section.17}%
+\contentsline {section}{\numberline {18}メッシュ配備}{18}{section.18}%
+\contentsline {section}{\numberline {19}逃げ道（環境変数）}{18}{section.19}%
+\contentsline {part}{第IV部\hspace {1\zw }参考}{18}{part.4}%
+\contentsline {section}{\numberline {20}型検査が見るもの}{19}{section.20}%
+\contentsline {section}{\numberline {21}外部公開}{20}{section.21}%
+\contentsline {section}{\numberline {22}組込み関数と、その効果}{21}{section.22}%
+\contentsline {part}{第V部\hspace {1\zw }サンプルプログラム}{21}{part.5}%
+\contentsline {section}{\numberline {23}g1: クラス・フィールド・\texttt {send}・文字列連結}{21}{section.23}%
+\contentsline {section}{\numberline {24}g2: \texttt {now} / \texttt {future} / \texttt {await} と注釈}{22}{section.24}%
+\contentsline {section}{\numberline {25}g3: 複数アクターと、アクターを跨いだ \texttt {now}}{23}{section.25}%
+\contentsline {section}{\numberline {26}g4: \texttt {select} と \texttt {reply} の帰属}{24}{section.26}%
+\contentsline {section}{\numberline {27}g5: 外部公開と注釈の必須化}{24}{section.27}%
+\contentsline {section}{\numberline {28}g6: 効果注釈と伝播}{25}{section.28}%
+\contentsline {section}{\numberline {29}g7: 期限付き \texttt {now} / \texttt {await}}{27}{section.29}%
+\contentsline {section}{\numberline {30}g8: 等値比較・単項マイナス・真偽値リテラル}{28}{section.30}%
+\contentsline {section}{\numberline {31}g9: アクターを引数に渡す}{29}{section.31}%
+\contentsline {section}{\numberline {32}g10: 別々のクラスが同じ名前のフィールドを持つ}{29}{section.32}%
+\contentsline {section}{\numberline {33}負例の一覧}{30}{section.33}%
+\contentsline {part}{第VI部\hspace {1\zw }ビルドと実行}{30}{part.6}%
+\contentsline {section}{\numberline {34}処理系のビルド}{30}{section.34}%
+\contentsline {section}{\numberline {35}プログラムの実行}{30}{section.35}%
+\contentsline {section}{\numberline {36}型検査だけを走らせる}{31}{section.36}%
+\contentsline {section}{\numberline {37}型と実行値の差分テスト}{31}{section.37}%
+\contentsline {section}{\numberline {38}環境変数}{31}{section.38}%
+\contentsline {part}{第VII部\hspace {1\zw }付録}{31}{part.7}%
+\contentsline {section}{\numberline {39}文法の要約}{32}{section.39}%
+\contentsline {section}{\numberline {40}処理系の環境変数}{33}{section.40}%
+\contentsline {section}{\numberline {41}よくある落とし穴}{33}{section.41}%
+\contentsline {section}{\numberline {42}現状の限界}{34}{section.42}%
+\contentsline {section}{\numberline {43}前版からの変更点}{34}{section.43}%
+\contentsline {subsection}{\numberline {43.1}言語から外したもの}{34}{subsection.43.1}%
+\contentsline {subsection}{\numberline {43.2}足したもの}{34}{subsection.43.2}%
+\contentsline {subsection}{\numberline {43.3}厳しくなったもの}{35}{subsection.43.3}%
+\contentsline {subsection}{\numberline {43.4}拡張子}{35}{subsection.43.4}%
+\contentsline {subsection}{\numberline {43.5}核と拡張 --- 言語は二層である}{35}{subsection.43.5}%
+\contentsline {section}{\numberline {44}関連文書}{35}{section.44}%

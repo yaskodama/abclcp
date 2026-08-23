@@ -25,7 +25,7 @@
   commentstyle=\itshape\color{gray!130},
 }
 \lstdefinelanguage{AIPL}{
-  morekeywords={class,method,var,float,new,now,future,await,reply,send,become,
+  morekeywords={class,method,var,float,new,now,future,await,reply,send,replyto,answer,
     call,if,else,while,do,select,case,timeout,self,sender,remote,print,
     true,false,int,string,bool,unit,any},
   sensitive=true,
@@ -42,7 +42,7 @@
 \title{AIPL / ABCL$^{c}$+ ユーザーズガイド\\
 {\large ---\ 文法・使い方・サンプルプログラム ---}}
 \author{ABCL$^{c}$+ / AIOS 処理系（\texttt{yaskodama/abclcp}, branch \texttt{make-src-base}）}
-\date{2026年07月30日 17:23版\\{\small 対象コミット: \texttt{9c25f5f}}}
+\date{2026年08月23日版\\{\small 対象: branch \texttt{make-src-base}（七つの規律を含む現行仕様）}}
 
 \begin{document}
 \maketitle
@@ -51,23 +51,34 @@
 本書は AIPL（ABCL$^{c}$+）の\textbf{現状の}ユーザーズガイドである。
 第 \ref{part:start} 部で言語の全体像と最短の動かし方、
 第 \ref{part:lang} 部で文法と型システムの仕様、
+第 \ref{part:disciplines} 部でその上に載る七つの規律を、
 第 \ref{part:sample} 部でサンプルプログラムをソースと実行結果つきで、
 第 \ref{part:tool} 部でビルド・実行・検査の道具立てを、
 第 \ref{part:appendix} 部に文法の要約・現状の限界・旧版からの移行を置く。
 
 AIPL は\textbf{アクター}を単位とする並行言語で、値は \texttt{return} ではなく
-\texttt{reply} で返す。その上に三つの静的な仕組みが載っている。
+\texttt{reply} で返す。その上に三つの静的な仕組みが載っている ---
 \textbf{型}（\texttt{reply} から戻り値型を推論し、注釈も書ける）、
 \textbf{効果}（\texttt{!\{ai, net\}} のようにメソッドが世界に及ぼす作用を宣言する）、
 \textbf{期限}（\texttt{now ... timeout ... else ...} で待ちに上限を置く）。
-この三つは互いに噛み合っていて、たとえば
-「実時間で動くアクターが、機外のモデルを同期で呼ぶ」ことが
+たとえば「実時間で動くアクターが、機外のモデルを同期で呼ぶ」ことは、
 効果検査だけで禁止できる。
 
-本書は前版（対象コミット \texttt{04892cf}）を全面的に書き直したものである。
-前版以降に効果注釈・期限付きの待ち・等値比較・単項マイナス・真偽値リテラルが
-入り、「既知の欠落」として挙げていた項目のいくつかが解消した。
-差分だけを知りたい場合は \S\ref{sec:migrate} を見ればよい。
+さらにその上に\textbf{七つの規律}が載っている（第 \ref{part:disciplines} 部）---
+失敗の型 \texttt{result}$\langle\tau\rangle$、返信先の一級性、資源の順序、
+義務レベル、セッション型である。
+どれも\textbf{注釈を書かなくても効く}ように作ってある。
+その結果、\textbf{待ちの宛先がクラスとして分かるか、
+宛先ノードのレベルが宣言されている範囲では、デッドロック自由が型で保証される}。
+これは紙の上だけの主張ではなく、Coq/Rocq で機械検証してある。
+
+本書が述べるのは、三つの処理系（OCaml 版・Python 版・JavaScript 版）
+すべてが備える\textbf{核}である。Python 版はこれに記録型・精緻化型・
+チャネル・所有などの\textbf{拡張}を持っており、言語は二層になっている
+（\S\ref{sec:migrate}）。
+
+前版（2026年07月30日版）からの差分だけを知りたい場合は
+\S\ref{sec:migrate} を見ればよい。\texttt{become} は\textbf{言語から外した}。
 \end{abstract}
 
 \tableofcontents
@@ -138,8 +149,18 @@ var r = now planner.plan(g) timeout 2000 else "(timed out)";
 \end{lstlisting}
 
 期限内に返信が来なければ \texttt{else} 節の値になる。
-期限付きの待ちだけを使うプログラムでは\textbf{デッドロック自由}が定理として言える
-（\texttt{docs/aipl\_soundness2\_ja.pdf}。本書 \S\ref{sec:soundness} に要約）。
+\texttt{else} を書かなければ \texttt{result}$\langle\tau\rangle$ が返り、
+確かめずには使えない（\S\ref{sec:result}）。
+
+\subsection{そのうえに七つの規律がある}
+
+型・効果・期限は土台である。その上に、失敗の型・返信先の一級性・
+資源の順序・義務レベル・セッション型が載っている
+（\S\ref{part:disciplines}）。
+どれも\textbf{注釈を書かなくても効く}ように作ってある。
+その結果、\textbf{待ちの宛先がクラスとして分かるか、
+宛先ノードのレベルが宣言されている範囲では、デッドロック自由が型で保証される}
+（\S\ref{sec:levels}）。
 
 \section{5 分で動かす}
 
@@ -263,7 +284,7 @@ class Counter {
              \texttt{new}, \texttt{send}, \texttt{send!}, \texttt{now},
              \texttt{future}, \texttt{await}, \texttt{if}, \texttt{else},
              \texttt{while}, \texttt{do}, \texttt{select}, \texttt{case},
-             \texttt{timeout}, \texttt{become}, \texttt{call},
+             \texttt{timeout}, \texttt{call}, \texttt{replyto},
              \texttt{self}, \texttt{sender}, \texttt{remote},
              \texttt{true}, \texttt{false} \\
 整数       & \texttt{0}, \texttt{123} \\
@@ -359,7 +380,7 @@ class Counter {
 
 である。したがって \texttt{1 + 2 == 3} は \texttt{(1 + 2) == 3}、
 \texttt{"x=" ++ a + b} は \texttt{"x=" ++ (a + b)} と読まれる。
-二項演算子は\textbf{すべて左結合}である（等値も含む）---- \texttt{1 == 2 == false} は \texttt{((1 == 2) == false)} と読まれて \texttt{true} になる。単項マイナスは前置なので重ねられる（\texttt{- - 3} は \texttt{3}）。
+二項演算子は\textbf{すべて左結合}である（等値も含む）--- \texttt{1 == 2 == false} は \texttt{((1 == 2) == false)} と読まれて \texttt{true} になる。単項マイナスは前置なので重ねられる（\texttt{- - 3} は \texttt{3}）。
 
 \subsection{\texttt{+} と \texttt{++} を混同しない}
 
@@ -406,7 +427,6 @@ method add(a, b) : int { reply(a + b); }   // 注釈で確定する
 \texttt{if (e) s} \quad \texttt{if (e) s else s} & 条件分岐（括弧が要る） \\
 \texttt{while e do s} & 繰り返し（括弧は要らない） \\
 \texttt{\{ s ... \}} & ブロック \\
-\texttt{become C(args);} & 振る舞いの置換（効果 \eff{mut}） \\
 \texttt{select \{ ... \}} & メッセージの選択受信 \\
 \bottomrule
 \end{tabular}
@@ -530,16 +550,35 @@ await f    timeout <ミリ秒> else <式>
 \subsection{型健全性との関係}
 \label{sec:soundness}
 
-期限を必須にすると、待ちは「残り時間を減らす簡約」になり、時間が尽きれば
-\texttt{else} 節へ簡約される。その結果\textbf{進行定理が二択になり}
-（終状態か、簡約できるか）、ブロックの枝が消えて\textbf{デッドロック自由}が
-系として言える。第 1 版の報告書が「一般には言えない」と明記した性質である。
-
-ただしこれは\emph{デッドロックが有限時間の失敗に変換される}ということであって、
+期限を書くと、待ちは有限時間で終わる。ただしこれは
+\emph{デッドロックが有限時間の失敗に変換される}ということであって、
 失敗が消えるわけではない。互いに \texttt{now} で待ち合う二者は両方が期限切れになる。
-詰まらないが正しくもない。停止性も依然として言えない。
+詰まらないが正しくもない。
 
-詳細は \texttt{docs/aipl\_soundness2\_ja.pdf}（型健全性・型安全性の第 2 版）にある。
+\textbf{詰まらないこと自体}を型で言うには、期限ではなく
+\textbf{義務レベル}が要る（\S\ref{sec:levels}）。
+そちらは \textbf{Coq/Rocq で機械検証してある} ---
+\texttt{await} を含んだままの中核について、
+型健全性・型安全性・デッドロック自由の三つを、公理なしで証明した
+（\texttt{coq/AIPLSoundness2.v}）。
+第 1 版は \texttt{await} を言語から取り除いた断片でしか
+デッドロック自由を言えていなかったので、そこが第 2 版の要点である。
+
+進行定理は次のように変わった。
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+& 進行定理の主張 \\
+\midrule
+第 1 版 & 終状態 $\lor$ 一歩進める $\lor$ \textbf{全タスクが待ち} \\
+第 2 版 & 終状態 $\lor$ 一歩進める \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+停止性は依然として言えない。\texttt{while 1 > 0 do \{\}} は止まらないが、
+それは待ちではないので、進行定理とは矛盾しない。
 
 \section{効果}
 \label{sec:effects}
@@ -592,7 +631,6 @@ method tick()                         { ... }   // 省略すると推論
 \midrule
 フィールドへの代入        & \eff{mut} \\
 ローカル変数への代入      & \textbf{効果ではない} \\
-\texttt{become C(...)}    & \eff{mut} \\
 \texttt{new C(...)}       & \eff{mem} \\
 組込み関数の呼び出し      & その関数の効果（\S\ref{sec:builtins}） \\
 \texttt{remote(...)} 宛の送信 & \eff{net} \\
@@ -637,6 +675,327 @@ class Controller {
 修正方針（\ty{future} の型に効果を載せる）は第 2 版の報告書に書いてある。
 \end{quote}
 
+\part{七つの規律}
+\label{part:disciplines}
+
+型・効果・期限の上に、七つの規律が載っている。
+どれも\textbf{注釈を書かなくても効く}ように作ってある ---
+必要な情報は、たいていプログラムの中に既に書かれているからである。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{5.6cm}p{4.0cm}@{}}
+\toprule
+規律 & 書き方 & 止めるもの \\
+\midrule
+効果 & \texttt{!\{ai, net\}} & 実時間側が機外のモデルを待つこと \\
+期限 & \texttt{timeout $n$ else $e$} & 返らない待ち \\
+失敗の型 & \texttt{timeout $n$}（\texttt{else} 無し） & 期限切れの値を正常値として流すこと \\
+返信先の一級性 & \texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply} & 返信の取りこぼしと二重返信 \\
+資源の順序 & \texttt{acquire} / \texttt{release} / \texttt{resource\_order} & 放し忘れ・二重取得・逆順の取得 \\
+義務レベル & \texttt{@$n$}（書かなければ推論） & 待ちの循環 \\
+セッション型 & \texttt{protocol\_define} / \texttt{\_start} / \texttt{\_end} & やり取りの順序違反 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{失敗を型に出す --- \texttt{result}$\langle\tau\rangle$}
+\label{sec:result}
+
+期限つきの待ちで \texttt{else} を書くと、時間切れの値と正常な値が
+\textbf{同じ型}になる。$-1$ が返ったのか、正しく $-1$ が計算されたのかを
+プログラムが問えない。
+
+\texttt{else} を書かなければ \texttt{result}$\langle\tau\rangle$ が返る。
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+書き方 & 型 \\
+\midrule
+\texttt{now a.m(x) timeout 200 else -1} & \ty{int} \\
+\texttt{now a.m(x) timeout 200} & \texttt{result}$\langle$\ty{int}$\rangle$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+取り出しには \texttt{is\_ok} / \texttt{timed\_out} / \texttt{value} を使う。
+
+\begin{lstlisting}
+var a = now s.fast(42) timeout 200;      // result<int>
+if (is_ok(a)) { print("fast ok " ++ value(a, -1)); }
+else          { print("fast timed out"); }
+\end{lstlisting}
+
+\texttt{result}$\langle\tau\rangle$ は数値としては使えない。
+確かめずに計算へ流すと止まる。
+
+\begin{term}
+no overload of + matches (result int, int)
+\end{term}
+
+\section{返信先を一級の値にする}
+\label{sec:reply1st}
+
+\texttt{replyto} は、いま処理しているメッセージの返信先を値として返す。
+型は \texttt{reply}$\langle\rho\rangle$（$\rho$ はそのメソッドの戻り値型）で、
+\texttt{answer(r, v)} で返信する。\texttt{reply(v)} はその糖衣にあたる。
+
+引数の型注釈 \texttt{reply} を書くと、他のアクターへ渡せる。
+窓口役が受けて、専門役が\textbf{直接}答える形が書ける。
+
+\begin{lstlisting}
+class Backend {
+  method handle(r: reply, x) : unit !{} {
+    answer(r, x * 2);            // Frontend の依頼者へ直接返す
+  }
+}
+class Frontend {
+  var b = new Backend();
+  method ask(x) : int !{} {
+    send b.handle(replyto, x);   // 返信先を渡して義務を移す。自分は reply しない
+  }
+}
+\end{lstlisting}
+
+返信先は\textbf{線形}に扱われる。ちょうど一度使うのが義務である。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{7.6cm}@{}}
+\toprule
+規律 & 内容 \\
+\midrule
+生成 & \texttt{var r = replyto;} で義務が生まれる \\
+消費 & \texttt{answer(r, v)} するか、送信の引数として渡すと義務が消える \\
+一度だけ & 同じ \texttt{r} を二度使ってはならない \\
+残さない & メソッドを抜けるとき義務が残っていてはならない \\
+枝 & \texttt{if} の二つの枝は同じ状態で合流する \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{quote}\small
+検査はメソッド内で閉じている。返信先を\textbf{フィールドに保持する}ことはできない
+（フィールドは初期化子から型が決まるため）。
+「送り主を溜めて後で返す」有界バッファのような書き方は、
+いまのところ核では直接には書けない。
+\end{quote}
+
+\section{資源の順序}
+\label{sec:resorder}
+
+効果は\textbf{集合}なので、順序を表せない。「取ったら放す」が言えない。
+そこで \texttt{acquire} / \texttt{release} の対を本体の中で追う。
+
+\begin{lstlisting}
+class Bus {
+  var n = 0;
+  method read(addr) : int !{mut} {
+    acquire("i2c");
+    n = n + 1;
+    var v = addr * 2;
+    release("i2c");           // これを消すと型エラーになる
+    reply(v);
+  }
+}
+\end{lstlisting}
+
+規律は三つ。メソッドを抜けるとき持ち物が残っていてはならない。
+持っていない資源を放してはならない。二重に取ってはならない。
+\texttt{if} の二つの枝は同じ持ち物で合流し、
+\texttt{while} の本体は持ち物を変えない。
+
+\subsection{全体順序 --- 逆順の取得を止める}
+
+対の検査だけでは足りない。二つのアクターが同じ二つの資源を
+\textbf{逆の順序}で取ると、どちらも対は正しいのに、実行すると互いを待つ。
+
+新しい注釈は要らない。\textbf{$r$ を持っているあいだに $s$ を取った}という
+入れ子が、そのまま $r < s$ という主張である。
+プログラム全体から集め、閉路が無いことを見る。
+
+\begin{term}
+resource order: cache -> db -> cache is circular;
+  cache before db (in Reader.run); db before cache (in Writer.run).
+  Acquiring in opposite orders deadlocks
+\end{term}
+
+閉路の各辺が\textbf{どこで生まれたか}を持っているので、
+逆順に取っている二か所がそのまま出る。
+
+推論に任せず \texttt{resource\_order("bus -> dev")} と書くこともできる。
+宣言は同じ表に辺として入るだけなので、宣言と実際の取得が食い違えば
+それも閉路として出る。
+推論した順序は \texttt{AIOS\_SHOW\_LEVELS=1} で見える。
+
+\begin{term}
+[resource] bus                  @0
+[resource] dev                  @1
+\end{term}
+
+\begin{quote}\small
+追えるのは資源の名前が\textbf{文字列リテラル}の \texttt{acquire} だけである。
+変数に入った名前は静的には分からないので、宣言した順序は実行時にも効かせている
+（\texttt{AIOS\_STRICT\_RESOURCE=1} で追えなかった場所を知らせる）。
+\end{quote}
+
+\section{義務レベル --- 待ちの循環を止める}
+\label{sec:levels}
+
+待ちが返らなくなる形は四つある。
+循環待ち、返信されない待ち、\texttt{select} が来ないメッセージを待つ場合、
+そして資源を逆順に取る場合である。
+一つ目に効くのが\textbf{義務レベル}である。
+
+各メソッドに番号を付け、\textbf{待ちは必ず番号の大きい方へ向かう}ことを要求する。
+
+\begin{lstlisting}
+class Leaf { method f(x)  : int @2 !{} { reply(x + 1); } }
+class Mid  { var l = new Leaf();
+             method g(x)  : int @1 !{} { reply(now l.f(x) timeout 200 else 0); } }
+\end{lstlisting}
+
+\textbf{書かなくてよい。}書かなければ、待ちの辺を見て押し上げる不動点で推論される。
+明示注釈は固定点として扱い、動かせなければそこが矛盾である。
+
+\begin{term}
+obligation level: B9#g (@2) waits on A9#f (@2);
+                  a wait must go to a strictly higher level
+obligation levels do not converge; the wait graph has a cycle
+\end{term}
+
+推論したレベルは \texttt{AIOS\_SHOW\_LEVELS=1} で見える。
+
+\subsection{ノードをまたぐ待ち}
+
+メッシュでは宛先の実体が別ノードにあり、静的には見えない。
+そこでノードごとにレベルの\textbf{下限}を宣言し、
+そのノードへの待ちは必ず上へ向かうことを要求する。
+
+\begin{lstlisting}
+node_level("rt0", 10);            // 実時間ノードは葉（高いレベル）
+\end{lstlisting}
+
+\begin{term}
+obligation level: Ctl2#go (@7) waits on node rt0 (floor @1);
+                  a wait across nodes must go up
+\end{term}
+
+効果を \texttt{node\_allow} で国境で照合するのと、まったく同じ形である。
+
+\subsection{どこまで保証されるか}
+
+\textbf{待ちの宛先がクラスとして分かるか、宛先ノードのレベルが宣言されている
+範囲では、デッドロック自由が型で保証される。}
+この主張は紙の上だけではない ---
+Coq/Rocq で、\texttt{await} を含んだままの中核について機械検証してある
+（\texttt{coq/AIPLSoundness2.v}、公理なし）。
+
+条件も書いておく。宛先が動的だと見えない。
+レベルはメソッド単位なので、同じクラスの別インスタンス同士は一律に扱われる。
+停止性と飢餓は別問題である。
+
+\section{セッション型 --- やり取りの順序}
+\label{sec:session}
+
+「開いてから読み、最後に閉じる」という約束は、期限でも送り手の存在でも表せない。
+AIPL には\textbf{実行時}のセッションプロトコルが既にあるので、
+\textbf{同じ宣言}を型検査の側でも読む。新しい宣言は要らない。
+
+\begin{lstlisting}
+protocol_define("Pipeline", "f.get -> r.scale -> st.put");
+var sid = protocol_start("Pipeline");
+
+var a = now f.get(4)    timeout 200 else 0;
+var b = now r.scale(a)  timeout 200 else 0;
+var c = now st.put(b)   timeout 200 else 0;
+protocol_end(sid);
+\end{lstlisting}
+
+順序を取り違えると、走らせる前に出る。
+
+\begin{term}
+protocol Pipeline: expected r.scale but the program sends st.put here
+protocol Pipeline is incomplete at protocol_end; next expected st.put
+\end{term}
+
+（実際の出力の例）
+
+\begin{term}
+protocol P29: expected b.step2 but the program sends c.step3 here
+\end{term}
+
+\subsection{アクターをまたぐ場合}
+
+実際のプログラムでは、手順は一つの並びに収まらない。
+窓口役をひとつ呼び、残りの手順はその本体の中で進む。
+
+同期の送信（\texttt{now} / \texttt{aios\_now}）は、呼び先が呼び出し側の続きより
+\textbf{先に走り切る}。だから呼び先の送信列を、呼び出しの位置に
+そのまま差し込んでよい（振る舞い展開）。
+これで、またいだセッションも一本の並びとして照合できる。
+
+非同期（\texttt{send} / \texttt{future}）は差し込まない ---
+いつ走るか決まらないからである。
+呼び先が手順を含んでいたら、完了の判定は実行時に任せる
+（\texttt{AIOS\_STRICT\_PROTOCOL=1} で知らせる）。
+
+\begin{quote}\small
+手順は\textbf{名前}で役を指す。アクターを\textbf{引数で渡す}こと。
+フィールドに持たせると、実行時の呼び名（\texttt{c\#f}）と
+静的な呼び名（\texttt{f}）が食い違い、手順が役を指せない。
+\end{quote}
+
+\section{\texttt{select} の規律}
+\label{sec:selectrule}
+
+\texttt{select} には二つのことを課す。
+
+\begin{enumerate}
+\item \textbf{期限を書く}。\texttt{timeout} 節の無い \texttt{select} は、
+  来ないメッセージを待ち続ける。
+\item \textbf{送り手が居ることを確かめる}。
+  \texttt{case m(...)} の \texttt{m} を、このプログラムの中で誰も送っていなければ、
+  綴り間違いか書き忘れである。
+\end{enumerate}
+
+\begin{term}
+select waits for W2.ghost but nothing in this program sends it
+select without a timeout waits forever; write `timeout <ms> -> { ... }`
+\end{term}
+
+いずれも既定は警告である。送信が動的な場合や、外部に公開している
+プログラムでは判断できないので、検査そのものを行わない ---
+\textbf{言語が世界の全部を見ているわけではない}。
+
+\section{メッシュ配備}
+\label{sec:mesh}
+
+アクターのソースを他ノードへ送り、\textbf{相手先で}構文解析・型検査してから
+実体化する。効果注釈がコードと一緒に運ばれ、受け入れ側の方針と照合される。
+
+\begin{lstlisting}
+node_allow("rt0", "mut, log, time");     // 実時間ノードが受け入れる効果
+deploy("rt0", "Servo", "servo1");        // Servo のソースを rt0 へ配って実体化
+var d = now remote("rt0", "servo1").step(3) timeout 200 else -1;
+\end{lstlisting}
+
+\begin{term}
+[deploy] Servo -> rt0/servo1 (compiled at destination)
+\end{term}
+
+\texttt{ai} や \texttt{net} を持つコードを実時間ノードへ配ると、国境で止まる。
+効果が、単一ノード内の規律から\textbf{ノード間の入国審査}になる。
+
+\section{逃げ道（環境変数）}
+\label{sec:escape}
+
+既定はすべて厳しい側に倒してある。緩める向きの環境変数があるが、
+既定で使うことは想定していない。一覧は \S\ref{sec:envvars} にある。
+
+\part{参考}
+
 \section{型検査が見るもの}
 
 \begin{center}
@@ -654,6 +1013,15 @@ select の照合       & \texttt{case} の arity と引数型が署名と一致�
 オーバーロード      & 候補が一意に決まるか（曖昧ならエラー） \\
 効果                & 宣言した効果が本体の効果を覆っているか。効果名は既知か \\
 期限                & \texttt{else} 節の型、期限が正であること、期限の有無 \\
+失敗の型            & \texttt{result}$\langle\tau\rangle$ を確かめずに使っていないか \\
+返信先の線形性      & \texttt{replyto} をちょうど一度使っているか \\
+\texttt{reply} の全域性 & \texttt{now}/\texttt{await} で待たれるメソッドが全経路で返すか \\
+資源                & \texttt{acquire}/\texttt{release} の対と、取得順序の閉路 \\
+義務レベル          & 待ちが必ず上へ向かうか。ノード境界も同じ \\
+セッション          & 送信の順序が \texttt{protocol\_define} の手順どおりか \\
+select              & 期限があるか、待つメッセージを誰かが送っているか \\
+未宣言への代入      & \texttt{var} で宣言していない名前へ代入していないか \\
+配備の境界          & 配るコードの効果が受け入れ側の方針に収まるか \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -679,6 +1047,19 @@ now: the else branch has type string but the call returns int
 now: timeout must be positive
 now without a deadline waits forever;
   write `now ... timeout <ms> else <expr>`      <- 既定は警告
+assignment to undeclared name: cout (write `var cout = ...` to declare it)
+no overload of + matches (result int, int)     <- result は確かめてから使う
+method Silent4.f is waited on by now/await but does not reply on every path
+resource i2c is released without being acquired
+method Dev4.use returns while still holding i2c
+resource order: cache -> db -> cache is circular; ...
+obligation level: B9#g (@2) waits on A9#f (@2);
+  a wait must go to a strictly higher level
+obligation levels do not converge; the wait graph has a cycle
+protocol P29: expected b.step2 but the program sends c.step3 here
+select waits for W2.ghost but nothing in this program sends it   <- 既定は警告
+select without a timeout waits forever                            <- 既定は警告
+deploy: Servo.step is @3 but node rt0 has floor @10
 \end{term}
 
 \section{外部公開}
@@ -759,8 +1140,15 @@ HTTP から渡される引数は文字列を \ty{int} $\to$ \ty{float} $\to$ \ty
 \part{サンプルプログラム}
 \label{part:sample}
 
-本節のサンプルは \texttt{docs/samples/guide/} にある。
-すべて型検査を通り、実行結果も掲載のとおりである。
+本節のサンプルは \texttt{docs/samples/guide/} にある 10 本である。
+すべて型検査を通り、実行結果も掲載のとおりで、
+\textbf{三つの処理系（OCaml 版・Python 版・JavaScript 版）で出力が一致する}
+ことを \texttt{tools/run\_all\_impls.sh} で確かめてある。
+
+より進んだ機能（\texttt{result}$\langle\tau\rangle$・返信先の委譲・資源の順序・
+義務レベル・セッション型・メッシュ配備）のサンプルは
+\texttt{docs/samples/paper/} に 20 本ある。
+本書 \S\ref{part:disciplines} の例はそこから採った。
 
 \section{g1: クラス・フィールド・\texttt{send}・文字列連結}
 
@@ -937,6 +1325,42 @@ not-eq: true
 \texttt{flag} は \texttt{false} で初期化されているので \ty{bool} に決まり、
 \texttt{set(v)} の引数も \ty{bool} に結線される。
 
+\section{g9: アクターを引数に渡す}
+
+\lstinputlisting{samples/guide/g9_actor_arg.aipl}
+
+\begin{term}
+got actor
+after send
+pong
+\end{term}
+
+引数に型注釈 \texttt{d: Device} を書くと、その引数のクラスが決まる。
+\texttt{Device} 以外を渡すと型エラーになる。
+この注釈は義務レベル（\S\ref{sec:levels}）の辺も張るので、
+\textbf{アクター型にレベルを載せる必要が無かった}のは、これが理由である。
+
+\section{g10: 別々のクラスが同じ名前のフィールドを持つ}
+
+\lstinputlisting{samples/guide/g10_shared_field_names.aipl}
+
+\begin{term}
+fork  = 1
+latch = 2
+\end{term}
+
+クラス本体は、そのクラスのフィールドの下で検査される。
+だから \texttt{Fork} の \texttt{held} と \texttt{Latch} の \texttt{held} は別物である。
+
+\begin{quote}\small
+これは退行防止のサンプルである。
+OCaml 版はフィールドを型環境に「重ねて」入れていたため、
+二つ目のクラスの \texttt{held} への代入が多重定義として弾かれていた
+（Python 版と JavaScript 版は正しく通していた）。
+手元の 586 本のうち 119 本が同名フィールドを持つ二つのクラスを含んでいたが、
+ほとんどで別のエラーが先に出て隠れていた。
+\end{quote}
+
 \section{負例の一覧}
 
 \texttt{docs/samples/reply\_inference/} には、\emph{通らないこと}を
@@ -1064,8 +1488,11 @@ decl       ::= "class" ID "{" field* method+ "}"
 field      ::= "var"   ID "=" expr ";"
              | "float" ID "=" expr ";"
 
-method     ::= "method" ID "(" params ")" ret? eff? "{" stmt+ "}"
+method     ::= "method" ID "(" params ")" ret? lvl? eff? "{" stmt+ "}"
+params     ::= (param ("," param)*)?
+param      ::= ID | ID ":" ClassName | ID ":" "reply"
 ret        ::= ":" ("int"|"float"|"string"|"bool"|"unit"|"any"|ClassName)
+lvl        ::= "@" INT                    -- 義務レベル。書かなければ推論
 eff        ::= "!" "{" (ID ("," ID)*)? "}"
 
 target     ::= ID
@@ -1081,7 +1508,6 @@ stmt       ::= ID "=" expr ";"
              | "if" "(" expr ")" stmt ("else" stmt)?
              | "while" expr "do" stmt
              | "{" stmt* "}"
-             | "become" ID "(" args ")" ";"
              | "select" "{" case* timeout_case? "}"
 
 case         ::= "case" ID "(" ids? ")" "->" "{" stmt+ "}"
@@ -1091,11 +1517,16 @@ expr       ::= INT | FLOAT | STRING | "true" | "false" | ID
              | "-" expr
              | expr ("=="|"!="|">"|"<"|">="|"<="|"++"|"+"|"-"|"*"|"/") expr
              | "new" ID "(" args ")"
-             | "now" target "." ID "(" args ")" ("timeout" INT "else" expr)?
+             | "now" target "." ID "(" args ")" deadline?
              | "future" target "." ID "(" args ")"
-             | "await" expr ("timeout" INT "else" expr)?
+             | "await" expr deadline?
+             | "replyto"                  -- 返信先を値として取り出す
              | ID "(" args ")"
              | "(" expr ")"
+
+-- else を書くと tau、書かないと result<tau> になる
+deadline   ::= "timeout" INT "else" expr
+             | "timeout" INT
 \end{term}
 
 演算子の優先順位は弱い順に、
@@ -1103,11 +1534,13 @@ expr       ::= INT | FLOAT | STRING | "true" | "false" | ID
 \texttt{>} \texttt{<} \texttt{>=} \texttt{<=} $\;<\;$
 \texttt{++} $\;<\;$
 \texttt{+} \texttt{-} $\;<\;$
-\texttt{*} \texttt{/} $\;<\;$ 単項マイナス。二項演算子は\textbf{すべて左結合}である（等値も含む）---- \texttt{1 == 2 == false} は \texttt{((1 == 2) == false)} と読まれて \texttt{true} になる。単項マイナスは前置なので重ねられる（\texttt{- - 3} は \texttt{3}）。
+\texttt{*} \texttt{/} $\;<\;$ 単項マイナス。二項演算子は\textbf{すべて左結合}である（等値も含む）--- \texttt{1 == 2 == false} は \texttt{((1 == 2) == false)} と読まれて \texttt{true} になる。単項マイナスは前置なので重ねられる（\texttt{- - 3} は \texttt{3}）。
 
 \section{処理系の環境変数}
 
-型検査と実行の挙動を変えるものが 6 つある。いずれも \texttt{1} を設定して有効にする。
+\label{sec:envvars}
+
+型検査と実行の挙動を変えるものがある。いずれも \texttt{1} を設定して有効にする。
 既定は「有効にしない」側である。
 
 \begin{center}
@@ -1133,6 +1566,21 @@ expr       ::= INT | FLOAT | STRING | "true" | "false" | ID
   差分テスト（\texttt{scripts/type\_runtime\_diff.py}）が使う \\
 \texttt{AIOS\_QUIET} &
   型検査器と REPL の情報メッセージを抑止する \\
+\texttt{AIOS\_STRICT\_PROTOCOL} &
+  セッションの手順が静的に並べきれない場合の「やり残し」を警告する。
+  既定は黙る（\S\ref{sec:session}） \\
+\texttt{AIOS\_STRICT\_RESOURCE} &
+  名前が文字列リテラルでない \texttt{acquire} の場所を知らせる。
+  そこは順序を検査できない（\S\ref{sec:resorder}） \\
+\texttt{AIOS\_SHOW\_LEVELS} &
+  推論した義務レベルと、資源の全体順序を表示する \\
+\texttt{AIOS\_LAX\_WAIT} &
+  循環待ちの検出をエラーから警告に落とす。既定はエラー \\
+\texttt{AIOS\_LAX\_ACTOR} &
+  アクター型を区別しない（\texttt{actor(A)} と \texttt{actor(B)} を単一化する）。
+  既定は区別する \\
+\texttt{AIOS\_LAX\_ASSIGN} &
+  未宣言の名前への代入を許す（従来動作）。既定はエラー \\
 \texttt{AIOS\_MODEL\_PROVIDER} &
   \texttt{ai\_call} が使うモデル事業者。既定は \texttt{gemini} \\
 \bottomrule
@@ -1172,59 +1620,138 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \item 型注釈つきの変数宣言 \texttt{var x : T = e;} が無い。
 \item \texttt{sender} は \ty{any} で、\texttt{send sender.m(...)} は
   メソッドの存在も型も検査されない。
-\item \texttt{send t.no\_such\_method()} が通る場合がある。
 \item リモート送信先（\texttt{remote(...)}）の戻り値は \ty{any} のまま。
   対向ノードのインタフェース記述を読み込む仕組みが無い。
-\item アクター型が単一化で区別されない
-  （\texttt{actor(A)} と \texttt{actor(B)} が単一化に成功する）。
-\item \texttt{become C(...)} はコンストラクタの引数しか検査せず、
-  置換後のインタフェースが元と一致するかを見ていない。
 \item メソッドの引数は単相で、多相なメソッドは書けない。
 \item \ty{int} と \ty{float} の間に暗黙変換が無く、
   両辺が未束縛の \texttt{a + b} は注釈が必要。
 \item 配列リテラル \texttt{[...]} は無い。
   \texttt{array\_empty} と \texttt{array\_push} で作る。
-\item 停止性は保証されない。デッドロック自由は
-  「期限付きの待ちだけを使う」場合に限る。
+\item 返信先（\texttt{replyto}）を\textbf{フィールドに持てない}。
+  引数として渡すことはできる（\S\ref{sec:reply1st}）。
+  フィールドは初期化子から型が決まるので \texttt{var w = 0;} は \ty{int} になり、
+  \texttt{w = replyto} が型不一致になる。
+\item 資源の全体順序が追えるのは、名前が\textbf{文字列リテラル}の
+  \texttt{acquire} だけである（\S\ref{sec:resorder}）。
+\item セッションの静的検査が届くのは\textbf{同期の呼び先}までである
+  （\S\ref{sec:session}）。
+\item 停止性は保証されない。デッドロック自由は「詰まらない」であって
+  「必ず終わる」ではない。\texttt{while 1 > 0 do \{\}} は止まらないが、
+  それは待ちではない。
 \end{itemize}
 
 \section{前版からの変更点}
 \label{sec:migrate}
 
-前版（対象コミット \texttt{04892cf}）以降の言語の変化は次の 3 点である。
-いずれも既存のプログラムを壊さない（既定では警告どまり）。
+前版（2026年07月30日版）以降の変化を挙げる。
+
+\subsection{言語から外したもの}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.6cm}@{}}
+\toprule
+ & 内容 \\
+\midrule
+\texttt{become} & \textbf{言語から外した}。ABCL/1 に無く、型を守る制限を課すと
+  状態フィールドと分岐で書くのとほぼ同じになり、
+  543 本の実プログラムで一つも使われていなかった。
+  振る舞いの差し替えは状態フィールドと \texttt{if} で書く \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{足したもの}
+
+いずれも\textbf{既存のプログラムを壊さない}。
+注釈は省略でき、省略すれば推論される。
 
 \begin{center}
 \small
 \begin{tabular}{@{}lp{7.4cm}l@{}}
 \toprule
- & 内容 & 影響 \\
+ & 内容 & 節 \\
 \midrule
-効果注釈 & \texttt{method m(x) : T !\{ai, net\}} を書けるようになった。
-  省略すれば推論のみ & 追加のみ \\
-期限付きの待ち & \texttt{now ... timeout $n$ else $e$} /
-  \texttt{await ... timeout $n$ else $e$}。期限なしは警告
-  （\texttt{AIOS\_STRICT\_DEADLINE=1} でエラー） & 追加＋警告 \\
-式の文法の補完 & \texttt{==} \texttt{!=} / 単項マイナス \texttt{-e} /
-  \texttt{true} \texttt{false} が書けるようになった & 追加のみ \\
+失敗の型 & \texttt{else} を書かない待ちは \texttt{result}$\langle\tau\rangle$ を返す
+  & \S\ref{sec:result} \\
+返信先の一級性 & \texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply}。線形に扱う
+  & \S\ref{sec:reply1st} \\
+資源の順序 & \texttt{acquire} / \texttt{release} の対と、取得の入れ子から読む全体順序
+  & \S\ref{sec:resorder} \\
+義務レベル & \texttt{@$n$}。書かなければ推論。ノード境界にも課す
+  & \S\ref{sec:levels} \\
+セッション型 & 実行時のプロトコル宣言を型検査の側でも読む
+  & \S\ref{sec:session} \\
+\texttt{select} の規律 & 期限の義務づけと、送り手の存在検査
+  & \S\ref{sec:selectrule} \\
+メッシュ配備 & ソースを送り、相手先で型検査してから実体化
+  & \S\ref{sec:mesh} \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-さらに前版の時点で導入済みだったもの（それ以前から移行が要る点）は、
-\texttt{+} から \texttt{++} への文字列連結の分離、
-曖昧なオーバーロードのエラー化、公開アクターへの注釈必須化、
-仮引数のシグネチャへの結線、二重 \texttt{reply} の禁止である。
-背景と測定結果は \texttt{docs/aipl\_reply\_inference\_ja.pdf} にある。
+\subsection{厳しくなったもの}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.6cm}@{}}
+\toprule
+ & 内容 \\
+\midrule
+未宣言への代入 & \texttt{var} で宣言していない名前への代入を\textbf{弾く}ようになった。
+  以前は黙って新しい変数ができ、フィールド名を打ち間違えても
+  何のエラーも出なかった（\texttt{AIOS\_LAX\_ASSIGN=1} で従来どおり） \\
+アクター型 & \texttt{actor(A)} と \texttt{actor(B)} を区別するようになった
+  （\texttt{AIOS\_LAX\_ACTOR=1} で従来どおり） \\
+\texttt{reply} の全域性 & \texttt{now}/\texttt{await} で待たれるメソッドは、
+  戻り値型に関わらず全経路で \texttt{reply} することを求める \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{拡張子}
+
+ソースの拡張子は \texttt{.aipl} である（\texttt{.abcl} は全廃した）。
+処理系は拡張子を見ていないので、古いファイルもそのまま読めるが、
+新しく書くものは \texttt{.aipl} にすること。
+
+\subsection{核と拡張 --- 言語は二層である}
+
+実装は三つあるが、\textbf{同じ言語ではない}。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{4.0cm}p{5.4cm}@{}}
+\toprule
+層 & どこが実装するか & 内容 \\
+\midrule
+\textbf{核} & 三実装すべて & 本書が述べている仕様 \\
+\textbf{拡張} & Python 実装のみ & 記録型・行多相・\texttt{where} による精緻化型・
+  CSP チャネル・所有（\texttt{pub}/\texttt{move}）・タプル・\texttt{match}・saga・
+  \texttt{scope \{ future ... \}} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{本書が仕様として述べるのは核だけである。}
+どちらの層に属するかは \texttt{tools/classify\_corpus.sh} で機械的に分かる
+（詳しくは \texttt{docs/AIPL\_LAYERS.md}）。
 
 \section{関連文書}
 
 \begin{itemize}
-\item \texttt{docs/aipl\_soundness2\_ja.pdf} ---
-  \textbf{型健全性・型安全性の第 2 版（最新）}。効果と期限を含む部分言語
-  AIPL$^{-2}$ の定式化と証明。進行定理が二択になりデッドロック自由が言えること、
-  効果を \ty{future} の型に載せる設計、モデルと実装のずれの一覧。
-\item \texttt{docs/aipl\_soundness\_ja.pdf} --- 同第 1 版（公開済み。並置してある）。
+\item \texttt{docs/aipl\_paper5\_ja.pdf} ---
+  \textbf{論文（第 5 版・最新）}。現在の仕様と、ABCL/1 および小林らの
+  型システムからの採否を、理由・メリット・デメリットつきでまとめたもの。
+\item \texttt{coq/AIPLSoundness2.v} ---
+  \textbf{機械検証（第 2 版）}。Coq/Rocq。\texttt{await} を含んだままの中核について、
+  型健全性・型安全性・デッドロック自由を証明してある（公理なし）。
+  三つが同時に成り立つ\textbf{最大の構文}の議論もヘッダに書いてある。
+\item \texttt{coq/AIPLSoundness.v} --- 同第 1 版
+  （デッドロック自由は \texttt{await} を除いた断片のみ）。
+\item \texttt{docs/AIPL\_LAYERS.md} ---
+  \textbf{AIPL は二層である}。核（三実装すべて）と拡張（Python 実装のみ）の定義と、
+  \texttt{tools/classify\_corpus.sh} による分類。
 \item \texttt{docs/aipl\_reply\_inference\_ja.pdf} ---
   \texttt{reply} からの戻り値型推論と注釈の設計根拠・測定結果。
 \item \texttt{docs/aipl\_vs\_abcl1\_ja.pdf} --- ABCL/1 との比較。
