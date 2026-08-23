@@ -1,9 +1,8 @@
-class Fork0 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } };
-class Fork1 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } };
-class Fork2 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } };
-class Fork3 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } };
-class Fork4 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } };
-
+class Fork0 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } }
+class Fork1 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } }
+class Fork2 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } }
+class Fork3 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } }
+class Fork4 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } }
 class Philosopher0 {
   var count = 0.0;
   method think_eat() {
@@ -15,8 +14,7 @@ class Philosopher0 {
     send Fork1.put();
     send self.think_eat();
   }
-};
-
+}
 class Philosopher1 {
   var count = 0.0;
   method think_eat() {
@@ -28,8 +26,7 @@ class Philosopher1 {
     send Fork2.put();
     send self.think_eat();
   }
-};
-
+}
 class Philosopher2 {
   var count = 0.0;
   method think_eat() {
@@ -41,8 +38,7 @@ class Philosopher2 {
     send Fork3.put();
     send self.think_eat();
   }
-};
-
+}
 class Philosopher3 {
   var count = 0.0;
   method think_eat() {
@@ -54,8 +50,7 @@ class Philosopher3 {
     send Fork4.put();
     send self.think_eat();
   }
-};
-
+}
 class Philosopher4 {
   var count = 0.0;
   method think_eat() {
@@ -67,4 +62,4 @@ class Philosopher4 {
     send Fork0.put();
     send self.think_eat();
   }
-};
+}
