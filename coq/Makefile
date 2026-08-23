@@ -16,6 +16,10 @@ ABCM.vo: ABCM.v
 	$(COQC) $(COQFLAGS) ABCM.v
 AIPLSoundness.vo: AIPLSoundness.v
 	$(COQC) $(COQFLAGS) AIPLSoundness.v
+AIPLSoundness2.vo: AIPLSoundness2.v
+	$(COQC) $(COQFLAGS) AIPLSoundness2.v
+AIPLSoundness2Example.vo: AIPLSoundness2Example.v AIPLSoundness2.vo
+	$(COQC) $(COQFLAGS) AIPLSoundness2Example.v
 AIPLDining.vo: AIPLDining.v AIPLSoundness.vo
 	$(COQC) $(COQFLAGS) AIPLDining.v
 ABCMEmbedding.vo: ABCMEmbedding.v AIPLSoundness.vo ABCM.vo
