@@ -1,6 +1,6 @@
 class Pinger {
-  method init() {
     var x = 1.;
+  method init() {
     print("Pinger starting");
     send ponger.ping(x);
   }

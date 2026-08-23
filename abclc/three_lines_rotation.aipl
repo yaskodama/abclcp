@@ -16,7 +16,11 @@ class Line {
   var angle = 0.0;
   var offset = 0.0;
   var len = 50.0;
-  var window = 0;   // FIXME: アクターを保持するフィールド
+  // 核では、アクターを持つフィールドは new で初期化してから差し替える
+  var window = new Window();
+
+  method set_window(w: Window) : unit !{mut} { window = w; }
+  method set_offset(v)         : unit !{mut} { offset = v; }
 
   method rotate() {
     angle = angle + 5.0;
@@ -38,7 +42,7 @@ class Line {
 }
 
 var win = new Window();
-send win.create(400, 400, "Rotating Lines");
+send win.create(400.0, 400.0, "Rotating Lines");  // sdl_init は float で解決される
 
 var line1 = new Line();
 

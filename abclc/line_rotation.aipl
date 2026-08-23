@@ -1,9 +1,23 @@
+// このファイルには Window クラスが無く、window だけを参照していた（断片）。
+// three_lines_rotation.aipl と同じ形で補う。
+class Window {
+  method create(width, height) : unit !{io} { sdl_init(width, height); }
+  method drawLine(x1, y1, x2, y2) : unit !{io} {
+    sdl_clear();
+    sdl_line(x1, y1, x2, y2);
+    sdl_present();
+  }
+}
+
 class Line {
   var x1 = 100.0;
   var y1 = 100.0;
   var x2 = 200.0;
   var y2 = 100.0;
   var angle = 0.0;
+  var window = new Window();
+
+  method set_window(w: Window) : unit !{mut} { window = w; }
 
   method rotate() {
     angle = angle + 5.0;
@@ -23,3 +37,9 @@ class Line {
     send self.rotate();
   }
 }
+
+var win = new Window();
+send win.create(400.0, 400.0);
+var line = new Line();
+send line.set_window(win);
+send line.rotate();

@@ -1,6 +1,6 @@
 class Pinger {
-  method ping() { call print("ping"); }
+  method ping() : unit !{log} { print("ping"); }
 }
 
-var pinger = new Pinger();   // init は未定義
-send pinger ping();
+var pinger = new Pinger();
+send pinger.ping();

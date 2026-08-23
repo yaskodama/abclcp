@@ -4,62 +4,77 @@ class Fork2 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } e
 class Fork3 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } }
 class Fork4 { var held = 0.0; method take() { if (held == 0.0) { held = 1.0; } else { send self.take(); } } method put() { held = 0.0; } }
 class Philosopher0 {
+  var f_fork0 = new Fork0();
+  var f_fork1 = new Fork1();
+
   var count = 0.0;
   method think_eat() {
-    send Fork0.take();
-    send Fork1.take();
+    send f_fork0.take();
+    send f_fork1.take();
     count = count + 1.0;
     print(count);
-    send Fork0.put();
-    send Fork1.put();
+    send f_fork0.put();
+    send f_fork1.put();
     send self.think_eat();
   }
 }
 class Philosopher1 {
+  var f_fork1 = new Fork1();
+  var f_fork2 = new Fork2();
+
   var count = 0.0;
   method think_eat() {
-    send Fork1.take();
-    send Fork2.take();
+    send f_fork1.take();
+    send f_fork2.take();
     count = count + 1.0;
     print(count);
-    send Fork1.put();
-    send Fork2.put();
+    send f_fork1.put();
+    send f_fork2.put();
     send self.think_eat();
   }
 }
 class Philosopher2 {
+  var f_fork2 = new Fork2();
+  var f_fork3 = new Fork3();
+
   var count = 0.0;
   method think_eat() {
-    send Fork2.take();
-    send Fork3.take();
+    send f_fork2.take();
+    send f_fork3.take();
     count = count + 1.0;
     print(count);
-    send Fork2.put();
-    send Fork3.put();
+    send f_fork2.put();
+    send f_fork3.put();
     send self.think_eat();
   }
 }
 class Philosopher3 {
+  var f_fork3 = new Fork3();
+  var f_fork4 = new Fork4();
+
   var count = 0.0;
   method think_eat() {
-    send Fork3.take();
-    send Fork4.take();
+    send f_fork3.take();
+    send f_fork4.take();
     count = count + 1.0;
     print(count);
-    send Fork3.put();
-    send Fork4.put();
+    send f_fork3.put();
+    send f_fork4.put();
     send self.think_eat();
   }
 }
 class Philosopher4 {
+  var f_fork0 = new Fork0();
+  var f_fork4 = new Fork4();
+
   var count = 0.0;
   method think_eat() {
-    send Fork4.take();
-    send Fork0.take();
+    send f_fork4.take();
+    send f_fork0.take();
     count = count + 1.0;
     print(count);
-    send Fork4.put();
-    send Fork0.put();
+    send f_fork4.put();
+    send f_fork0.put();
     send self.think_eat();
   }
 }

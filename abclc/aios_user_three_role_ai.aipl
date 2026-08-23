@@ -1,6 +1,6 @@
 class Planner {
-  method plan(q) {
     var sketch = ai_call_with_system(
+  method plan(q) {
       "You are a planner. Output a 1-line plan, no preamble.",
       q);
     reply(sketch);
@@ -8,8 +8,8 @@ class Planner {
 }
 
 class Solver {
-  method solve(plan) {
     var ans = ai_call_with_system(
+  method solve(plan) {
       "You are a solver. Apply the given plan and answer concisely.",
       plan);
     reply(ans);
@@ -17,8 +17,8 @@ class Solver {
 }
 
 class Reviewer {
-  method review(ans) {
     var verdict = ai_call_with_system(
+  method review(ans) {
       "You are a reviewer. Reply with 'OK: <reason>' or 'NG: <reason>' only.",
       ans);
     reply(verdict);

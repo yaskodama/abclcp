@@ -3,6 +3,9 @@ class Line {
   method rotate() {
     angle = angle + 0.5;
     print(angle);
-    send Line.rotate();
+    send self.rotate();   // 旧方言はクラス名を単体アクターとして送っていた
   }
 }
+
+var line = new Line();
+send line.rotate();

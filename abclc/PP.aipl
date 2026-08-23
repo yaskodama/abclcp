@@ -1,8 +1,17 @@
+// もとは ponger をどこにも定義していない断片だった。
+// 核ではアクターを持つフィールドは new で初期化する。
+class Ponger {
+  method ping() : unit !{log} { print("pong"); }
+}
+
 class Pinger {
-  method start() {
+  var ponger = new Ponger();
+
+  method start() : unit !{log} {
     print("Pinger starting");
     send ponger.ping();
- }
+  }
 }
 
 var pinger = new Pinger();
+send pinger.start();

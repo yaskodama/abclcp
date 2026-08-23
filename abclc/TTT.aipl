@@ -1,6 +1,6 @@
 class TTT {
-  method start() {
     var x = 21;
+  method start() {
     print(typeof(x));
   }
 }

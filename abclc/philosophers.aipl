@@ -16,8 +16,14 @@ class Fork {
 
 class Philosopher {
   var id = 0;
-  var leftFork = 0;   // FIXME: アクターを保持するフィールド
-  var rightFork = 0;   // FIXME: アクターを保持するフィールド
+  // 核では、アクターを持つフィールドは new で初期化してから差し替える。
+  // ここで作る Fork は場所取りで、set_ で本物に置き換わる。
+  var leftFork = new Fork();
+  var rightFork = new Fork();
+
+  method set_id(v)          : unit !{mut} { id = v; }
+  method set_leftFork(f: Fork)  : unit !{mut} { leftFork = f; }
+  method set_rightFork(f: Fork) : unit !{mut} { rightFork = f; }
 
   method think() {
     send self.hungry();

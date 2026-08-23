@@ -1,9 +1,9 @@
 class Line {
-  method init(a_cx, a_cy, a_angle) { cx = a_cx; cy = a_cy; angle = a_angle; }
   var angle = 0.0;
-  var cx = 320;
-  var cy = 240;
-  var length = 100;
+  var cx = 320.0;
+  var cy = 240.0;
+  var length = 100.0;
+  method init(a_cx, a_cy, a_angle) { cx = a_cx; cy = a_cy; angle = a_angle; }
 
   method spin() {
     sdl_clear();
@@ -18,6 +18,6 @@ class Line {
   }
 }
 
-var l1 = new Line(200, 200, 0);
-var l2 = new Line(400, 300, 1);
-var l3 = new Line(300, 400, 2);
+var l1 = new Line(200.0, 200.0, 0.0);
+var l2 = new Line(400.0, 300.0, 1.0);
+var l3 = new Line(300.0, 400.0, 2.0);
