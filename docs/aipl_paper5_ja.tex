@@ -110,6 +110,9 @@ ABCL/1 からは三種のメッセージ送信・オブジェクト内部の逐�
 なお本稿が仕様として述べるのは、三実装すべてが備える\textbf{核}である ---
 Python 版はこれに記録型・精緻化型・チャネル・所有などの\textbf{拡張}を持っており、
 言語は二層になっている（\S\ref{sec:layers}）。
+デッドロック自由については\textbf{機械検証}まで進めた ---
+Coq/Rocq で、\texttt{await} を含んだままの言語について
+公理なしで証明してある（\S\ref{sec:coq}）。
 \end{abstract}
 
 \tableofcontents
@@ -1638,6 +1641,8 @@ deploy: Servo.step is @3 but node rt0 has floor @10
 \paragraph{到達点。}
 \textbf{待ちの宛先がクラスとして分かるか、宛先ノードのレベルが宣言されている範囲では、
 デッドロック自由が型で保証される。}
+この主張は紙の上だけではない ---
+\S\ref{sec:coq} で、\texttt{await} を含んだままの中核について機械検証してある。
 注釈は要らない --- 推論が埋める。
 注釈を書けば、コードが持つ構造より\textbf{強い規律}を課せる。
 その外側は、期限が有限時間の失敗に変換する。
@@ -2334,24 +2339,130 @@ OCaml は落ちるが Python 版が通す & 拡張 \\
 検査は、通す側からは見えない。
 \end{finding}
 
-\subsection{機械検証との距離}
+\subsection{機械検証 --- $\mathrm{AIPL}^{-2}$}
+\label{sec:coq}
 
-正直に書いておくべきことがある。
-機械検証（Coq/Rocq、\texttt{AIPLSoundness.v}、1121 行、\texttt{Print Assumptions} が公理なし）が
-済んでいるのは、\textbf{効果も期限も持たない中核} $\mathrm{AIPL}^{-}$ である ---
-保存定理・進行定理・型安全性・\texttt{method not understood} の不在・
-非同期送信のデッドロック自由性が示されている。
-効果と期限を加えた $\mathrm{AIPL}^{-2}$ 以降は紙の上の証明であり、
-本稿の七つの規律は機械検証されていない。
-\textbf{実装と機械検証の距離は、縮まるどころか広がっている}。
+機械検証は Coq/Rocq 9.1.0 で行っている。二つの版がある。
 
-これは望ましくないが、避けがたくもある。
-機構を足すたびに形式化を追いかけると、
-「実装が何をしているか」を確かめる速度が落ちる。
+\paragraph{第 1 版 $\mathrm{AIPL}^{-}$（1{,}121 行）。}
+効果も期限も持たない中核について、
+保存定理・進行定理・型安全性・\texttt{method not understood} の不在を示した。
+デッドロック自由については\textbf{\texttt{await} を言語から取り除いた断片}
+（非同期送信だけの断片）についてしか言えていなかった。
+待てる構文を捨てて「待ちが返らない」を消していたのだから、当然である。
+
+\paragraph{第 2 版 $\mathrm{AIPL}^{-2}$（1{,}314 行）。}
+\texttt{await} を含んだままデッドロック自由を証明した。
+道具は本稿の\textbf{義務レベル}（\S\ref{sec:dl3}）そのものである。
+形式化に足したのは四つだけである。
+
+\begin{center}
+\small
+\begin{tabular}{p{0.24\textwidth}p{0.68\textwidth}}
+\toprule
+足したもの & 内容 \\
+\midrule
+future の型にレベル & $\mathtt{TFut} : \tau \to \mathbb{N} \to \mathtt{ty}$ ---
+  「この future を埋めるのはレベル $n$ のメソッドである」 \\
+判断にレベル & $\Gamma \vdash_{C,L} e : \tau$ ---
+  いま検査しているメソッドの義務レベル $L$ \\
+待ちの規則 & $\Gamma \vdash_{C,L} e : \mathtt{future}\langle\tau\rangle@n$
+  かつ $L < n$ ならば $\Gamma \vdash_{C,L} \mathtt{await}\ e : \tau$ \\
+実行時の不変条件 & 未解決の future には必ず\textbf{埋める者}がいる ---
+  メールボックスの中のメッセージか、走っているタスクである \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+証明は「レベルが最大のタスクを取る」ことで進む。
+全タスクが待ちだと仮定する。レベル最大のタスクも待っている。
+待っている先の future はそれより真に上のレベルである（待ちの規則）。
+その future には埋める者がいる（不変条件）。
+メールボックスは空だから埋める者はタスクであり、そのレベルは上である。
+レベル最大に反する。
+
+その結果、第 1 版の進行定理から\textbf{枝が一つ消えた}。
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+& 進行定理の主張 \\
+\midrule
+第 1 版 & 終状態 $\lor$ 一歩進める $\lor$ \textbf{全タスクが待ち} \\
+第 2 版 & 終状態 $\lor$ 一歩進める \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+主定理は九つあり、いずれも \texttt{Print Assumptions} が
+\texttt{Closed under the global context}（公理なし）である。
+
+\subsection{証明できる最大の構文}
+
+第 2 版を作るにあたって、\textbf{三つ（健全性・安全性・デッドロック自由）が
+同時に成り立つ範囲はどこまでか}を機構ごとに調べた。
+
+\paragraph{入れても保たれるもの。}
+\texttt{while} と逐次実行を入れた。
+止まらない繰り返しは「デッドロック」ではなく「停止しない」であって、
+進行定理は一歩進めることしか言っていないので、三つとも保たれる。
+\texttt{while} は \texttt{if} へ展開する形にしたので束縛を作らず、
+変数捕獲の心配が無い。
+動的なアクター生成と \texttt{future} の入れ子も入る ---
+レベルは式の位置ではなくメソッドに付くので、入れ子でも同じ条件で足りる。
+
+\paragraph{入れると壊れるもの。}
+
+\begin{center}
+\small
+\begin{tabular}{p{0.26\textwidth}p{0.66\textwidth}}
+\toprule
+機構 & 壊れるもの \\
+\midrule
+\texttt{select} & 待つ相手が誰かは型に現れないので、レベルが効かない。
+  進行の枝が増え、デッドロック自由が壊れる
+  （実装では期限の義務づけと送り手の存在検査で補っている、\S\ref{sec:select3}） \\
+\texttt{timeout} & 時間を意味論に入れる必要がある。進行は保てるが、
+  主張が「詰まらない」から「詰まっても諦める」に変わる \\
+\texttt{any}・多重定義・多相 & 標準形補題が壊れる。
+  値の形が型から決まらないので進行が通らない \\
+\texttt{become} & 受け手のクラスが実行時に変わると、
+  配送時に型が合っている保証が崩れる \\
+他アクターの状態への代入 & 「各アクターの状態は宣言型を持つ」が保てない \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{finding}
+この線引きは、\S\ref{sec:table} の採否の判断と\textbf{独立に}引いたのに、
+ほぼ同じところに落ちた。
+\texttt{become} も \texttt{any} も多相も、設計として落とした理由と、
+証明が通らない理由が一致している。
+\textbf{証明の通る範囲は、設計判断の後追いではなく、その裏づけであった}。
+\end{finding}
+
+\subsection{それでも残る距離}
+
+正直に書いておくべきことは残る。
+機械検証されたのは\textbf{効果と期限を持たない中核}である。
+本稿の七つの規律のうち、機械検証まで届いたのは
+\textbf{デッドロック自由（義務レベル）}だけで、
+効果・期限・\texttt{result}$\langle\tau\rangle$・返信先の線形性・
+資源の順序・セッション型は紙の上の議論である。
+
 現状は、\textbf{機械検証の代わりに「弾かれるべきプログラム」31 本}が
 実装の規律を押さえている。
 これは証明ではないが、\textbf{三つの実装すべてに同じ問いを投げられる}という利点がある ---
 証明は一つのモデルについてしか言えない。
+
+\paragraph{空虚でないことの確認。}
+形式化の定理はすべて「プログラムが型検査を通っている」という仮定のもとにある。
+レベルの条件が満たせないなら定理は空虚なので、
+\texttt{await} を実際に使い \texttt{while} も含むプログラムを一つ形式化し、
+仮定をすべて満たすこと、初期構成が不変条件を満たすこと、
+したがってデッドロック自由が適用できることを確かめた。
+併せて\textbf{レベルを同じにすると本体の型検査が通らない}ことも確かめた ---
+条件が実際に効いていることの対照である。
 
 % =====================================================================
 \section{考察}
@@ -2505,9 +2616,12 @@ class Latch { var held = 0; method arm()  : int !{mut} { held = 2; reply(held); 
 \item \textbf{メソッド内で起きた失敗の伝わり方}。
       呼び出し側の \texttt{now ... timeout ... else} が何を返すかが
       三実装で違う。\texttt{result}$\langle\tau\rangle$ に載せる道と揃える必要がある。
-\item \textbf{$\mathrm{AIPL}^{-2}$ 以降の機械検証}。
-      効果つき判断、期限、\texttt{future}$\langle\tau\,!\,\varepsilon\rangle$、
-      そして七つの規律。
+\item \textbf{効果と期限の機械検証}。
+      デッドロック自由（義務レベル）は $\mathrm{AIPL}^{-2}$ で機械検証まで届いたが
+      （\S\ref{sec:coq}）、効果つき判断・期限・\texttt{result}$\langle\tau\rangle$・
+      返信先の線形性・資源の順序・セッション型は紙の上の議論のままである。
+      次に形式化するなら効果である ---
+      判断に $\varepsilon$ を足すだけなので、動く部分が少ない。
 \item \textbf{実機のメッシュへの接続}。
       配備の輸送は現状ひとつのプロセス内で模している。
       Xinu ノード間の実際の転送に差し替える。

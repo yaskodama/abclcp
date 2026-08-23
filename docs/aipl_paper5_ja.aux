@@ -142,7 +142,7 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.3}s03 --- \texttt  {reply} の規律}{29}{subsection.9.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.4}s04 --- 効果}{29}{subsection.9.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.5}s05 --- 期限}{29}{subsection.9.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.6}s06 --- 実時間側の防壁}{29}{subsection.9.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.6}s06 --- 実時間側の防壁}{30}{subsection.9.6}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.7}s07 --- \texttt  {select}}{30}{subsection.9.7}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.8}s08 --- 状態機械}{30}{subsection.9.8}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.9}s09 --- アクターを引数に渡す}{31}{subsection.9.9}\protected@file@percent }
@@ -150,7 +150,7 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.11}s11 --- メッシュへの配備}{32}{subsection.9.11}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.12}s12 --- 失敗を型で表す}{32}{subsection.9.12}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.13}s13 --- 資源の取得と解放}{32}{subsection.9.13}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {9.14}s14 --- 返信先の委譲}{32}{subsection.9.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.14}s14 --- 返信先の委譲}{33}{subsection.9.14}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.15}s15 --- 義務レベル}{33}{subsection.9.15}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.16}s16 --- ノードをまたぐ義務レベル}{33}{subsection.9.16}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.17}s17 --- \texttt  {select} の規律}{33}{subsection.9.17}\protected@file@percent }
@@ -166,24 +166,31 @@
 \@writefile{toc}{\contentsline {paragraph}{核では書けないもの。}{36}{section*.65}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {10.2}現在の状態}{36}{subsection.10.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {10.3}仕様を変えるときの手順}{36}{subsection.10.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.4}機械検証との距離}{37}{subsection.10.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {11}考察}{37}{section.11}\protected@file@percent }
-\newlabel{sec:discuss}{{11}{37}{考察}{section.11}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {11.1}採否の判断は一貫していたか}{37}{subsection.11.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{軸 1 --- 反例が AIPL の言葉で出るか。}{37}{section*.66}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{軸 2 --- 証明の構造を壊さないか。}{37}{section*.67}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{軸 3 --- 実際に書かれているか。}{37}{section*.68}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {11.2}型・効果・期限という三点セットの評価}{38}{subsection.11.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {11.3}足した機構に共通していたこと}{38}{subsection.11.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {11.4}「正」の実装という考え方の限界}{38}{subsection.11.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{実例 --- 二つが正しく、正が間違っていた。}{38}{section*.69}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {11.5}残っている課題}{39}{subsection.11.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.4}機械検証 --- $\mathrm {AIPL}^{-2}$}{37}{subsection.10.4}\protected@file@percent }
+\newlabel{sec:coq}{{10.4}{37}{機械検証 --- $\mathrm {AIPL}^{-2}$}{subsection.10.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{第 1 版 $\mathrm {AIPL}^{-}$（1{,}121 行）。}{37}{section*.66}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{第 2 版 $\mathrm {AIPL}^{-2}$（1{,}314 行）。}{37}{section*.67}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.5}証明できる最大の構文}{38}{subsection.10.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{入れても保たれるもの。}{38}{section*.68}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{入れると壊れるもの。}{38}{section*.69}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.6}それでも残る距離}{38}{subsection.10.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{空虚でないことの確認。}{38}{section*.70}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11}考察}{39}{section.11}\protected@file@percent }
+\newlabel{sec:discuss}{{11}{39}{考察}{section.11}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.1}採否の判断は一貫していたか}{39}{subsection.11.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{軸 1 --- 反例が AIPL の言葉で出るか。}{39}{section*.71}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{軸 2 --- 証明の構造を壊さないか。}{39}{section*.72}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{軸 3 --- 実際に書かれているか。}{39}{section*.73}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.2}型・効果・期限という三点セットの評価}{39}{subsection.11.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.3}足した機構に共通していたこと}{39}{subsection.11.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.4}「正」の実装という考え方の限界}{40}{subsection.11.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{実例 --- 二つが正しく、正が間違っていた。}{40}{section*.74}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.5}残っている課題}{40}{subsection.11.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12}おわりに}{41}{section.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{分かったこと。}{41}{section*.75}\protected@file@percent }
 \bibcite{abcl1}{1}
 \bibcite{abclbook}{2}
 \bibcite{abclf}{3}
-\@writefile{toc}{\contentsline {section}{\numberline {12}おわりに}{40}{section.12}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{分かったこと。}{40}{section*.70}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{仕様は、書くだけでは検査されない。}{40}{section*.71}\protected@file@percent }
 \bibcite{abclr}{4}
 \bibcite{hewitt}{5}
 \bibcite{kobayashi94}{6}
@@ -197,10 +204,11 @@
 \bibcite{otp}{14}
 \bibcite{selfpaper1}{15}
 \bibcite{selfpaper2}{16}
+\@writefile{toc}{\contentsline {paragraph}{仕様は、書くだけでは検査されない。}{42}{section*.76}\protected@file@percent }
 \bibcite{selfvsabcl1}{17}
 \bibcite{selffeatures}{18}
 \bibcite{selfsound2}{19}
 \bibcite{selfreply}{20}
 \bibcite{selfguide}{21}
 \bibcite{selfkoba}{22}
-\gdef \@abspage@last{41}
+\gdef \@abspage@last{43}
