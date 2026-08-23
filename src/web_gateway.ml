@@ -790,9 +790,11 @@ let handle_api_log (query:(string,string) Hashtbl.t) =
     | None -> -1
   in
 
-  (* sid が無い場合は空を返す（または従来ログを返す方針でも可） *)
+  (* sid が無ければ全体のログを返す。ダッシュボードは print の出力を
+     `/api/log?after=N` で増分ポーリングするので、session を持たない
+     クライアントにも従来どおり見えている必要がある。 *)
   let (next_id, lines) =
-    if sid = "" then (-1, [])
+    if sid = "" then Eval_thread.get_web_logs_since (if after < 0 then 0 else after)
     else Eval_thread.get_sid_logs_since sid after
     in
      let esc s =
@@ -997,6 +999,52 @@ let read_file (path:string) : string =
   close_in ic;
   s
 
+(* --- 静的ファイルの配布 -------------------------------------------------
+   AIPL_WEB_ROOT が指すディレクトリの中身を、そのままのパスで配る。
+   ダッシュボードの HTML/JS/データをアプリ側のリポジトリに置いたまま、
+   同一オリジンで（＝CORS 無しで）配れるようにするための口。
+   拡張子の無いパスは <name>.html も試す。`..` を含むパスは断る。 *)
+let web_root () : string option =
+  match Sys.getenv_opt "AIPL_WEB_ROOT" with
+  | Some d when d <> "" && Sys.file_exists d -> Some d
+  | _ -> None
+
+let content_type_of (name:string) : string =
+  let ends_with suf =
+    let ls = String.length suf and ln = String.length name in
+    ln >= ls && String.sub name (ln - ls) ls = suf in
+  if ends_with ".html" then "text/html; charset=utf-8"
+  else if ends_with ".js" then "application/javascript; charset=utf-8"
+  else if ends_with ".json" then "application/json; charset=utf-8"
+  else if ends_with ".css" then "text/css; charset=utf-8"
+  else if ends_with ".svg" then "image/svg+xml"
+  else if ends_with ".png" then "image/png"
+  else "text/plain; charset=utf-8"
+
+let serve_static (path:string) : (int * string * string) option =
+  match web_root () with
+  | None -> None
+  | Some root ->
+      let rel = if String.length path > 0 && path.[0] = '/'
+                then String.sub path 1 (String.length path - 1) else path in
+      let bad =
+        rel = "" ||
+        (let n = String.length rel in
+         let rec has_dotdot i =
+           i + 1 < n && ((rel.[i] = '.' && rel.[i+1] = '.') || has_dotdot (i+1)) in
+         has_dotdot 0) in
+      if bad then None
+      else
+        let candidates = [ Filename.concat root rel;
+                           Filename.concat root (rel ^ ".html") ] in
+        let rec loop = function
+          | [] -> None
+          | f :: tl ->
+              if Sys.file_exists f && not (Sys.is_directory f) then
+                Some (200, content_type_of f, read_file f)
+              else loop tl in
+        loop candidates
+
 let handle_client (client: file_descr) : unit =
   let ic = in_channel_of_descr client in
   let oc = out_channel_of_descr client in
@@ -1064,14 +1112,23 @@ let handle_client (client: file_descr) : unit =
                             String.sub path 0 (String.length "/api/json/x/") = "/api/json/x/" ->
                let key=String.sub path (String.length "/api/json/x/") (String.length path - String.length "/api/json/x/") in
                handle_send_exposed_json ~key body
+           | "GET", _ when serve_static path <> None ->
+               (match serve_static path with
+                | Some r -> r
+                | None -> (404, "text/plain; charset=utf-8", "not found"))
            | _ -> (404, "text/plain; charset=utf-8", "not found")
          in
          safe_write (http_response ~code ~content_type:ctype resp_body)
    with
    | Exit -> ()
    | _ -> ());
-  (try close_in ic with _ -> ());
-  (try close_out oc with _ -> ());
+  (* ソケットは**一度だけ**閉じる。以前は close_in / close_out / Unix.close の
+     三重閉じで、最初の close で空いた fd 番号を別スレッドの accept が拾った
+     直後に二度目の close が走り、その接続を切っていた（新しいスレッドが
+     in_channel_of_descr で EBADF を投げて死ぬ）。ダッシュボードのように
+     短い接続を高頻度で張ると ERR_CONNECTION_RESET が多発する。
+     出力は safe_write が毎回 flush しているので、ここで flush は要らない。 *)
+  ignore ic; ignore oc;
   (try Unix.close client with _ -> ())
   
 let start ~(port:int) : unit =

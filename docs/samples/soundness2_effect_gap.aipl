@@ -1,3 +1,4 @@
+// @expect reject: 効果の穴を示す例。指摘が出るのが正しい
 class Planner {
   method plan(g) : string !{ai, net} { reply(ai_call("plan " ++ g)); }
 }

@@ -294,7 +294,12 @@ let push_web_log (s:string) =
   incr web_log_next_id;
   web_logs := (id, s) :: !web_logs;
   if List.length !web_logs > web_log_limit then
-    web_logs := List.rev (take web_log_limit (List.rev !web_logs));
+    (* 新しい方を残す。web_logs は新しい順なので先頭から取る。
+       以前は List.rev で挟んでいたため**古い方 500 行を残して**いた ----
+       500 行を超えた瞬間からログが凍り、/api/log?after= が何も返さなくなる
+       （ダッシュボードが数分で止まって見える）。他のログ(sid/evt/protocol)は
+       最初から `take limit !list` で正しい。 *)
+    web_logs := take web_log_limit !web_logs;
   Mutex.unlock web_log_mutex
 
 let get_web_logs_since (after:int) : (int * string list) =
