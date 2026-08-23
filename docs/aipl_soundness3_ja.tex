@@ -108,7 +108,13 @@ AIPL$^-$ について型健全性と型安全性を Coq で機械検証した。
 \end{tabular}
 \end{center}
 
-定理は九つあり、いずれも \texttt{Print Assumptions} が
+併せて\textbf{効果}も形式化に入れた。\texttt{future} の型に
+レベルと同じやり方で効果を載せ、\textbf{送信は引き継がず待ちが引き継ぐ}という
+実装どおりの規則を与えると、効果の健全性が保存定理から出る ----
+\textbf{メソッドが宣言した効果は、\texttt{now} で呼んだ先も含めて、
+そのメソッドが実際に行うことを覆っている}。
+
+定理は十三あり、いずれも \texttt{Print Assumptions} が
 \texttt{Closed under the global context}（公理なし）である。
 併せて、三つの性質（健全性・安全性・デッドロック自由）が同時に成り立つ
 \textbf{最大の構文}を機構ごとに調べ、
@@ -141,7 +147,8 @@ AIPL$^-$ について型健全性と型安全性を Coq で機械検証した。
 第 2 版 & 2026-07-30 & 紙 &
   期限を必須にして、\textbf{有限時間の失敗}に変換する \\
 \textbf{第 3 版（本稿）} & 2026-08-23 & \textbf{機械検証（Coq）} &
-  \texttt{await} を含んだまま、\textbf{そもそも詰まらない}ことを言う \\
+  \texttt{await} を含んだまま、\textbf{そもそも詰まらない}ことを言う。
+  効果も機械検証に入れた \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -163,9 +170,10 @@ AIPL$^-$ について型健全性と型安全性を Coq で機械検証した。
 名前が衝突しているのは、どちらも「第 1 版の次」を意味していたためである。
 
 本稿では、\textbf{機械検証された言語}を AIPL$^{-2}$ と呼ぶ。
-第 2 版の言語を区別して指す必要があるときは AIPL$^{-\mathcal{E}}$（効果つき）と書く。
-両者は排他ではない --- 効果を本稿の形式化に足せば一本化できる
-（\S\ref{sec:remains}）。
+第 2 版の言語を区別して指す必要があるときは AIPL$^{-\mathcal{E}}$ と書く。
+
+なお本稿の執筆中に\textbf{効果を機械検証へ合流させた}（\S\ref{sec:effects}）。
+残る隔たりは\textbf{期限}だけである。
 \end{remark}
 
 \section{何を証明したいのか}
@@ -419,6 +427,11 @@ $\prodok$ が第 3 版で足したものである。
 \texttt{deadlock\_free\_star} & 到達できる構成すべてについて同じことを言う \\
 \texttt{state\_type\_invariant} & どの時点でも各アクターの状態は宣言型を持つ \\
 \texttt{future\_type\_invariant} & 解決済み \texttt{future} の値は宣言された返り値型を持つ \\
+\addlinespace
+\texttt{effect\_no\_increase} & 一歩進んでも効果は増えない \\
+\texttt{effect\_soundness} & タスクの効果は宣言された効果に収まり続ける \\
+\texttt{await\_charges\_callee} & 待つと呼び先の効果を必ず引き継ぐ \\
+\texttt{send\_does\_not\_charge} & 送るだけでは引き継がない \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -569,6 +582,103 @@ $\mathrm{bodies\_ok}$ をすべて Coq で証明し、
 $\mathrm{bodies\_ok}$ の証明が通らなくなる ---
 $0 < 0$ が示せないからである。条件が実際に効いている。
 
+\section{効果}
+\label{sec:effects}
+
+レベルを載せたのと\textbf{同じやり方}で効果も載せた。
+
+\subsection{型に載せる}
+
+\[
+\tfutl{\tau}{n} \;\longrightarrow\;
+\mathtt{future}\langle \tau \rangle @ n \,!\, \varepsilon
+\]
+
+判断も一つ増える。
+
+\[
+\Om;\Ph \vdash_{c,L}\ \Gamma \vdash e : \tau \,!\, \varepsilon
+\]
+
+$\varepsilon$ は効果名の集合である（形式化では \texttt{list nat}、
+包含は \texttt{incl}、合併は \texttt{++}）。
+
+\subsection{規則の要は二つ}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.6cm}@{}}
+\toprule
+規則 & 効果 \\
+\midrule
+送信 & $\mathtt{future}\ e_0.m(e_1)$ の効果は
+  $\varepsilon_0 \cup \varepsilon_1$ である ----
+  \textbf{呼び先の効果を引き継がない}。待たないからである。
+  ただし結果の型には $\meff(c',m)$ を\emph{記録する} \\
+\addlinespace
+\textbf{待ち} & $\mathtt{await}\ e$ の効果は
+  $\varepsilon_e \cup \varepsilon_c$ である ----
+  \textbf{呼び先の効果を引き継ぐ}。$\varepsilon_c$ は
+  \texttt{future} の型に記録されていたものである \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+これは実装の挙動と同じである。実装でも \texttt{send} は伝播せず、
+\texttt{await} が伝播する。
+プログラム全体の仮定にも一つ足す ----
+$\mathrm{bodies\_ok}$ は「本体の効果が宣言した効果 $\meff(c,m)$ に収まる」を
+要求する。実装が推論した効果を注釈と照合するのと同じ形である。
+
+\subsection{不変条件}
+
+$\taskok$ に一項足す ---- タスクの効果は、
+そのタスクが埋める \texttt{future} に記録された効果に収まる。
+配送のときに $\mathrm{bodies\_ok}$ が入り、以後は保存で保たれる。
+
+\subsection{定理}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.0cm}@{}}
+\toprule
+定理 & 主張 \\
+\midrule
+\texttt{effect\_no\_increase} & 一歩進んでも効果は増えない \\
+\texttt{effect\_soundness} & 走っているタスクの効果は、担当する
+  \texttt{future} に記録された効果に収まり続ける \\
+\texttt{await\_charges\_callee} & 待つと呼び先の効果を必ず引き継ぐ \\
+\texttt{send\_does\_not\_charge} & 送るだけでは引き継がない \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{effect\_soundness} の中身は次のとおりである ----
+\textbf{メソッドが宣言した効果は、そのメソッドが実際に行うことを
+（\texttt{now} で呼んだ先も含めて）覆っている}。
+
+\begin{corollary}[一段隔てても隠せない]
+$\meff(c,m)$ に $\mathtt{ai}$ が入っていなければ、
+$c.m$ の本体は $\mathtt{ai}$ を持つメソッドを \texttt{await} できない。
+\end{corollary}
+
+\begin{proof}
+待ちの規則より、$\mathtt{await}$ の効果は呼び先の効果を含む。
+$\mathrm{bodies\_ok}$ より本体の効果は $\meff(c,m)$ に収まる。
+包含の推移性による。
+\end{proof}
+
+これが実装の動機そのものである ----
+\textbf{実時間で動くアクターが、機外のモデルを同期で待てない}。
+
+\begin{finding}
+効果を足すのに、レベルのときと同じ形が使えた ----
+\textbf{\texttt{future} の型に載せ、待ちで課金する}。
+違いは「レベルは比較し、効果は合併する」ことだけである。
+どちらも「呼び先について知りたいことを、\texttt{future} の型に持たせる」
+という一つの考え方の例である。
+\end{finding}
+
 \section{言えないこと}
 \label{sec:cannot}
 
@@ -583,32 +693,17 @@ $0 < 0$ が示せないからである。条件が実際に効いている。
 \item \textbf{同じクラスの別インスタンス}。レベルはメソッド単位なので、
   親が子を待つ木構造のような場合も一律に扱われる。
   緩めるにはレベル変数が要る。
-\item \textbf{効果と期限}。本稿の形式化には入っていない（次節）。
+\item \textbf{期限}。本稿の形式化には入っていない（次節）。
+  効果は入れた（\S\ref{sec:effects}）。
 \end{itemize}
 
 \section{残っていること}
 \label{sec:remains}
 
-\subsection{効果を足す}
+\subsection{効果は入れた}
 
-第 2 版（AIPL$^{-\mathcal{E}}$）は効果と期限を持つが紙の証明であり、
-本稿は機械検証だが効果を持たない。両者は排他ではない。
-
-効果を足す道筋は見えている。\texttt{future} の型に
-\textbf{レベルと同じやり方で}効果を載せればよい。
-
-\[
-\tfutl{\tau}{n} \;\longrightarrow\;
-\mathtt{future}\langle \tau \rangle @ n\, !\, \varepsilon
-\]
-
-送信のとき $\varepsilon = \meff(c,m)$ を記録し、
-\textbf{待ちのときに課金する}。これは実装がすでにやっていることと同じである
-（送信は呼び先の効果を引き継がず、\texttt{await} が引き継ぐ）。
-$\mathrm{bodies\_ok}$ に「本体の効果は宣言した効果に収まる」を足せば、
-効果の健全性が保存定理から出る。
-
-この作業に着手し、型付け規則までは入れた。基本補題の途中で止めている。
+本稿の執筆中に足した（\S\ref{sec:effects}）。
+第 2 版が紙で示していた効果の健全性が、機械検証になった。
 
 \subsection{期限を足す}
 
@@ -620,8 +715,9 @@ $\mathrm{bodies\_ok}$ に「本体の効果は宣言した効果に収まる」�
 
 \subsection{名前の整理}
 
-効果を足した時点で、第 2 版の AIPL$^{-\mathcal{E}}$ と本稿の AIPL$^{-2}$ は
-一本化できる。それまでは本稿の記法（AIPL$^{-2}$ は機械検証された言語、
+効果が入ったので、第 2 版の AIPL$^{-\mathcal{E}}$ と本稿の AIPL$^{-2}$ の
+違いは\textbf{期限だけ}になった。期限を足した時点で名前は一本化できる。
+それまでは本稿の記法（AIPL$^{-2}$ は機械検証された言語、
 AIPL$^{-\mathcal{E}}$ は第 2 版の言語）で区別する。
 
 % =====================================================================

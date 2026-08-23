@@ -110,7 +110,7 @@ ABCL/1 からは三種のメッセージ送信・オブジェクト内部の逐�
 なお本稿が仕様として述べるのは、三実装すべてが備える\textbf{核}である ---
 Python 版はこれに記録型・精緻化型・チャネル・所有などの\textbf{拡張}を持っており、
 言語は二層になっている（\S\ref{sec:layers}）。
-デッドロック自由については\textbf{機械検証}まで進めた ---
+\textbf{デッドロック自由と効果の健全性}については\textbf{機械検証}まで進めた ---
 Coq/Rocq で、\texttt{await} を含んだままの言語について
 公理なしで証明してある（\S\ref{sec:coq}）。
 \end{abstract}
@@ -2351,10 +2351,12 @@ OCaml は落ちるが Python 版が通す & 拡張 \\
 （非同期送信だけの断片）についてしか言えていなかった。
 待てる構文を捨てて「待ちが返らない」を消していたのだから、当然である。
 
-\paragraph{第 2 版 $\mathrm{AIPL}^{-2}$（1{,}314 行）。}
-\texttt{await} を含んだままデッドロック自由を証明した。
-道具は本稿の\textbf{義務レベル}（\S\ref{sec:dl3}）そのものである。
-形式化に足したのは四つだけである。
+\paragraph{第 2 版 $\mathrm{AIPL}^{-2}$（1{,}524 行）。}
+\texttt{await} を含んだままデッドロック自由を証明し、
+併せて\textbf{効果の健全性}も証明した。
+道具は本稿の\textbf{義務レベル}（\S\ref{sec:dl3}）と
+\textbf{効果}（\S\ref{sec:eff}）そのものである。
+まずデッドロック自由のために足したのは四つだけである。
 
 \begin{center}
 \small
@@ -2394,7 +2396,32 @@ future の型にレベル & $\mathtt{TFut} : \tau \to \mathbb{N} \to \mathtt{ty}
 \end{tabular}
 \end{center}
 
-主定理は九つあり、いずれも \texttt{Print Assumptions} が
+\paragraph{効果も同じ形で載った。}
+レベルを \texttt{future} の型に載せたのと\textbf{同じやり方}で、
+効果も載せた ---- $\mathtt{future}\langle\tau\rangle@n\,!\,\varepsilon$。
+規則の要は二つで、どちらも実装の挙動と同じである。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.4cm}@{}}
+\toprule
+規則 & 効果 \\
+\midrule
+送信 & 呼び先の効果を\textbf{引き継がない}（待たないので）。
+  ただし結果の型に記録する \\
+待ち & 呼び先の効果を\textbf{引き継ぐ}。型に記録されていたものを課金する \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+得られる定理は\textbf{メソッドが宣言した効果は、
+\texttt{now} で呼んだ先も含めて、そのメソッドが実際に行うことを覆っている}
+（\texttt{effect\_soundness}）。
+系として、\texttt{ai} を宣言していないメソッドは
+\texttt{ai} を持つメソッドを \texttt{await} できない ----
+\S\ref{sec:intro} で述べた動機が、定理になった。
+
+主定理は十三あり、いずれも \texttt{Print Assumptions} が
 \texttt{Closed under the global context}（公理なし）である。
 
 \subsection{証明できる最大の構文}
@@ -2444,10 +2471,10 @@ future の型にレベル & $\mathtt{TFut} : \tau \to \mathbb{N} \to \mathtt{ty}
 \subsection{それでも残る距離}
 
 正直に書いておくべきことは残る。
-機械検証されたのは\textbf{効果と期限を持たない中核}である。
+機械検証されたのは\textbf{期限を持たない中核}である。
 本稿の七つの規律のうち、機械検証まで届いたのは
-\textbf{デッドロック自由（義務レベル）}だけで、
-効果・期限・\texttt{result}$\langle\tau\rangle$・返信先の線形性・
+\textbf{効果}と\textbf{デッドロック自由（義務レベル）}の二つで、
+期限・\texttt{result}$\langle\tau\rangle$・返信先の線形性・
 資源の順序・セッション型は紙の上の議論である。
 
 現状は、\textbf{機械検証の代わりに「弾かれるべきプログラム」31 本}が
@@ -2616,12 +2643,13 @@ class Latch { var held = 0; method arm()  : int !{mut} { held = 2; reply(held); 
 \item \textbf{メソッド内で起きた失敗の伝わり方}。
       呼び出し側の \texttt{now ... timeout ... else} が何を返すかが
       三実装で違う。\texttt{result}$\langle\tau\rangle$ に載せる道と揃える必要がある。
-\item \textbf{効果と期限の機械検証}。
-      デッドロック自由（義務レベル）は $\mathrm{AIPL}^{-2}$ で機械検証まで届いたが
-      （\S\ref{sec:coq}）、効果つき判断・期限・\texttt{result}$\langle\tau\rangle$・
-      返信先の線形性・資源の順序・セッション型は紙の上の議論のままである。
-      次に形式化するなら効果である ---
-      判断に $\varepsilon$ を足すだけなので、動く部分が少ない。
+\item \textbf{期限と、残る規律の機械検証}。
+      効果とデッドロック自由（義務レベル）は $\mathrm{AIPL}^{-2}$ で
+      機械検証まで届いた（\S\ref{sec:coq}）。
+      期限・\texttt{result}$\langle\tau\rangle$・返信先の線形性・
+      資源の順序・セッション型は紙の上の議論のままである。
+      次は\textbf{期限}だが、時間を意味論に持ち込む必要があるので、
+      効果ほど安くはない。
 \item \textbf{実機のメッシュへの接続}。
       配備の輸送は現状ひとつのプロセス内で模している。
       Xinu ノード間の実際の転送に差し替える。

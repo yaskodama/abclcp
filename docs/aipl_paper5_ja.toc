@@ -135,22 +135,23 @@
 \contentsline {subsection}{\numberline {10.3}仕様を変えるときの手順}{36}{subsection.10.3}%
 \contentsline {subsection}{\numberline {10.4}機械検証 --- $\mathrm {AIPL}^{-2}$}{37}{subsection.10.4}%
 \contentsline {paragraph}{第 1 版 $\mathrm {AIPL}^{-}$（1{,}121 行）。}{37}{section*.66}%
-\contentsline {paragraph}{第 2 版 $\mathrm {AIPL}^{-2}$（1{,}314 行）。}{37}{section*.67}%
+\contentsline {paragraph}{第 2 版 $\mathrm {AIPL}^{-2}$（1{,}524 行）。}{37}{section*.67}%
+\contentsline {paragraph}{効果も同じ形で載った。}{37}{section*.68}%
 \contentsline {subsection}{\numberline {10.5}証明できる最大の構文}{38}{subsection.10.5}%
-\contentsline {paragraph}{入れても保たれるもの。}{38}{section*.68}%
-\contentsline {paragraph}{入れると壊れるもの。}{38}{section*.69}%
+\contentsline {paragraph}{入れても保たれるもの。}{38}{section*.69}%
+\contentsline {paragraph}{入れると壊れるもの。}{38}{section*.70}%
 \contentsline {subsection}{\numberline {10.6}それでも残る距離}{38}{subsection.10.6}%
-\contentsline {paragraph}{空虚でないことの確認。}{38}{section*.70}%
+\contentsline {paragraph}{空虚でないことの確認。}{39}{section*.71}%
 \contentsline {section}{\numberline {11}考察}{39}{section.11}%
 \contentsline {subsection}{\numberline {11.1}採否の判断は一貫していたか}{39}{subsection.11.1}%
-\contentsline {paragraph}{軸 1 --- 反例が AIPL の言葉で出るか。}{39}{section*.71}%
-\contentsline {paragraph}{軸 2 --- 証明の構造を壊さないか。}{39}{section*.72}%
-\contentsline {paragraph}{軸 3 --- 実際に書かれているか。}{39}{section*.73}%
+\contentsline {paragraph}{軸 1 --- 反例が AIPL の言葉で出るか。}{39}{section*.72}%
+\contentsline {paragraph}{軸 2 --- 証明の構造を壊さないか。}{39}{section*.73}%
+\contentsline {paragraph}{軸 3 --- 実際に書かれているか。}{39}{section*.74}%
 \contentsline {subsection}{\numberline {11.2}型・効果・期限という三点セットの評価}{39}{subsection.11.2}%
 \contentsline {subsection}{\numberline {11.3}足した機構に共通していたこと}{39}{subsection.11.3}%
 \contentsline {subsection}{\numberline {11.4}「正」の実装という考え方の限界}{40}{subsection.11.4}%
-\contentsline {paragraph}{実例 --- 二つが正しく、正が間違っていた。}{40}{section*.74}%
+\contentsline {paragraph}{実例 --- 二つが正しく、正が間違っていた。}{40}{section*.75}%
 \contentsline {subsection}{\numberline {11.5}残っている課題}{40}{subsection.11.5}%
 \contentsline {section}{\numberline {12}おわりに}{41}{section.12}%
-\contentsline {paragraph}{分かったこと。}{41}{section*.75}%
-\contentsline {paragraph}{仕様は、書くだけでは検査されない。}{42}{section*.76}%
+\contentsline {paragraph}{分かったこと。}{41}{section*.76}%
+\contentsline {paragraph}{仕様は、書くだけでは検査されない。}{42}{section*.77}%
