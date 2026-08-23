@@ -9,7 +9,7 @@ JSI="$HOME/projects/drone-hil/abcl"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-SAMPLES="${*:-g1_hello g2_now_future g3_actors g4_select g6_effects g7_deadline g8_bool_equality g9_actor_arg}"
+SAMPLES="${*:-g1_hello g2_now_future g3_actors g4_select g6_effects g7_deadline g8_bool_equality g9_actor_arg g10_shared_field_names}"
 printf '%-22s %-26s %-26s %s\n' サンプル OCaml Py-I JS-I
 for g in $SAMPLES; do
   F="$ABCLCP/docs/samples/guide/$g.aipl"

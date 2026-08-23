@@ -1,0 +1,18 @@
+// g10: 別々のクラスが同じ名前のフィールドを持ってよい
+//
+//      クラス本体は、そのクラスのフィールドの下で検査される。
+//      だから Fork の held と Latch の held は別物である。
+//      （OCaml 版はここでフィールドを env に「重ねて」いたため、
+//        二つ目のクラスの held への代入が多重定義として弾かれていた。）
+class Fork {
+  var held = 0;
+  method take() : int !{mut} { held = 1; reply(held); }
+}
+class Latch {
+  var held = 0;
+  method arm()  : int !{mut} { held = 2; reply(held); }
+}
+var f = new Fork();
+var l = new Latch();
+print("fork  = " ++ (now f.take() timeout 200 else -1));
+print("latch = " ++ (now l.arm()  timeout 200 else -1));

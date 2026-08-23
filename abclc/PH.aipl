@@ -1,5 +1,5 @@
-object Fork {
-  float taken = 0;
+class Fork {
+  var taken = 0;
 
   method release() {
     taken = 0;

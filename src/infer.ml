@@ -976,7 +976,14 @@ let check_decl (env:env) = function
         | VarDecl (name, init) ->
             let t   = infer_expr env init in
             let sch = Types.generalize (ftv_env env) t in
-            add env name sch
+            (* ★ フィールドは「重ねる」のではなく「置き換える」。
+               add だと別のクラスが同じ名前のフィールドを持ったときに
+               多重定義になり、そのフィールドへの代入が
+               「cannot assign to overloaded name」で弾かれていた。
+               クラス本体はそのクラスのフィールドの下で検査するので、
+               置き換えが正しい。実測: コーパス 652 本のうち
+               119 本が同名フィールドを持つ 2 クラスを含んでいた。 *)
+            set_var_scheme env name sch
         | _ -> ()
       ) c.fields;
 

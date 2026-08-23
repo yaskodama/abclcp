@@ -1,11 +1,11 @@
-object Fork {
-  int taken = 0;
+class Fork {
+  var taken = 0;
 
   method take() {
     if (taken == 0) {
       taken = 1;
     } else {
-      send self take;
+      send self.take();
     }
   }
 
@@ -14,42 +14,60 @@ object Fork {
   }
 }
 
-object Philosopher {
-  int id = 0;
-  object leftFork;
-  object rightFork;
+class Philosopher {
+  var id = 0;
+  var leftFork = 0;   // FIXME: アクターを保持するフィールド
+  var rightFork = 0;   // FIXME: アクターを保持するフィールド
 
   method think() {
-    send self hungry;
+    send self.hungry();
   }
 
   method hungry() {
-    send leftFork take;
-    send rightFork take;
-    send self eat;
+    send leftFork.take();
+    send rightFork.take();
+    send self.eat();
   }
 
   method eat() {
-    send leftFork release;
-    send rightFork release;
-    send self think;
+    send leftFork.release();
+    send rightFork.release();
+    send self.think();
   }
 }
 
-Fork fork0;
-Fork fork1;
-Fork fork2;
-Fork fork3;
-Fork fork4;
+var fork0 = new Fork();
+var fork1 = new Fork();
+var fork2 = new Fork();
+var fork3 = new Fork();
+var fork4 = new Fork();
 
-Philosopher p0 { id = 0; leftFork = fork0; rightFork = fork1; };
-Philosopher p1 { id = 1; leftFork = fork1; rightFork = fork2; };
-Philosopher p2 { id = 2; leftFork = fork2; rightFork = fork3; };
-Philosopher p3 { id = 3; leftFork = fork3; rightFork = fork4; };
-Philosopher p4 { id = 4; leftFork = fork4; rightFork = fork0; };
+var p0 = new Philosopher();
 
-send p0 think;
-send p1 think;
-send p2 think;
-send p3 think;
-send p4 think;
+send p0.set_id(0);
+
+send p0.set_leftFork(fork0);
+
+send p0.set_rightFork(fork1);
+var p1 = new Philosopher();
+send p1.set_id(1);
+send p1.set_leftFork(fork1);
+send p1.set_rightFork(fork2);
+var p2 = new Philosopher();
+send p2.set_id(2);
+send p2.set_leftFork(fork2);
+send p2.set_rightFork(fork3);
+var p3 = new Philosopher();
+send p3.set_id(3);
+send p3.set_leftFork(fork3);
+send p3.set_rightFork(fork4);
+var p4 = new Philosopher();
+send p4.set_id(4);
+send p4.set_leftFork(fork4);
+send p4.set_rightFork(fork0);
+
+send p0.think();
+send p1.think();
+send p2.think();
+send p3.think();
+send p4.think();
