@@ -1,6 +1,12 @@
+// @keep as-is: このファイルは期限を足さないこと。
+//   論文（第5版 §11.3「実物の corpus はどうだったか」）が、
+//   「モデルを待つ四箇所すべてに期限が無い」ことを実測の証拠として引いている。
+//   期限を足すと、その引用が事実と合わなくなる。
+//   OCaml 版は期限なしを警告として扱うので、型検査は通る。
+//
 class Planner {
-    var sketch = ai_call_with_system(
   method plan(q) {
+    var sketch = ai_call_with_system(
       "You are a planner. Output a 1-line plan, no preamble.",
       q);
     reply(sketch);
@@ -8,8 +14,8 @@ class Planner {
 }
 
 class Solver {
-    var ans = ai_call_with_system(
   method solve(plan) {
+    var ans = ai_call_with_system(
       "You are a solver. Apply the given plan and answer concisely.",
       plan);
     reply(ans);
@@ -17,8 +23,8 @@ class Solver {
 }
 
 class Reviewer {
-    var verdict = ai_call_with_system(
   method review(ans) {
+    var verdict = ai_call_with_system(
       "You are a reviewer. Reply with 'OK: <reason>' or 'NG: <reason>' only.",
       ans);
     reply(verdict);
