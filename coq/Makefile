@@ -7,7 +7,8 @@ COQC ?= coqc
 COQFLAGS = -R . ""
 
 # ABCM.v は ~/seminar/abcm-soundness/ABCM.v へのシンボリックリンク（単一の原本）
-VS = ABCM.vo AIPLSoundness.vo AIPLDining.vo ABCMEmbedding.vo
+VS = ABCM.vo AIPLSoundness.vo AIPLSoundness2.vo AIPLSoundness2Example.vo \
+     AIPLDining.vo ABCMEmbedding.vo
 
 all: $(VS)
 
@@ -23,13 +24,19 @@ ABCMEmbedding.vo: ABCMEmbedding.v AIPLSoundness.vo ABCM.vo
 # ABCMEmbedding_simulation_WIP.v は未完成なので all に含めない
 
 check: all
-	@printf 'Require Import AIPLSoundness AIPLDining ABCMEmbedding.\n\
+	@printf 'Require Import AIPLSoundness AIPLSoundness2 AIPLSoundness2Example AIPLDining ABCMEmbedding.\n\
 Print Assumptions no_method_not_understood.\n\
 Print Assumptions preservation.\n\
 Print Assumptions progress.\n\
 Print Assumptions type_safety.\n\
 Print Assumptions state_type_invariant.\n\
 Print Assumptions future_type_invariant.\n\
+Print Assumptions AIPLSoundness2.preservation.\n\
+Print Assumptions AIPLSoundness2.type_safety.\n\
+Print Assumptions AIPLSoundness2.deadlock_free.\n\
+Print Assumptions AIPLSoundness2.progress_total.\n\
+Print Assumptions AIPLSoundness2.deadlock_free_star.\n\
+Print Assumptions ex_not_blocked.\n\
 Print Assumptions dining_no_deadlock.\n\
 Print Assumptions no_dead_state.\n\
 Print Assumptions ordering_is_necessary_and_sufficient.\n\
