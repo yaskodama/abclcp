@@ -1,8 +1,8 @@
 class Line {
   var angle = 0.0;
-  var cx = 320;
-  var cy = 240;
-  var length = 100;
+  var cx = 320.0;
+  var cy = 240.0;
+  var length = 100.0;
 
   method spin() {
     var x1 = cx + length * cos(angle);

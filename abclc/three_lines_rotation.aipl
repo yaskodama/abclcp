@@ -1,12 +1,12 @@
 class Window {
   method create(width, height, title) {
-    openWindow(width, height, title);
+    sdl_init(width, height);
   }
 
   method drawLine(x1, y1, x2, y2) {
-    clear();
-    drawLine(x1, y1, x2, y2);
-    flush();
+    sdl_clear();
+    sdl_line(x1, y1, x2, y2);
+    sdl_present();
   }
 }
 
