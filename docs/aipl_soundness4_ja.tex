@@ -1,0 +1,1586 @@
+% AIPL^-max の文法・型健全性・型安全性（第4版）
+%   lualatex -interaction=nonstopmode aipl_soundness4_ja.tex   （2回）
+\documentclass[11pt,a4paper]{ltjsarticle}
+\usepackage{amsmath,amssymb}
+\usepackage{amsthm}
+\usepackage{mathpartir}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage[hidelinks]{hyperref}
+\geometry{margin=22mm}
+
+\newtheorem{theorem}{定理}
+\newtheorem{lemma}[theorem]{補題}
+\newtheorem{corollary}[theorem]{系}
+\newtheorem{proposition}[theorem]{命題}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{定義}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{注意}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  basicstyle=\ttfamily\small, backgroundcolor=\color{codebg},
+  frame=single, framesep=4pt, rulecolor=\color{gray},
+  breaklines=true, showstringspaces=false,
+  columns=fullflexible, keepspaces=true,
+  keywordstyle=\bfseries, commentstyle=\itshape\color{gray!130},
+}
+\lstdefinelanguage{AIPL}{
+  morekeywords={class,method,var,new,now,future,await,reply,replyto,answer,send,
+    timeout,else,if,while,do,select,case,self,sender,remote,print,ok,err,
+    int,float,string,str,bool,unit,any,true,false,result,state},
+  sensitive=true, morecomment=[l]{//}, morestring=[b]",
+}
+\lstdefinelanguage{Coq}{
+  morekeywords={Inductive,Definition,Fixpoint,Lemma,Theorem,Corollary,Proof,Qed,
+    forall,exists,match,with,end,fun,Record,Variable,Hypothesis,Section,End,
+    Require,Import,Print,Assumptions,let,in,if,then,else},
+  sensitive=true, morecomment=[n]{(*}{*)}, morestring=[b]",
+}
+
+% --- 型 ---
+\newcommand{\tint}{\ensuremath{\mathtt{int}}}
+\newcommand{\tbool}{\ensuremath{\mathtt{bool}}}
+\newcommand{\tunit}{\ensuremath{\mathtt{unit}}}
+\newcommand{\tstr}{\ensuremath{\mathtt{str}}}
+\newcommand{\tact}[1]{\ensuremath{\mathtt{actor}[#1]}}
+\newcommand{\tfut}[1]{\ensuremath{\mathtt{future}\langle #1 \rangle}}
+\newcommand{\trep}[1]{\ensuremath{\mathtt{reply}\langle #1 \rangle}}
+\newcommand{\tres}[1]{\ensuremath{\mathtt{result}\langle #1 \rangle}}
+\newcommand{\tpair}[2]{\ensuremath{(#1 \times #2)}}
+% --- 記号 ---
+\newcommand{\Om}{\Omega}
+\newcommand{\Sm}{\Sigma}
+\newcommand{\Ph}{\Phi}
+\newcommand{\Ps}{\Psi}
+\newcommand{\styp}{\mathrm{st}}
+\newcommand{\mtab}{\mathrm{mt}}
+\newcommand{\mbody}{\mathrm{mb}}
+\newcommand{\sinit}{\mathrm{si}}
+\newcommand{\heapok}{\textsf{heap\_ok}}
+\newcommand{\msgok}{\textsf{msg\_ok}}
+\newcommand{\taskok}{\textsf{task\_ok}}
+\newcommand{\confok}{\textsf{conf\_ok}}
+\newcommand{\stuck}{\textsf{stuck}}
+\newcommand{\blocked}{\textsf{blocked}}
+\newcommand{\terminal}{\textsf{terminal}}
+\newcommand{\awaiting}{\textsf{awaiting}}
+\newcommand{\cstep}{\Longrightarrow}
+\newcommand{\subs}[2]{[#1 \mapsto #2]}
+\newcommand{\Amax}{\ensuremath{\mathrm{AIPL}^{-}_{\max}}}
+\newcommand{\Atwo}{\ensuremath{\mathrm{AIPL}^{-2}}}
+\newcommand{\Aone}{\ensuremath{\mathrm{AIPL}^{-}}}
+
+\title{\Amax\ の文法・型健全性・型安全性\\
+{\large ---\ デッドロック自由を目標から外したとき、
+言語はどこまで広げられるか ---}}
+\author{児玉工房 / AICE $\cdot$ AIPL プロジェクト}
+\date{2026年08月24日}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+第 3 版は\textbf{義務レベル}を導入して、\texttt{await} を取り除かずに
+デッドロック自由まで機械検証した。その代償として言語は狭い ---
+待ちは必ずレベルの高い方へ向かわねばならず、返答の委譲も、
+待ちの環も、自分自身への \texttt{now} も書けない。
+
+本稿は逆向きに進む。目標を\textbf{型健全性と型安全性の二つだけ}に絞り、
+その二つが成り立つ範囲で言語を\textbf{最大まで広げた}断片 \Amax\ を定義する。
+\Atwo\ から義務レベルと生産者不変条件を取り除き、代わりに実装 AIPL にある
+機構を五つ加えた ---
+\textbf{文字列と \texttt{++}}、\textbf{対}、\textbf{\texttt{result}$\langle\tau\rangle$}、
+\textbf{期限つきの待ち}（\texttt{timeout ... else} と \texttt{timeout}）、
+そして\textbf{一級の返答先 \texttt{reply}$\langle\tau\rangle$}（\texttt{replyto} と
+\texttt{answer} による返答の委譲）である。
+待ちには側条件を一切課さない --- 自分自身を待ってもよいし、環を作ってもよい。
+
+構文・型・意味論を与え、\textbf{紙の上で}保存・進行・型安全性を証明し、
+同じ内容を Rocq (Coq) 9.1.0 で機械検証した。
+本稿で新たに機械検証した定理は 15 本、
+いずれも \texttt{Print Assumptions} が
+\texttt{Closed under the global context}（公理なし）である。
+
+「最大である」ことは三つの形で示す。
+\begin{itemize}\itemsep2pt
+\item 加えた五つの機構が、いずれも健全性を壊さないこと（第 II 部の証明）。
+\item さらに加えると健全性が\emph{実際に破れる}機構の一覧と、破れ方（第 IV 部）。
+      動的な宛先の \texttt{remote}、\texttt{any}、計算されたメソッド名、
+      範囲検査のない添字、注釈のない \texttt{reply}。
+\item この断片では\textbf{デッドロック自由が成り立たないこと}を、
+      型の付いた構成でありながら全タスクが待ち合ったまま止まる具体例で示す
+      （機械検証済み、\texttt{max\_admits\_deadlock}）。
+      それでも型安全性は失われない --- 待っているのであって、壊れてはいない。
+\end{itemize}
+\end{abstract}
+
+\tableofcontents
+\bigskip
+
+\part{\Amax\ の定義}
+
+\section{位置づけ}
+
+\subsection{三つの断片}
+
+AIPL の形式化には、目標の違う三つの断片がある。表 \ref{tab:three} にまとめる。
+
+\begin{table}[htbp]
+\centering
+\caption{三つの断片。本稿は右端である。}
+\label{tab:three}
+\small
+\begin{tabular}{lccc}
+\toprule
+ & \Aone（第 1 版） & \Atwo（第 3 版） & \Amax（本稿） \\
+\midrule
+目標          & 健全性・安全性 & ＋デッドロック自由 & 健全性・安全性 \\
+\texttt{await} & 言語から除外 & 側条件つきで許す & \textbf{無条件に許す} \\
+義務レベル     & なし & あり（待ちは上へ） & \textbf{なし} \\
+生産者不変条件 & なし & あり & \textbf{なし} \\
+効果           & なし & あり & なし（直交・第 3 版で証明済み）\\
+文字列・対     & なし & なし & \textbf{あり} \\
+\texttt{result}・期限 & なし & なし & \textbf{あり} \\
+一級の返答先   & なし & なし & \textbf{あり（委譲できる）} \\
+デッドロック自由 & --- & 定理 & \textbf{反例あり} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+第 3 版は「待ちを取り除かずにデッドロック自由を証明する」ために、
+\tfut{\tau} の型にレベルを載せ、\texttt{await} に $L < n$ という側条件を課した。
+これは強い制限である。返答の委譲 --- 自分の返答先を他人に渡して、
+その他人に答えてもらう --- は、返す義務がレベルの低い側へ移るので書けない。
+実装 AIPL はこれを許している（\texttt{replyto} / \texttt{answer}）。
+
+本稿の問いは次のものである。
+\begin{quote}
+\emph{デッドロック自由を諦めるなら、型健全性と型安全性を保ったまま、
+言語はどこまで広げられるか。}
+\end{quote}
+
+\subsection{何を証明するのか}
+
+用語を先に固定する。
+\begin{description}
+\item[型健全性 (type soundness)]
+  \textbf{保存}（型の付いた構成が一歩進んでも型が付いたまま）と
+  \textbf{進行}（型の付いた構成は、終わっているか、一歩進めるか、待っているかのいずれか）
+  の組をいう。
+\item[型安全性 (type safety)]
+  型の付いた構成から到達できるどの構成も\textbf{行き詰まらない}こと。
+  行き詰まる（\stuck）とは、終状態でも待ち状態でもないのに一歩も進めないことをいう。
+  メソッド不理解、型の食い違い、存在しない actor や future への操作は
+  すべてここに落ちる。
+\item[デッドロック自由 (deadlock freedom)]
+  待ち状態（\blocked）が起こらないこと。\textbf{本稿では証明しない。}
+  それどころか、成り立たないことを示す。
+\end{description}
+
+型安全性が「待ち状態を除いて行き詰まらない」という形になるのは、
+待ちを無条件に許した以上、避けられない。第 IV 部 \S\ref{sec:dl} で、
+その線引きが恣意的でないこと（待ちは「壊れている」のではなく
+「まだ答えが来ていない」だけであること）を、反例の性質として確かめる。
+
+\section{文法}
+
+\subsection{型}
+
+\begin{align*}
+\tau ::=\ & \tint \mid \tbool \mid \tunit \mid \tstr
+   \mid \tact{c} \mid \tpair{\tau_1}{\tau_2} \\
+   & \mid \tfut{\tau} \mid \trep{\tau} \mid \tres{\tau}
+\end{align*}
+
+$c$ はクラス番号である。三つの $\langle\cdot\rangle$ 型が、この断片の要点である。
+
+\begin{description}
+\item[\tfut{\tau}] 「いつか $\tau$ の値が入る箱」。\texttt{future}\,$t.m(e)$ が作る。
+\item[\trep{\tau}] 「$\tau$ の値を入れる\emph{権利}」。
+  \texttt{replyto} が作り、\texttt{answer} が使う。\tfut{\tau} の裏側であり、
+  \textbf{値として持ち運べる}。これが返答の委譲を可能にする。
+\item[\tres{\tau}] 「成功なら $\tau$、失敗なら何もない」。
+  期限つきの待ちが失敗しうることを型に出す。
+\end{description}
+
+\subsection{式}
+
+\begin{align*}
+e ::=\ & n \mid b \mid () \mid s \mid x \mid \mathtt{self}
+     \mid \mathtt{replyto} \\
+  & \mid e_1 + e_2 \mid e_1 \mathbin{\texttt{++}} e_2 \mid e_1 < e_2 \\
+  & \mid \mathtt{if}\ e\ \mathtt{then}\ e_1\ \mathtt{else}\ e_2
+     \mid \mathtt{var}\ x = e_1;\ e_2 \mid e_1;\ e_2
+     \mid \mathtt{while}\ e_1\ \mathtt{do}\ e_2 \\
+  & \mid \mathtt{state} \mid \mathtt{state} := e \mid \mathtt{new}\ c \\
+  & \mid \langle e_1, e_2\rangle \mid e.\mathtt{fst} \mid e.\mathtt{snd} \\
+  & \mid \mathtt{ok}(e) \mid \mathtt{err}_\tau \mid e.\mathtt{is\_ok}
+     \mid e.\mathtt{value}(e_d) \\
+  & \mid \mathtt{future}\ e_a.m(e_1)
+     \mid \mathtt{now}\ e
+     \mid \mathtt{now}\ e\ \mathtt{timeout}\ n\ \mathtt{else}\ e_d
+     \mid \mathtt{now}\ e\ \mathtt{timeout}\ n \\
+  & \mid \mathtt{answer}\ e_r\ e_v \\[2pt]
+  & \mid \iota_o \mid \kappa_k \mid \rho_k \qquad\text{（実行時のみ現れる）}
+\end{align*}
+
+$n$ は自然数、$b$ は真偽値、$s$ は文字列、$x$ は変数、$c$ はクラス番号、$m$ はメソッド番号である。
+最後の行は\textbf{実行時項}で、原始プログラムには書けない。
+$\iota_o$ は actor 参照、$\kappa_k$ は future 参照、$\rho_k$ は返答先参照である。
+$\kappa_k$ と $\rho_k$ は同じ番号 $k$ を指すが、型が違う ---
+$\kappa_k : \tfut{\tau}$（読む側）、$\rho_k : \trep{\tau}$（書く側）。
+
+\subsection{値}
+
+\[
+v ::= n \mid b \mid () \mid s \mid \iota_o \mid \kappa_k \mid \rho_k
+   \mid \langle v_1, v_2 \rangle \mid \mathtt{ok}(v) \mid \mathtt{err}_\tau
+\]
+
+\subsection{糖衣構文}
+
+実装 AIPL の表記との対応は表 \ref{tab:sugar} のとおりである。
+糖衣はすべて上の式に展開できるので、規則を増やす必要はない。
+
+\begin{table}[htbp]
+\centering
+\caption{AIPL の表記と \Amax\ の式の対応}
+\label{tab:sugar}
+\small
+\begin{tabular}{ll}
+\toprule
+AIPL の表記 & \Amax\ での意味 \\
+\midrule
+\texttt{send t.m(e)} & $\mathtt{var}\ x = \mathtt{future}\ t.m(e);\ ()$（$x$ は使わない）\\
+\texttt{now t.m(e)}  & $\mathtt{now}\ (\mathtt{future}\ t.m(e))$ \\
+\texttt{now t.m(e) timeout 500 else d} & $\mathtt{now}\ (\mathtt{future}\ t.m(e))\ \mathtt{timeout}\ 500\ \mathtt{else}\ d$ \\
+\texttt{now t.m(e) timeout 500} & $\mathtt{now}\ (\mathtt{future}\ t.m(e))\ \mathtt{timeout}\ 500$ \quad(\tres{\tau}) \\
+\texttt{reply e} & $\mathtt{answer}\ \mathtt{replyto}\ e$ \\
+\texttt{m(a, b)}  & 対を一つ渡す $m(\langle a,b\rangle)$ \\
+\texttt{r.value} & $r.\mathtt{value}(d)$（既定値 $d$ つき。\S\ref{sec:out} 参照）\\
+複数のフィールド & 対の入れ子 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{プログラム}
+
+プログラムは四つの表で与える。クラスもメソッドも番号で表す。
+\begin{align*}
+\styp &: c \mapsto \tau && \text{クラス $c$ の状態の型}\\
+\sinit &: c \mapsto v && \text{クラス $c$ の状態の初期値}\\
+\mtab &: (c, m) \mapsto (\tau_a, \tau_r)_\bot && \text{メソッドの引数型と返り値型}\\
+\mbody &: (c, m) \mapsto e && \text{メソッド本体（引数は変数 $0$）}
+\end{align*}
+加えて、起動時に居る actor の表 $\Om_0$ を固定する。
+$\mtab(c,m) = \bot$ は「クラス $c$ にメソッド $m$ が無い」ことを表す。
+
+\section{型システム}
+
+\subsection{判断の形}
+
+判断は
+\[
+\Om;\Ph;c;\rho;\Gamma \vdash e : \tau
+\]
+の形をとる。読み方は次のとおりである。
+\begin{description}\itemsep1pt
+\item[$\Om$] actor 表。$\Om(o)$ は actor $o$ のクラス。
+\item[$\Ph$] future 表。$\Ph(k)$ は future $k$ に入る値の型。
+\item[$c$] いま自分がいるクラス。\texttt{self} と \texttt{state} の型を決める。
+\item[$\rho$] \textbf{いま実行中のメソッドの返り値型}。\texttt{replyto} の型を決める。
+\item[$\Gamma$] 変数の型環境。
+\end{description}
+$\rho$ を判断に持つのが \Atwo\ との違いである。
+\Atwo\ は同じ位置に義務レベル $L$ を持っていた。
+\emph{レベルを外して、返り値型を入れた} --- これが本稿の一行の要約である。
+
+以下、$\Om;\Ph;c;\rho$ は規則を通して変わらないので省略し、
+$\Gamma \vdash e : \tau$ と書く。省略した成分を使う規則だけは、
+$\Om(o)=c'$ のように明示する。
+
+\subsection{規則}
+
+\begin{mathpar}
+\inferrule*[right=T-Num]{ }{\Gamma \vdash n : \tint}
+\and
+\inferrule*[right=T-Bool]{ }{\Gamma \vdash b : \tbool}
+\and
+\inferrule*[right=T-Unit]{ }{\Gamma \vdash () : \tunit}
+\and
+\inferrule*[right=T-Str]{ }{\Gamma \vdash s : \tstr}
+\and
+\inferrule*[right=T-Var]{\Gamma(x) = \tau}{\Gamma \vdash x : \tau}
+\and
+\inferrule*[right=T-Self]{ }{\Gamma \vdash \mathtt{self} : \tact{c}}
+\and
+\inferrule*[right=T-ORef]{\Om(o) = c'}{\Gamma \vdash \iota_o : \tact{c'}}
+\and
+\inferrule*[right=T-FRef]{\Ph(k) = \tau}{\Gamma \vdash \kappa_k : \tfut{\tau}}
+\and
+\inferrule*[right=T-RRef]{\Ph(k) = \tau}{\Gamma \vdash \rho_k : \trep{\tau}}
+\end{mathpar}
+
+\paragraph{演算と制御}
+\begin{mathpar}
+\inferrule*[right=T-Add]{\Gamma \vdash e_1 : \tint \\ \Gamma \vdash e_2 : \tint}
+  {\Gamma \vdash e_1 + e_2 : \tint}
+\and
+\inferrule*[right=T-Cat]{\Gamma \vdash e_1 : \tstr \\ \Gamma \vdash e_2 : \tstr}
+  {\Gamma \vdash e_1 \mathbin{\texttt{++}} e_2 : \tstr}
+\and
+\inferrule*[right=T-Lt]{\Gamma \vdash e_1 : \tint \\ \Gamma \vdash e_2 : \tint}
+  {\Gamma \vdash e_1 < e_2 : \tbool}
+\and
+\inferrule*[right=T-If]{\Gamma \vdash e : \tbool \\ \Gamma \vdash e_1 : \tau \\ \Gamma \vdash e_2 : \tau}
+  {\Gamma \vdash \mathtt{if}\ e\ \mathtt{then}\ e_1\ \mathtt{else}\ e_2 : \tau}
+\and
+\inferrule*[right=T-Let]{\Gamma \vdash e_1 : \tau_1 \\ \Gamma, x{:}\tau_1 \vdash e_2 : \tau_2}
+  {\Gamma \vdash \mathtt{var}\ x = e_1;\ e_2 : \tau_2}
+\and
+\inferrule*[right=T-Seq]{\Gamma \vdash e_1 : \tau_1 \\ \Gamma \vdash e_2 : \tau_2}
+  {\Gamma \vdash e_1;\ e_2 : \tau_2}
+\and
+\inferrule*[right=T-While]{\Gamma \vdash e_1 : \tbool \\ \Gamma \vdash e_2 : \tau_1}
+  {\Gamma \vdash \mathtt{while}\ e_1\ \mathtt{do}\ e_2 : \tunit}
+\end{mathpar}
+
+\paragraph{状態・生成・対・result}
+\begin{mathpar}
+\inferrule*[right=T-Get]{ }{\Gamma \vdash \mathtt{state} : \styp(c)}
+\and
+\inferrule*[right=T-Set]{\Gamma \vdash e : \styp(c)}
+  {\Gamma \vdash \mathtt{state} := e : \tunit}
+\and
+\inferrule*[right=T-New]{ }{\Gamma \vdash \mathtt{new}\ c' : \tact{c'}}
+\and
+\inferrule*[right=T-Pair]{\Gamma \vdash e_1 : \tau_1 \\ \Gamma \vdash e_2 : \tau_2}
+  {\Gamma \vdash \langle e_1, e_2\rangle : \tpair{\tau_1}{\tau_2}}
+\and
+\inferrule*[right=T-Fst]{\Gamma \vdash e : \tpair{\tau_1}{\tau_2}}
+  {\Gamma \vdash e.\mathtt{fst} : \tau_1}
+\and
+\inferrule*[right=T-Snd]{\Gamma \vdash e : \tpair{\tau_1}{\tau_2}}
+  {\Gamma \vdash e.\mathtt{snd} : \tau_2}
+\and
+\inferrule*[right=T-Ok]{\Gamma \vdash e : \tau}{\Gamma \vdash \mathtt{ok}(e) : \tres{\tau}}
+\and
+\inferrule*[right=T-Err]{ }{\Gamma \vdash \mathtt{err}_\tau : \tres{\tau}}
+\and
+\inferrule*[right=T-IsOk]{\Gamma \vdash e : \tres{\tau}}
+  {\Gamma \vdash e.\mathtt{is\_ok} : \tbool}
+\and
+\inferrule*[right=T-Value]{\Gamma \vdash e : \tres{\tau} \\ \Gamma \vdash e_d : \tau}
+  {\Gamma \vdash e.\mathtt{value}(e_d) : \tau}
+\end{mathpar}
+
+\paragraph{通信と返答}
+\begin{mathpar}
+\inferrule*[right=T-Send]
+  {\Gamma \vdash e_a : \tact{c'} \\ \mtab(c',m) = (\tau_a, \tau_r) \\ \Gamma \vdash e_1 : \tau_a}
+  {\Gamma \vdash \mathtt{future}\ e_a.m(e_1) : \tfut{\tau_r}}
+\and
+\inferrule*[right=T-Await]{\Gamma \vdash e : \tfut{\tau}}
+  {\Gamma \vdash \mathtt{now}\ e : \tau}
+\and
+\inferrule*[right=T-AwaitD]{\Gamma \vdash e : \tfut{\tau} \\ \Gamma \vdash e_d : \tau}
+  {\Gamma \vdash \mathtt{now}\ e\ \mathtt{timeout}\ n\ \mathtt{else}\ e_d : \tau}
+\and
+\inferrule*[right=T-AwaitR]{\Gamma \vdash e : \tfut{\tau}}
+  {\Gamma \vdash \mathtt{now}\ e\ \mathtt{timeout}\ n : \tres{\tau}}
+\and
+\inferrule*[right=T-ReplyTo]{ }{\Gamma \vdash \mathtt{replyto} : \trep{\rho}}
+\and
+\inferrule*[right=T-Answer]{\Gamma \vdash e_r : \trep{\tau} \\ \Gamma \vdash e_v : \tau}
+  {\Gamma \vdash \mathtt{answer}\ e_r\ e_v : \tunit}
+\end{mathpar}
+
+\subsection{プログラムの整合性}
+
+\begin{definition}[整合したプログラム]\label{def:wf}
+プログラム $(\styp,\sinit,\mtab,\mbody,\Om_0)$ が\emph{整合している}とは、
+次の三つが成り立つことをいう。
+\begin{enumerate}
+\item[(P1)] すべての $c$ について $\sinit(c)$ は値である。
+\item[(P2)] すべての $c$ について、任意の $\Om,\Ph,c',\rho,\Gamma$ のもとで
+  $\Om;\Ph;c';\rho;\Gamma \vdash \sinit(c) : \styp(c)$。
+\item[(P3)] $\mtab(c,m) = (\tau_a,\tau_r)$ なるすべての $c,m$ と、
+  $\Om_0 \sqsubseteq \Om$ なるすべての $\Om$、すべての $\Ph$ について
+  \[
+    \Om;\Ph;\,c;\,\tau_r;\,\{0{:}\tau_a\} \vdash \mbody(c,m) : \tau_r .
+  \]
+\end{enumerate}
+ここで $\Om_0 \sqsubseteq \Om$ は「$\Om$ が $\Om_0$ の後ろへの延長である」ことを表す。
+\end{definition}
+
+(P3) で $\rho = \tau_r$ と置いているのが要点である。
+\textbf{メソッド本体の中では、\texttt{replyto} の型はそのメソッドの返り値型である。}
+実装 AIPL の型検査器も同じことをしている。
+以降のすべての定理は、この三条件を仮定して述べる。公理ではない ---
+第 III 部 \S\ref{sec:example} で、三条件を満たす具体的なプログラムを与えて、
+仮定が空虚でないことを確かめる。
+
+\subsection{設計上の要点}
+
+\begin{description}
+\item[待ちに側条件がない] \textsc{T-Await} には前提が一つしかない。
+  自分自身の future を待ってもよいし、二人が互いを待ってもよい。
+  \Atwo\ の $L < n$ に当たるものが無い。これが \Amax\ を広くしている
+  ---- そして、デッドロック自由を失わせている。
+\item[$+$ と \texttt{++} を型で分ける] \textsc{T-Add} は \tint\ だけ、
+  \textsc{T-Cat} は \tstr\ だけを受ける。実装 AIPL がこの区別を導入した
+  理由（数と文字列の暗黙変換をやめる）が、そのまま型に出ている。
+\item[返答先が値である] \textsc{T-RRef} により $\rho_k$ は値であり、
+  \textsc{T-Send} の引数として渡せる。渡された先は \textsc{T-Answer} で
+  答えられる。\textbf{答える者と、呼ばれた者は、別人でよい}。
+\item[期限は型に出る] 既定値つきの待ち（\textsc{T-AwaitD}）は $\tau$ を返し、
+  既定値なしの待ち（\textsc{T-AwaitR}）は \tres{\tau} を返す。
+  失敗しうることが型に現れるのは後者だけである。
+\end{description}
+
+\section{操作的意味論}
+
+\subsection{実行時の構造}
+
+\begin{definition}[ヒープ・メッセージ・タスク・構成]
+\begin{align*}
+H &= (\Om, \Sm, \Ph, \Ps) &&
+  \Om : o \mapsto c,\quad \Sm : o \mapsto v,\quad
+  \Ph : k \mapsto \tau,\quad \Ps : k \mapsto v_\bot \\
+M &= \langle o, m, v, k\rangle && \text{宛先 $o$、メソッド $m$、引数 $v$、返答先の future $k$}\\
+t &= \langle o, k, e\rangle && \text{self が $o$、埋めるべき future が $k$、実行中の式が $e$}\\
+C &= (H, \vec{M}, \vec{t}) && \text{構成}
+\end{align*}
+$\Ps(k) = \bot$ は「future $k$ はまだ解決していない」ことを表す。
+四つの表はいずれも後ろへ伸びるだけで、$\Om$ と $\Ph$ の既存の項目は書き換わらない。
+$\Sm$ は \texttt{state :=} で、$\Ps$ は解決で書き換わる。
+\end{definition}
+
+\subsection{評価文脈}
+
+\[
+\begin{aligned}
+E ::=\ & [\,] \mid E + e \mid v + E \mid E \mathbin{\texttt{++}} e \mid v \mathbin{\texttt{++}} E
+       \mid E < e \mid v < E \\
+     & \mid \mathtt{if}\ E\ \mathtt{then}\ e_1\ \mathtt{else}\ e_2
+       \mid \mathtt{var}\ x = E;\ e \mid E;\ e \mid \mathtt{state} := E \\
+     & \mid \langle E, e\rangle \mid \langle v, E\rangle \mid E.\mathtt{fst} \mid E.\mathtt{snd} \\
+     & \mid \mathtt{ok}(E) \mid E.\mathtt{is\_ok} \mid E.\mathtt{value}(e) \\
+     & \mid \mathtt{future}\ E.m(e) \mid \mathtt{future}\ v.m(E) \\
+     & \mid \mathtt{now}\ E \mid \mathtt{now}\ E\ \mathtt{timeout}\ n\ \mathtt{else}\ e
+       \mid \mathtt{now}\ E\ \mathtt{timeout}\ n \\
+     & \mid \mathtt{answer}\ E\ e \mid \mathtt{answer}\ v\ E
+\end{aligned}
+\]
+
+評価は左から右、値になってから次へ進む。
+\texttt{if} の枝、\texttt{var} の本体、\texttt{while} の本体、
+\texttt{value} の既定値、期限つき待ちの既定値は\textbf{文脈に入らない}
+--- 必要になるまで評価しない。
+
+\subsection{局所簡約}
+
+判断は $H; o; k \vdash e \longrightarrow H'; \vec{M}; e'$ である。
+$o$ は実行中のタスクの self、$k$ はそのタスクが埋める future、
+$\vec{M}$ はこの一歩で送り出されたメッセージである。
+
+\begin{mathpar}
+\inferrule*[right=E-Add]{ }{H;o;k \vdash n_1 + n_2 \longrightarrow H; \emptyset; n_1{+}n_2}
+\and
+\inferrule*[right=E-Cat]{ }{H;o;k \vdash s_1 \mathbin{\texttt{++}} s_2 \longrightarrow H; \emptyset; s_1 s_2}
+\and
+\inferrule*[right=E-Lt]{ }{H;o;k \vdash n_1 < n_2 \longrightarrow H; \emptyset; (n_1 <_{\mathbb{N}} n_2)}
+\and
+\inferrule*[right=E-IfT]{ }{H;o;k \vdash \mathtt{if}\ \mathtt{true}\ \mathtt{then}\ e_1\ \mathtt{else}\ e_2 \longrightarrow H; \emptyset; e_1}
+\and
+\inferrule*[right=E-IfF]{ }{H;o;k \vdash \mathtt{if}\ \mathtt{false}\ \mathtt{then}\ e_1\ \mathtt{else}\ e_2 \longrightarrow H; \emptyset; e_2}
+\and
+\inferrule*[right=E-Let]{ }{H;o;k \vdash \mathtt{var}\ x = v;\ e \longrightarrow H; \emptyset; e\subs{x}{v}}
+\and
+\inferrule*[right=E-Seq]{ }{H;o;k \vdash v;\ e \longrightarrow H; \emptyset; e}
+\and
+\inferrule*[right=E-While]{ }
+  {H;o;k \vdash \mathtt{while}\ e_1\ \mathtt{do}\ e_2 \longrightarrow H; \emptyset;
+   \mathtt{if}\ e_1\ \mathtt{then}\ (e_2;\ \mathtt{while}\ e_1\ \mathtt{do}\ e_2)\ \mathtt{else}\ ()}
+\end{mathpar}
+
+\paragraph{自分・状態・生成}
+\begin{mathpar}
+\inferrule*[right=E-Self]{ }{H;o;k \vdash \mathtt{self} \longrightarrow H; \emptyset; \iota_o}
+\and
+\inferrule*[right=E-ReplyTo]{ }{H;o;k \vdash \mathtt{replyto} \longrightarrow H; \emptyset; \rho_k}
+\and
+\inferrule*[right=E-Get]{\Sm(o) = v}{H;o;k \vdash \mathtt{state} \longrightarrow H; \emptyset; v}
+\and
+\inferrule*[right=E-Set]{ }
+  {H;o;k \vdash \mathtt{state} := v \longrightarrow (\Om, \Sm[o{\mapsto}v], \Ph, \Ps); \emptyset; ()}
+\and
+\inferrule*[right=E-New]{ }
+  {H;o;k \vdash \mathtt{new}\ c' \longrightarrow
+   (\Om\,{\cdot}\,c', \Sm\,{\cdot}\,\sinit(c'), \Ph, \Ps); \emptyset; \iota_{|\Om|}}
+\end{mathpar}
+
+\paragraph{対と result}
+\begin{mathpar}
+\inferrule*[right=E-Fst]{ }{H;o;k \vdash \langle v_1,v_2\rangle.\mathtt{fst} \longrightarrow H; \emptyset; v_1}
+\and
+\inferrule*[right=E-Snd]{ }{H;o;k \vdash \langle v_1,v_2\rangle.\mathtt{snd} \longrightarrow H; \emptyset; v_2}
+\and
+\inferrule*[right=E-IsOkT]{ }{H;o;k \vdash \mathtt{ok}(v).\mathtt{is\_ok} \longrightarrow H; \emptyset; \mathtt{true}}
+\and
+\inferrule*[right=E-IsOkF]{ }{H;o;k \vdash \mathtt{err}_\tau.\mathtt{is\_ok} \longrightarrow H; \emptyset; \mathtt{false}}
+\and
+\inferrule*[right=E-ValOk]{ }{H;o;k \vdash \mathtt{ok}(v).\mathtt{value}(e_d) \longrightarrow H; \emptyset; v}
+\and
+\inferrule*[right=E-ValErr]{ }{H;o;k \vdash \mathtt{err}_\tau.\mathtt{value}(e_d) \longrightarrow H; \emptyset; e_d}
+\end{mathpar}
+
+\paragraph{通信と返答}
+\begin{mathpar}
+\inferrule*[right=E-Send]
+  {\Om(o') = c' \\ \mtab(c',m) = (\tau_a,\tau_r)}
+  {H;o;k \vdash \mathtt{future}\ \iota_{o'}.m(v) \longrightarrow
+   (\Om, \Sm, \Ph\,{\cdot}\,\tau_r, \Ps\,{\cdot}\,\bot);
+   \{\langle o', m, v, |\Ph|\rangle\}; \kappa_{|\Ph|}}
+\and
+\inferrule*[right=E-Await]{\Ps(k') = v}
+  {H;o;k \vdash \mathtt{now}\ \kappa_{k'} \longrightarrow H; \emptyset; v}
+\and
+\inferrule*[right=E-AwaitDV]{\Ps(k') = v}
+  {H;o;k \vdash \mathtt{now}\ \kappa_{k'}\ \mathtt{timeout}\ n\ \mathtt{else}\ e_d \longrightarrow H; \emptyset; v}
+\and
+\inferrule*[right=E-AwaitDT]{\Ph(k') = \tau}
+  {H;o;k \vdash \mathtt{now}\ \kappa_{k'}\ \mathtt{timeout}\ n\ \mathtt{else}\ e_d \longrightarrow H; \emptyset; e_d}
+\and
+\inferrule*[right=E-AwaitRV]{\Ps(k') = v}
+  {H;o;k \vdash \mathtt{now}\ \kappa_{k'}\ \mathtt{timeout}\ n \longrightarrow H; \emptyset; \mathtt{ok}(v)}
+\and
+\inferrule*[right=E-AwaitRT]{\Ph(k') = \tau}
+  {H;o;k \vdash \mathtt{now}\ \kappa_{k'}\ \mathtt{timeout}\ n \longrightarrow H; \emptyset; \mathtt{err}_\tau}
+\and
+\inferrule*[right=E-Answer]{ }
+  {H;o;k \vdash \mathtt{answer}\ \rho_{k'}\ v \longrightarrow
+   (\Om, \Sm, \Ph, \Ps[k'{\mapsto}v]); \emptyset; ()}
+\and
+\inferrule*[right=E-Ctx]{H;o;k \vdash e \longrightarrow H'; \vec{M}; e'}
+  {H;o;k \vdash E[e] \longrightarrow H'; \vec{M}; E[e']}
+\end{mathpar}
+
+\begin{remark}[期限の扱い]
+\textsc{E-AwaitDT} と \textsc{E-AwaitRT} は\textbf{いつでも}適用できる。
+$n$ は数として保持するだけで、簡約の条件にはしない。
+時計を持たない意味論で「期限が切れうる」ことを表す、いちばん弱い（＝安全側の）
+定式化である。実装は時計を見て切るので、実装の振る舞いはこの意味論の
+振る舞いの一部になっている。
+\end{remark}
+
+\begin{remark}[答えの上書き]
+\textsc{E-Answer} は、すでに解決している future にも書ける（上書きする）。
+実装は二度目の \texttt{answer} を実行時に拒むが、\emph{拒む方が振る舞いが少ない}。
+上書きを許した方の意味論で定理を証明しておけば、実装の振る舞いは覆われる。
+上書きされても型は変わらない（定理 \ref{th:futinv}）。
+\end{remark}
+
+\subsection{構成の簡約}
+
+\begin{mathpar}
+\inferrule*[right=C-Task]
+  {H;o;k \vdash e \longrightarrow H'; \vec{M}'; e'}
+  {(H, \vec{M}, \vec{t_1}\,\langle o,k,e\rangle\,\vec{t_2}) \cstep
+   (H', \vec{M}\vec{M}', \vec{t_1}\,\langle o,k,e'\rangle\,\vec{t_2})}
+\and
+\inferrule*[right=C-Finish]{ }
+  {(H, \vec{M}, \vec{t_1}\,\langle o,k,v\rangle\,\vec{t_2}) \cstep
+   ((\Om,\Sm,\Ph,\Ps[k{\mapsto}v]), \vec{M}, \vec{t_1}\,\vec{t_2})}
+\and
+\inferrule*[right=C-Deliver]
+  {\Om(o) = c \\ \mtab(c,m) = (\tau_a,\tau_r)}
+  {(H, \vec{M_1}\,\langle o,m,v,k\rangle\,\vec{M_2}, \vec{t}) \cstep
+   (H, \vec{M_1}\vec{M_2}, \vec{t}\,\cdot\,\langle o,k,\mbody(c,m)\subs{0}{v}\rangle)}
+\end{mathpar}
+
+$\cstep^{*}$ を $\cstep$ の反射推移閉包とする。
+
+\subsection{待ち・終状態・行き詰まり}
+
+\begin{definition}\label{def:states}
+\begin{align*}
+\awaiting(H, e) &\iff \exists E, k'.\ e = E[\mathtt{now}\ \kappa_{k'}] \ \wedge\ \Ps(k') = \bot \\
+\terminal(C) &\iff \vec{M} = \emptyset \ \wedge\ \vec{t} = \emptyset \\
+\blocked(C) &\iff \vec{M} = \emptyset \ \wedge\ \vec{t} \neq \emptyset
+   \ \wedge\ \forall \langle o,k,e\rangle \in \vec{t}.\ \awaiting(H,e) \\
+\stuck(C) &\iff \neg\,\terminal(C) \ \wedge\ \neg\,\blocked(C)
+   \ \wedge\ \neg\,\exists C'.\ C \cstep C'
+\end{align*}
+\end{definition}
+
+\awaiting\ に入るのは\textbf{期限のない待ち}だけである。
+$\mathtt{now}\ \kappa_{k'}\ \mathtt{timeout}\ n\ \mathtt{else}\ e_d$ は、
+$k'$ が未解決でも \textsc{E-AwaitDT} で一歩進めるので、待ち状態ではない
+（定理 \ref{th:timeout}）。
+
+\section{実行時の不変条件}
+
+\begin{definition}[\heapok]\label{def:heapok}
+$\heapok(H)$ とは、次の四つが成り立つことをいう。
+\begin{enumerate}
+\item $|\Sm| = |\Om|$ かつ $|\Ps| = |\Ph|$。
+\item $\Om(o) = c$ かつ $\Sm(o) = v$ ならば、$v$ は値であり、
+      任意の $c',\rho,\Gamma$ のもとで $\Om;\Ph;c';\rho;\Gamma \vdash v : \styp(c)$。
+\item $\Ph(k) = \tau$ かつ $\Ps(k) = v$（解決済み）ならば、$v$ は値であり、
+      任意の $c',\rho,\Gamma$ のもとで $\Om;\Ph;c';\rho;\Gamma \vdash v : \tau$。
+\end{enumerate}
+（2 と 3 で「任意の文脈で」と言えるのは、値の型付けが文脈に依らないからである
+--- 補題 \ref{lem:vindep}。）
+\end{definition}
+
+\begin{definition}[\msgok]
+$\msgok(H, \langle o,m,v,k\rangle)$ とは、
+$\Om(o) = c$、$\mtab(c,m) = (\tau_a,\tau_r)$、$v$ は値、
+任意の文脈で $\vdash v : \tau_a$、そして $\Ph(k) = \tau_r$ が成り立つことをいう。
+\end{definition}
+
+飛んでいるメッセージについて、\textbf{宛先にそのメソッドがあること}と、
+\textbf{返答先 future の型が返り値型と一致していること}を要求している。
+前者が「メソッド不理解が起きない」（定理 \ref{th:nmnu}）の中身である。
+
+\begin{definition}[\taskok]
+$\taskok(H, \langle o,k,e\rangle)$ とは、$\Om(o) = c$、$\Ph(k) = \tau$ であって
+\[
+  \Om;\Ph;\,c;\,\tau;\,\emptyset \vdash e : \tau
+\]
+が成り立つことをいう。
+\end{definition}
+
+判断の第 4 成分（$\rho$）と結論の型が、どちらも $\Ph(k)$ になっている。
+\textbf{タスクが返す型と、\texttt{replyto} の型は、同じ future の型である。}
+これが委譲を型安全にしている要である。
+
+\begin{definition}[\confok]
+$\confok(H,\vec{M},\vec{t})$ とは、$\heapok(H)$、$\Om_0 \sqsubseteq \Om$、
+$\vec{M}$ のすべての要素が \msgok、$\vec{t}$ のすべての要素が \taskok\ であることをいう。
+\end{definition}
+
+\begin{remark}[何を要求していないか]
+\Atwo\ にあった\textbf{生産者不変条件}
+「未解決の future には必ずそれを埋める者（メッセージかタスク）がいる」を、
+\Amax\ は要求しない。孤児 future --- 誰も埋めない future --- を許す。
+許してよいのは、健全性も安全性も孤児 future で壊れないからである
+（壊れるのはデッドロック自由だけである）。
+実際、\S\ref{sec:dl} の反例は生産者を持つが、
+待ちの向きが環になっているために止まる。
+\end{remark}
+
+\part{紙の上の証明}
+
+以下、プログラムは定義 \ref{def:wf} の意味で整合しているものとする。
+$\Om \sqsubseteq \Om'$ は「$\Om'$ が $\Om$ の後ろへの延長」を表す。
+
+\section{準備の補題}
+
+\begin{lemma}[逆転]\label{lem:inv}
+型付け規則は式の頭の構成子ごとにちょうど一つなので、
+判断から導出の最後の規則が一意に決まる。たとえば
+\begin{itemize}\itemsep1pt
+\item $\Gamma \vdash e_1 + e_2 : \tau$ ならば $\tau = \tint$ かつ
+      $\Gamma \vdash e_1 : \tint$ かつ $\Gamma \vdash e_2 : \tint$。
+\item $\Gamma \vdash \mathtt{future}\ e_a.m(e_1) : \tau$ ならば、ある $c',\tau_a,\tau_r$ があって
+      $\Gamma \vdash e_a : \tact{c'}$、$\mtab(c',m) = (\tau_a,\tau_r)$、
+      $\Gamma \vdash e_1 : \tau_a$、$\tau = \tfut{\tau_r}$。
+\item $\Gamma \vdash \mathtt{now}\ e : \tau$ ならば $\Gamma \vdash e : \tfut{\tau}$。
+\item $\Gamma \vdash \mathtt{answer}\ e_r\ e_v : \tau$ ならば $\tau = \tunit$ で、
+      ある $\tau_0$ があって $\Gamma \vdash e_r : \trep{\tau_0}$、$\Gamma \vdash e_v : \tau_0$。
+\item $\Gamma \vdash \mathtt{replyto} : \tau$ ならば $\tau = \trep{\rho}$。
+\end{itemize}
+残りの構成子についても同様である。
+\end{lemma}
+
+\begin{proof}
+規則の結論に現れる式の頭の構成子はすべて相異なる。よって導出の最後の規則が決まり、
+その前提がそのまま主張になる。
+\end{proof}
+
+\begin{lemma}[標準形]\label{lem:canon}
+$v$ が値で $\Gamma \vdash v : \tau$ のとき、
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+$\tau$ & $v$ の形 \\
+\midrule
+\tint & $n$ \\
+\tbool & $b$ \\
+\tstr & $s$ \\
+\tact{c'} & $\iota_o$ であって $\Om(o) = c'$ \\
+\tpair{\tau_1}{\tau_2} & $\langle v_1, v_2\rangle$ であって $v_1, v_2$ は値 \\
+\tfut{\tau_0} & $\kappa_{k}$ であって $\Ph(k) = \tau_0$ \\
+\trep{\tau_0} & $\rho_{k}$ であって $\Ph(k) = \tau_0$ \\
+\tres{\tau_0} & $\mathtt{ok}(w)$（$w$ は値）または $\mathtt{err}_{\tau_0}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{lemma}
+
+\begin{proof}
+$v$ が値であることの導出について場合分けし、
+それぞれについて補題 \ref{lem:inv} を使う。
+たとえば $\tau = \tfut{\tau_0}$ のとき、値のうち \tfut{\cdot} 型を持ちうるのは
+$\kappa_k$ だけである（$\iota_o$ は \tact{\cdot}、$\rho_k$ は \trep{\cdot}、
+$\mathtt{ok}(w)$ と $\mathtt{err}$ は \tres{\cdot}、残りは基本型）。
+\end{proof}
+
+\begin{lemma}[値の型付けは文脈に依らない]\label{lem:vindep}
+$v$ が値で $\Om;\Ph;c;\rho;\Gamma \vdash v : \tau$ ならば、
+任意の $c',\rho',\Gamma'$ について $\Om;\Ph;c';\rho';\Gamma' \vdash v : \tau$。
+\end{lemma}
+
+\begin{proof}
+$v$ が値であることの導出に関する帰納法。
+値の型付けに使える規則は \textsc{T-Num}, \textsc{T-Bool}, \textsc{T-Unit},
+\textsc{T-Str}, \textsc{T-ORef}, \textsc{T-FRef}, \textsc{T-RRef},
+\textsc{T-Pair}, \textsc{T-Ok}, \textsc{T-Err} の十個しかない。
+このうち $c$ を見るのは無く（\textsc{T-Self} と \textsc{T-Get} は値ではない）、
+$\rho$ を見るのも無く（\textsc{T-ReplyTo} は値 $\mathtt{replyto}$ を作らない ---
+$\mathtt{replyto}$ は値ではなく、$\rho_k$ へ簡約される式である）、
+$\Gamma$ を見るのも無い（\textsc{T-Var} は値ではない）。
+$\langle v_1,v_2\rangle$ と $\mathtt{ok}(w)$ は帰納法の仮定から従う。
+\end{proof}
+
+\begin{remark}
+\textbf{$\mathtt{replyto}$ が値でないことが効いている。}
+もし $\mathtt{replyto}$ 自身を値にすると、それを他の actor へ送れてしまい、
+送り先では $\rho$ が違うので型が変わる --- 補題 \ref{lem:vindep} が壊れ、
+その先の代入補題も保存定理も壊れる。
+$\mathtt{replyto}$ は\emph{自分のところで} $\rho_k$ に簡約され、
+$\rho_k$ の型は $\Ph$ が決めるので、どこへ運ばれても変わらない。
+一級の返答先を安全にしているのは、この一段である。
+\end{remark}
+
+\begin{lemma}[代入]\label{lem:subst}
+$\Gamma, x{:}\tau_1 \vdash e : \tau$ で、$v$ が値、
+かつ任意の文脈で $\vdash v : \tau_1$ ならば、$\Gamma \vdash e\subs{x}{v} : \tau$。
+\end{lemma}
+
+\begin{proof}
+$e$ の構造に関する帰納法。
+$e = x$ のときは仮定から $v$ の型が $\tau_1 = \tau$ であり、
+補題 \ref{lem:vindep} により $\Gamma$ のもとでも型が付く。
+$e = y \neq x$ のときは代入が起こらない。
+$e = (\mathtt{var}\ y = e_1;\ e_2)$ のときは、
+$y = x$ なら $e_2$ に代入しない（内側の束縛が優先する）ので
+$\Gamma, x{:}\tau_1, x{:}\tau_1' = \Gamma, x{:}\tau_1'$ の外延性を使い、
+$y \neq x$ なら型環境の二つの拡張が可換であることを使う。
+他の構成子は、部分式へ帰納法の仮定を適用して同じ規則で組み直すだけである。
+\end{proof}
+
+\begin{lemma}[表の拡張に対する単調性]\label{lem:mono}
+$\Om;\Ph;c;\rho;\Gamma \vdash e : \tau$ で $\Om \sqsubseteq \Om'$、$\Ph \sqsubseteq \Ph'$ ならば
+$\Om';\Ph';c;\rho;\Gamma \vdash e : \tau$。
+\end{lemma}
+
+\begin{proof}
+型付けの導出に関する帰納法。表を見る規則は
+\textsc{T-ORef}, \textsc{T-FRef}, \textsc{T-RRef} の三つだけで、
+いずれも $\Om(o)=c'$ や $\Ph(k)=\tau_0$ という\emph{索引}である。
+後ろへの延長は既存の索引を変えないので、そのまま成り立つ。
+他の規則は帰納法の仮定を組み直すだけである。
+\end{proof}
+
+\begin{lemma}[文脈の分解と置換]\label{lem:ctx}
+$\Om;\Ph;c;\rho;\Gamma \vdash E[e] : \tau$ ならば、ある $\tau'$ があって
+$\Om;\Ph;c;\rho;\Gamma \vdash e : \tau'$ であり、かつ
+$\Om \sqsubseteq \Om'$、$\Ph \sqsubseteq \Ph'$ なる任意の表と、
+$\Om';\Ph';c;\rho;\Gamma \vdash e' : \tau'$ なる任意の $e'$ について
+$\Om';\Ph';c;\rho;\Gamma \vdash E[e'] : \tau$。
+\end{lemma}
+
+\begin{proof}
+$E$ の構造に関する帰納法。$E = [\,]$ は自明。
+それ以外は、いちばん外側の規則を補題 \ref{lem:inv} で剥がし、
+穴のある部分式へ帰納法の仮定を、穴のない部分式へ補題 \ref{lem:mono} を適用して、
+同じ規則で組み直す。
+\end{proof}
+
+\section{局所進行}
+
+\begin{lemma}[局所進行]\label{lem:lprog}
+$\heapok(H)$、$\Om(o) = c$、$\Om;\Ph;c;\rho;\emptyset \vdash e : \tau$ ならば、
+次のいずれかが成り立つ。
+\[
+\text{(i) $e$ は値}\quad\lor\quad
+\text{(ii) $\exists H',\vec{M},e'.\ H;o;k \vdash e \longrightarrow H';\vec{M};e'$}\quad\lor\quad
+\text{(iii) $\awaiting(H,e)$}
+\]
+\end{lemma}
+
+\begin{proof}
+型付けの導出に関する帰納法。型環境が空であることを使う。
+\begin{description}
+\item[\textsc{T-Var}] 起こらない。$\emptyset(x) = \bot$ である。
+\item[\textsc{T-Num} など] $e$ は値。
+\item[\textsc{T-Self}, \textsc{T-ReplyTo}, \textsc{T-New}, \textsc{T-While}]
+  無条件に一歩進む（\textsc{E-Self}, \textsc{E-ReplyTo}, \textsc{E-New}, \textsc{E-While}）。
+\item[\textsc{T-Get}] $\Om(o) = c$ と $\heapok$ の (1) から $o < |\Sm|$ なので $\Sm(o)$ が存在し、
+  \textsc{E-Get} で一歩進む。
+\item[\textsc{T-Add}] 帰納法の仮定を $e_1$ に適用する。
+  値でないなら (ii) か (iii) がそのまま文脈へ持ち上がる（$E = [\,] + e_2$）。
+  値なら標準形補題 \ref{lem:canon} から $e_1 = n_1$。次に $e_2$ に適用する。
+  値なら $e_2 = n_2$ で \textsc{E-Add}、そうでなければ文脈 $n_1 + [\,]$ へ持ち上がる。
+  \textsc{T-Cat}, \textsc{T-Lt}, \textsc{T-Pair}, \textsc{T-Answer} も同型である
+  （ただし \textsc{T-Pair} は両方が値のとき $\langle v_1,v_2\rangle$ 自身が値になる）。
+\item[\textsc{T-If}, \textsc{T-Let}, \textsc{T-Seq}, \textsc{T-Set}, \textsc{T-Fst},
+      \textsc{T-Snd}, \textsc{T-IsOk}, \textsc{T-Value}, \textsc{T-Ok}]
+  部分式に帰納法の仮定を適用し、値になっていれば標準形補題で形を決めて基底規則を当てる。
+  たとえば \textsc{T-Value} では $e : \tres{\tau}$ が値なら
+  $\mathtt{ok}(w)$ か $\mathtt{err}_\tau$ のいずれかであり、
+  \textsc{E-ValOk} か \textsc{E-ValErr} が当たる。
+  \textbf{$\mathtt{err}$ でも行き詰まらない}のは、既定値 $e_d$ を必ず伴わせたからである。
+\item[\textsc{T-Send}] $e_a$ が値なら標準形補題から $e_a = \iota_{o'}$ で $\Om(o') = c'$。
+  $e_1$ が値なら、前提の $\mtab(c',m) = (\tau_a,\tau_r)$ がそのまま
+  \textsc{E-Send} の前提を満たす。
+  \textbf{メソッド不理解が起こらないのはここである} ---
+  宛先のクラスは型から分かっており、そのクラスにメソッドがあることは
+  型付けのときに確かめてある。
+\item[\textsc{T-Await}] $e$ が値なら $e = \kappa_{k'}$ で $\Ph(k') = \tau$。
+  $\heapok$ の (1) から $k' < |\Ps|$ なので $\Ps(k')$ が定まる。
+  解決済みなら \textsc{E-Await} で一歩進み、未解決なら
+  $\awaiting(H, \mathtt{now}\ \kappa_{k'})$（文脈 $[\,]$）である。
+  \textbf{ここだけが (iii) を生む。}
+\item[\textsc{T-AwaitD}, \textsc{T-AwaitR}] $e$ が値なら $e = \kappa_{k'}$ で $\Ph(k')$ が存在するから、
+  解決の有無によらず \textsc{E-AwaitDT} / \textsc{E-AwaitRT} が当たる。
+  すなわち\textbf{必ず一歩進める}。
+  $e$ が値でないときは、部分式についての (ii) か (iii) が文脈へ持ち上がる。
+\end{description}
+\end{proof}
+
+\section{局所保存}
+
+\begin{lemma}[局所保存]\label{lem:lpres}
+$\heapok(H)$、$\Om(o) = c$、$\Ph(k) = \rho$、
+$\Om;\Ph;c;\rho;\emptyset \vdash e : \tau$、
+$H;o;k \vdash e \longrightarrow H';\vec{M}';e'$ ならば
+\begin{enumerate}
+\item $\heapok(H')$、
+\item $\Om \sqsubseteq \Om'$ かつ $\Ph \sqsubseteq \Ph'$、
+\item $\Om';\Ph';c;\rho;\emptyset \vdash e' : \tau$、
+\item $\vec{M}'$ のすべての要素が $\msgok(H')$。
+\end{enumerate}
+\end{lemma}
+
+\begin{proof}
+簡約の導出に関する帰納法。以下、$\tau$ の情報は毎回、補題 \ref{lem:inv} で取り出す。
+
+\paragraph{ヒープを変えない基底規則}
+\textsc{E-Add}, \textsc{E-Cat}, \textsc{E-Lt}, \textsc{E-IfT/F}, \textsc{E-Seq},
+\textsc{E-While}, \textsc{E-Fst}, \textsc{E-Snd}, \textsc{E-IsOkT/F},
+\textsc{E-ValOk/Err}, \textsc{E-AwaitDT}。
+(1)(2)(4) は自明（$H'=H$、$\vec{M}'=\emptyset$）。(3) だけを見る。
+たとえば \textsc{E-While} では、逆転補題から $\tau = \tunit$、
+$\vdash e_1 : \tbool$、$\vdash e_2 : \tau_1$ が得られ、
+これらから \textsc{T-If}, \textsc{T-Seq}, \textsc{T-While} を組んで
+$\vdash \mathtt{if}\ e_1\ \mathtt{then}\ (e_2;\ \mathtt{while}\ e_1\ \mathtt{do}\ e_2)\ \mathtt{else}\ () : \tunit$ を得る。
+\textsc{E-ValOk} では $\vdash \mathtt{ok}(v) : \tres{\tau}$ から $\vdash v : \tau$、
+\textsc{E-AwaitDT} では既定値 $e_d$ に \textsc{T-AwaitD} の第 2 前提がそのまま使える。
+
+\paragraph{\textsc{E-Let}}
+逆転補題から $\vdash v : \tau_1$ と $x{:}\tau_1 \vdash e : \tau$。
+$v$ は値だから補題 \ref{lem:vindep} で任意の文脈で型が付き、
+補題 \ref{lem:subst}（代入）から $\vdash e\subs{x}{v} : \tau$。
+
+\paragraph{\textsc{E-Self}}
+逆転補題から $\tau = \tact{c}$。仮定 $\Om(o) = c$ から \textsc{T-ORef} で
+$\vdash \iota_o : \tact{c}$。
+
+\paragraph{\textsc{E-ReplyTo}}
+逆転補題から $\tau = \trep{\rho}$。仮定 $\Ph(k) = \rho$ から \textsc{T-RRef} で
+$\vdash \rho_k : \trep{\rho}$。
+\emph{タスクの返り値型が、そのタスクの future の型と一致している}という
+仮定（\taskok）が、ここで初めて使われる。
+
+\paragraph{\textsc{E-Get}}
+$\heapok$ の (2) から $\Sm(o)$ は値で $\styp(c)$ 型。逆転補題から $\tau = \styp(c)$。
+
+\paragraph{\textsc{E-Set}}
+$H' = (\Om,\Sm[o{\mapsto}v],\Ph,\Ps)$。
+(2) は $\Om,\Ph$ が変わらないので自明。(3) は $\tau = \tunit$ で $()$ ゆえ自明。
+(1) を見る。長さは一点更新で変わらない。
+$\Om(o_2) = c_2$、$\Sm[o{\mapsto}v](o_2) = v_2$ とする。
+$o_2 = o$ なら $c_2 = c$、$v_2 = v$ であり、逆転補題から $\vdash v : \styp(c)$、
+$v$ は値だから補題 \ref{lem:vindep} で任意の文脈でも型が付く。
+$o_2 \neq o$ なら更新前と同じで、$\heapok(H)$ からそのまま従う。
+
+\paragraph{\textsc{E-New}}
+$H' = (\Om\cdot c', \Sm\cdot\sinit(c'), \Ph, \Ps)$。
+(2) は延長そのもの。(4) は空。
+(3) は逆転補題から $\tau = \tact{c'}$、
+新しい索引 $|\Om|$ の値が $c'$ なので \textsc{T-ORef}。
+(1) の長さは両方が 1 ずつ伸びるので保たれる。
+既存の索引の値は変わらないが、型付けは新しい表 $\Om\cdot c'$ のもとで言い直す必要があり、
+補題 \ref{lem:mono} を使う。新しい索引については (P1)(P2) がそのまま
+「$\sinit(c')$ は値で $\styp(c')$ 型」を与える。
+
+\paragraph{\textsc{E-Send}}
+$H' = (\Om, \Sm, \Ph\cdot\tau_r, \Ps\cdot\bot)$、
+$\vec{M}' = \{\langle o',m,v,|\Ph|\rangle\}$、$e' = \kappa_{|\Ph|}$。
+逆転補題から $\vdash \iota_{o'} : \tact{c''}$、$\mtab(c'',m) = (\tau_a,\tau_r'')$、
+$\vdash v : \tau_a$、$\tau = \tfut{\tau_r''}$ が得られ、
+\textsc{E-Send} の前提 $\Om(o') = c'$、$\mtab(c',m) = (\tau_a,\tau_r)$ と
+突き合わせると $c'' = c'$、$\tau_r'' = \tau_r$ である（表は関数だから）。
+\begin{itemize}
+\item (2): $\Ph$ の延長。
+\item (3): 新しい索引 $|\Ph|$ の型が $\tau_r$ なので \textsc{T-FRef} から
+  $\vdash \kappa_{|\Ph|} : \tfut{\tau_r} = \tau$。
+\item (1): $|\Ps\cdot\bot| = |\Ph\cdot\tau_r|$。
+  既存の future については $\Ph$ が伸びただけなので補題 \ref{lem:mono}。
+  新しい索引は $\Ps$ 側が $\bot$ なので、条件 3 の前提が成り立たず何も要求されない。
+\item (4): 唯一のメッセージについて、宛先 $o'$ のクラスは $c'$、
+  $\mtab(c',m) = (\tau_a,\tau_r)$、引数 $v$ は値で $\tau_a$ 型（補題 \ref{lem:vindep} と
+  \ref{lem:mono}）、そして返答先 $|\Ph|$ の型は $\tau_r$。
+  すなわち \msgok。
+\end{itemize}
+\textbf{メッセージと future を同時に作る}のがこの規則の要点である。
+「返答先の型は呼んだメソッドの返り値型」という約束が、生成の瞬間に立つ。
+
+\paragraph{\textsc{E-Await}, \textsc{E-AwaitDV}, \textsc{E-AwaitRV}}
+逆転補題から $\vdash \kappa_{k'} : \tfut{\tau}$、すなわち $\Ph(k') = \tau$。
+$\Ps(k') = v$（解決済み）だから $\heapok$ の (3) より $v$ は値で $\tau$ 型。
+\textsc{E-AwaitRV} では $\mathtt{ok}(v) : \tres{\tau}$ を \textsc{T-Ok} で組む。
+
+\paragraph{\textsc{E-AwaitRT}}
+逆転補題から $\tau = \tres{\tau_0}$ かつ $\Ph(k') = \tau_0$。
+規則の前提 $\Ph(k') = \tau'$ と合わせて $\tau' = \tau_0$ だから、
+$e' = \mathtt{err}_{\tau_0}$ は \textsc{T-Err} で $\tres{\tau_0} = \tau$ 型を持つ。
+\textbf{$\mathtt{err}$ が型注釈を持っている}のは、ここで型を失わないためである。
+
+\paragraph{\textsc{E-Answer}}
+$H' = (\Om,\Sm,\Ph,\Ps[k'{\mapsto}v])$。(2)(3)(4) は自明（$\tau = \tunit$）。
+(1) を見る。長さは一点更新で変わらない。$\Ps$ の索引 $k_2$ について、
+$k_2 \neq k'$ なら更新前と同じ。$k_2 = k'$ のときは、
+逆転補題から $\vdash \rho_{k'} : \trep{\tau_0}$ すなわち $\Ph(k') = \tau_0$、
+かつ $\vdash v : \tau_0$ であり、$v$ は値だから補題 \ref{lem:vindep} で
+任意の文脈でも $\tau_0$ 型。$\Ph(k_2) = \Ph(k') = \tau_0$ なので条件 3 を満たす。
+
+\medskip
+\textbf{これが委譲の安全性の核心である。}
+書き込む主体は future $k'$ の持ち主でなくてよい。
+書き込む権利は値 $\rho_{k'}$ が表しており、その型 \trep{\tau_0} は
+$\Ph$ から来ている。$\Ph$ は伸びるだけで書き換わらないから、
+$\rho_{k'}$ がどこへ運ばれても $\tau_0$ は変わらない。
+したがって「誰が答えても、入る値の型は同じ」。
+
+\paragraph{\textsc{E-Ctx}}
+帰納法の仮定から $\heapok(H')$、表の延長、$\vdash e_0' : \tau'$、メッセージの \msgok\ が得られる。
+補題 \ref{lem:ctx}（文脈の置換）を、延長した表 $\Om',\Ph'$ のもとで適用すれば
+$\vdash E[e_0'] : \tau$ を得る。
+\end{proof}
+
+\begin{remark}[機械証明との違い]
+Coq の開発では評価文脈を導入せず、合同規則を 24 本並べてある。
+文脈の文法（\S4.2）の各生成規則が合同規則 1 本に対応し、
+補題 \ref{lem:ctx} は各合同規則の証明の中に溶けている。
+どちらでも証明の中身は同じだが、機械証明では文脈の「穴」を扱う補題を
+書かずに済むぶん、規則を並べる方が短い。
+\end{remark}
+
+\section{主定理}
+
+\begin{theorem}[メソッド不理解は起きない]\label{th:nmnu}
+$\confok(H,\vec{M},\vec{t})$ で $\langle o,m,v,k\rangle \in \vec{M}$ ならば、
+ある $c,\tau_a,\tau_r$ があって $\Om(o) = c$、$\mtab(c,m) = (\tau_a,\tau_r)$、
+$v$ は $\tau_a$ 型、$\Ph(k) = \tau_r$。
+\end{theorem}
+
+\begin{proof}
+\msgok\ の定義そのものである。飛んでいるメッセージが常にこの形であることは、
+定理 \ref{th:pres}（保存）が保証する。
+\end{proof}
+
+\begin{theorem}[保存]\label{th:pres}
+$\confok(C)$ かつ $C \cstep C'$ ならば $\confok(C')$。
+\end{theorem}
+
+\begin{proof}
+$C \cstep C'$ の導出で場合分けする。
+
+\paragraph{\textsc{C-Task}}
+動いたタスク $\langle o,k,e\rangle$ について \taskok\ から
+$\Om(o) = c$、$\Ph(k) = \tau$、$\Om;\Ph;c;\tau;\emptyset \vdash e : \tau$ を得る。
+$\rho := \tau$ として補題 \ref{lem:lpres}（局所保存）を適用すると、
+$\heapok(H')$、$\Om \sqsubseteq \Om'$、$\Ph \sqsubseteq \Ph'$、
+$\Om';\Ph';c;\tau;\emptyset \vdash e' : \tau$、
+そして新しいメッセージが \msgok\ であることが得られる。
+\begin{itemize}
+\item $\Om_0 \sqsubseteq \Om \sqsubseteq \Om'$ は推移律。
+\item 元からあったメッセージとタスクは、表が伸びただけなので
+  補題 \ref{lem:mono} と索引の保存から、そのまま $H'$ のもとでも \msgok/\taskok。
+\item 動いたタスクは $\langle o,k,e'\rangle$ で、
+  $\Om'(o) = c$、$\Ph'(k) = \tau$（索引は保存される）、型付けは上で得た。
+\end{itemize}
+
+\paragraph{\textsc{C-Finish}}
+終わったタスク $\langle o,k,v\rangle$ について \taskok\ から $\Ph(k) = \tau$、
+$\vdash v : \tau$。$v$ は値だから補題 \ref{lem:vindep}。
+$\Ps$ の $k$ 番だけが $v$ になるので、\heapok\ の条件 3 は
+$k$ 番について $\vdash v : \Ph(k) = \tau$ から従い、他の番はそのまま。
+$\Om,\Ph$ は変わらないので、残りのメッセージとタスクは影響を受けない。
+（\msgok\ も \taskok\ も $\Ps$ を見ないことに注意。）
+
+\paragraph{\textsc{C-Deliver}}
+配送するメッセージ $\langle o,m,v,k\rangle$ について \msgok\ から
+$\Om(o) = c$、$\mtab(c,m) = (\tau_a,\tau_r)$、$v$ は値で $\tau_a$ 型、$\Ph(k) = \tau_r$。
+ヒープは変わらないので \heapok\ はそのまま。
+新しいタスク $\langle o,k,\mbody(c,m)\subs{0}{v}\rangle$ が \taskok\ であることを言えばよい。
+整合性条件 (P3) を $\Om := \Om$、$\Ph := \Ph$ に適用して
+\[
+  \Om;\Ph;\,c;\,\tau_r;\,\{0{:}\tau_a\} \vdash \mbody(c,m) : \tau_r
+\]
+を得る（(P3) の前提 $\Om_0 \sqsubseteq \Om$ は \confok\ の一部である）。
+$v$ は値で任意の文脈で $\tau_a$ 型だから、補題 \ref{lem:subst}（代入）より
+$\Om;\Ph;c;\tau_r;\emptyset \vdash \mbody(c,m)\subs{0}{v} : \tau_r$。
+$\Ph(k) = \tau_r$ だから、判断の第 4 成分と結論の型がともに $\Ph(k)$ になっており、
+\taskok\ の形をしている。
+\end{proof}
+
+\begin{corollary}\label{th:presstar}
+$\confok(C)$ かつ $C \cstep^{*} C'$ ならば $\confok(C')$。
+\end{corollary}
+
+\begin{proof}
+$\cstep^{*}$ の長さに関する帰納法と定理 \ref{th:pres}。
+\end{proof}
+
+\begin{theorem}[進行]\label{th:prog}
+$\confok(C)$ ならば、$\terminal(C)$ か、$\exists C'.\ C \cstep C'$ か、$\blocked(C)$ の
+いずれかが成り立つ。
+\end{theorem}
+
+\begin{proof}
+$C = (H,\vec{M},\vec{t})$ とする。
+
+$\vec{M} \neq \emptyset$ のとき。先頭のメッセージ $\langle o,m,v,k\rangle$ は \msgok\ だから
+$\Om(o) = c$ と $\mtab(c,m) = (\tau_a,\tau_r)$ が存在する。
+これは \textsc{C-Deliver} の前提そのものなので、必ず配送できる。
+\textbf{「宛先にそのメソッドが無くて配送できない」が起こらない}のが、ここである。
+
+$\vec{M} = \emptyset$ のとき。タスク列を先頭から見る。
+各タスクは \taskok\ だから、補題 \ref{lem:lprog}（局所進行）が使える。
+値になっているタスクがあれば \textsc{C-Finish} で、
+一歩進めるタスクがあれば \textsc{C-Task} で、構成が一歩進む。
+どのタスクも値でも一歩進めるものでもないなら、
+局所進行の (iii) からすべてのタスクが \awaiting\ である。
+タスク列が空なら $\terminal$、空でなければ $\blocked$ である。
+\end{proof}
+
+\begin{theorem}[型安全性]\label{th:safety}
+$\confok(C)$ かつ $C \cstep^{*} C'$ ならば $\neg\,\stuck(C')$。
+\end{theorem}
+
+\begin{proof}
+系 \ref{th:presstar} から $\confok(C')$。
+定理 \ref{th:prog} から $C'$ は終状態か、一歩進めるか、待ち状態である。
+\stuck\ の定義（定義 \ref{def:states}）はこの三つをすべて否定するので、矛盾する。
+\end{proof}
+
+\begin{remark}[この型安全性が排除しているもの]
+定理 \ref{th:safety} が排除しているのは、たとえば次のような状態である。
+\begin{itemize}\itemsep1pt
+\item 宛先にメソッドが無いメッセージが、配送できずに残る（メソッド不理解）。
+\item $\mathtt{true} + 1$ のように、型の合わない基底規則の当て先が無い式が残る。
+\item 存在しない actor 番号・future 番号を指す参照が残る。
+\item $\mathtt{err}$ から値を取り出そうとして落ちる（既定値を必須にしたので起きない）。
+\item 解決済みの future を二度書いて型が変わる（\textsc{E-Answer} は型を変えない）。
+\end{itemize}
+排除して\emph{いない}のは、$\blocked$ ---
+全員が期限なしの待ちに入って止まることだけである。
+\end{remark}
+
+\section{派生する不変条件}
+
+\begin{theorem}[状態の型は保たれる]\label{th:stinv}
+$\confok(C)$、$C \cstep^{*} (H',\vec{M}',\vec{t}')$、$\Om'(o) = c$、$\Sm'(o) = v$ ならば、
+$v$ は値であり、任意の文脈で $\vdash v : \styp(c)$。
+\end{theorem}
+
+\begin{proof}
+系 \ref{th:presstar} と \heapok\ の条件 2。
+\end{proof}
+
+\begin{theorem}[future に入る値の型は保たれる]\label{th:futinv}
+$\confok(C)$、$C \cstep^{*} (H',\vec{M}',\vec{t}')$、$\Ph'(k) = \tau$、$\Ps'(k) = v$ ならば、
+$v$ は値であり、任意の文脈で $\vdash v : \tau$。
+\end{theorem}
+
+\begin{proof}
+系 \ref{th:presstar} と \heapok\ の条件 3。
+\end{proof}
+
+定理 \ref{th:futinv} は、この断片でいちばん強い主張である。
+future $k$ に値が入る経路は三つある ---
+自分の本体が値になって \textsc{C-Finish} で入るか、
+自分が $\mathtt{answer}\ \mathtt{replyto}\ v$ で入れるか、
+\textbf{返答先を渡された他人}が $\mathtt{answer}\ \rho_k\ v$ で入れるか。
+三つ目は委譲であり、\Atwo\ では書けない。
+それでも、\textbf{入る値の型は $\Ph(k)$ のまま}である。
+待つ側は $\mathtt{now}\ \kappa_k : \Ph(k)$ と型付けされているので、
+誰が答えたかによらず、受け取る型は変わらない。
+
+\begin{theorem}[期限つきの待ちは必ず一歩進める]\label{th:timeout}
+$\Ph(k') = \tau$ ならば
+$H;o;k \vdash \mathtt{now}\ \kappa_{k'}\ \mathtt{timeout}\ n\ \mathtt{else}\ e_d
+ \longrightarrow H; \emptyset; e_d$。
+とくに、この式は待ち状態ではない ---
+$\neg\,\awaiting(H,\ \mathtt{now}\ \kappa_{k'}\ \mathtt{timeout}\ n\ \mathtt{else}\ e_d)$。
+\end{theorem}
+
+\begin{proof}
+前者は \textsc{E-AwaitDT} そのもの。
+後者は \awaiting\ の定義（定義 \ref{def:states}）による ---
+$E[\mathtt{now}\ \kappa]$ の形に書けるのは、
+期限つきの待ちの\emph{主部}が待っている場合だけであり、
+主部が $\kappa_{k'}$（値）ならその形にならない。
+\end{proof}
+
+\begin{corollary}[すべての待ちに期限をつけたなら]
+構成 $C$ のすべてのタスクの式が、期限のない $\mathtt{now}$ を含まないならば、
+$\neg\,\blocked(C)$。したがって定理 \ref{th:prog} は二択になる。
+\end{corollary}
+
+\begin{proof}
+\awaiting\ の定義は期限のない $\mathtt{now}$ を必ず一つ名指しする。
+\end{proof}
+
+これが第 2 版で紙の上だけ示していた主張の、意味論の側での対応物である。
+ただし得られるのは\emph{デッドロックが有限時間の失敗に変わる}ことであって、
+\emph{詰まらない}ことではない --- 互いに待ち合う二者は、両方が期限切れになる。
+
+\part{機械証明}
+
+\section{開発の構成}
+
+証明系は \textbf{Rocq (Coq) 9.1.0}（OCaml 5.1.1 でビルド）である。
+本稿に対応するファイルは二つ、いずれも
+\texttt{yaskodama/abclcp} の \texttt{coq/} にある。
+
+\begin{center}
+\begin{tabular}{llr}
+\toprule
+ファイル & 内容 & 行数 \\
+\midrule
+\texttt{AIPLSoundnessMax.v} & 構文・型・意味論・不変条件・全補題・全定理 & 1510 \\
+\texttt{AIPLSoundnessMaxExample.v} & 例題プログラム・整合性の確認・デッドロックの反例 & 214 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+同じディレクトリにある \texttt{AIPLSoundness.v}（第 1 版）、
+\texttt{AIPLSoundness2.v}（第 3 版、義務レベルと効果）、
+\texttt{AIPLDining.v}（食事する哲学者の資源順序）とは独立で、
+互いに \texttt{Require} していない。
+
+\section{紙と機械の対応}
+
+\begin{longtable}{p{0.34\textwidth}p{0.42\textwidth}r}
+\toprule
+本稿 & \texttt{AIPLSoundnessMax.v} & 行 \\
+\midrule
+\endhead
+型 $\tau$ & \texttt{Inductive ty} & 48 \\
+式 $e$ & \texttt{Inductive tm} & 59 \\
+値 $v$ & \texttt{Inductive value} & 101 \\
+代入 $e\subs{x}{v}$ & \texttt{Fixpoint subst} & 113 \\
+ヒープ $H=(\Om,\Sm,\Ph,\Ps)$ & \texttt{Record heap \{hot;hst;hft;hfv\}} & 143 \\
+メッセージ・タスク・構成 & \texttt{msg} / \texttt{task} / \texttt{conf} & 150 \\
+表の延長 $\sqsubseteq$ & \texttt{ext} & 180 \\
+$\styp,\sinit,\mtab,\mbody,\Om_0$ & \texttt{Variable stype sinit mtab mbody ot0} & 248 \\
+$\Om;\Ph;c;\rho;\Gamma \vdash e:\tau$ & \texttt{ht ot ft C R G e T} & 268 \\
+整合性 (P1)(P2)(P3) & \texttt{sinit\_value} / \texttt{sinit\_ok} / \texttt{bodies\_ok} & 323 \\
+局所簡約 $H;o;k \vdash e \to H';\vec{M};e'$ & \texttt{tstep H o k e H' out e'} & 444 \\
+評価文脈 $E$ & 合同規則 \texttt{ST*1}, \texttt{ST*2}（24 本） & 511 \\
+$\awaiting$ & \texttt{Inductive awaiting} & 572 \\
+$\cstep$、$\cstep^{*}$ & \texttt{cstep} / \texttt{csteps} & 600 \\
+\heapok & \texttt{heap\_ok} & 623 \\
+\msgok & \texttt{msg\_ok} & 632 \\
+\taskok & \texttt{task\_ok} & 643 \\
+\confok & \texttt{conf\_ok} & 652 \\
+\terminal, \blocked, \stuck & \texttt{terminal} / \texttt{blocked} / \texttt{stuck} & 659 \\
+\midrule
+補題 \ref{lem:inv}（逆転） & \texttt{ht\_oref\_inv} $\ldots$ \texttt{ht\_answer\_inv}（27 本） & 861--990 \\
+補題 \ref{lem:canon}（標準形） & \texttt{canon\_int} $\ldots$ \texttt{canon\_res}（8 本） & 397--441 \\
+補題 \ref{lem:vindep}（値は文脈に依らない） & \texttt{value\_ht\_indep} & 360 \\
+補題 \ref{lem:subst}（代入） & \texttt{substitution} & 369 \\
+補題 \ref{lem:mono}（単調性） & \texttt{ht\_mono}（\texttt{ht\_env\_ext} も） & 349 \\
+補題 \ref{lem:ctx}（文脈の置換） & 合同規則の各場合に溶けている & --- \\
+補題 \ref{lem:lprog}（局所進行） & \texttt{local\_progress} & 673 \\
+補題 \ref{lem:lpres}（局所保存） & \texttt{local\_preservation} & 994 \\
+（表の伸長に対する不変条件の持ち上げ） & \texttt{msg\_ok\_mono} / \texttt{task\_ok\_mono} & 1301 \\
+\midrule
+定理 \ref{th:nmnu}（メソッド不理解なし） & \texttt{no\_method\_not\_understood} & 1330 \\
+定理 \ref{th:pres}（保存） & \texttt{preservation} & 1345 \\
+系 \ref{th:presstar} & \texttt{preservation\_star} & 1408 \\
+定理 \ref{th:prog}（進行） & \texttt{progress}（\texttt{tasks\_progress} も） & 1440 \\
+定理 \ref{th:safety}（型安全性） & \texttt{type\_safety} & 1466 \\
+定理 \ref{th:stinv}（状態の型） & \texttt{state\_type\_invariant} & 1474 \\
+定理 \ref{th:futinv}（future の型） & \texttt{future\_type\_invariant} & 1487 \\
+定理 \ref{th:timeout}（期限） & \texttt{timeout\_always\_progresses} & 1501 \\
+ & \texttt{timeout\_never\_awaits} & 1506 \\
+\bottomrule
+\end{longtable}
+
+\begin{remark}[機械証明の側でだけ必要になったもの]
+紙では暗黙に済ませたが、機械証明では明示した補題が三種類ある。
+\begin{itemize}\itemsep1pt
+\item 表の索引に関する補題（\texttt{nth\_upd\_eq}, \texttt{nth\_app\_last},
+  \texttt{nth\_app1\_inv} など）。「一点更新は他の索引を変えない」
+  「後ろへの延長は既存の索引を変えない」を、リストの操作として書いたものである。
+\item 型環境の外延性（\texttt{ht\_env\_ext}）。
+  紙では $\Gamma$ を集合のように扱ったが、機械証明では関数なので、
+  「値が等しい二つの環境は同じ型付けを与える」を補題にする必要がある。
+\item 不変条件の持ち上げ（\texttt{msg\_ok\_mono}, \texttt{task\_ok\_mono}）。
+  紙では「補題 \ref{lem:mono} からそのまま」と書いた箇所である。
+\end{itemize}
+\end{remark}
+
+\section{仮定が空虚でないこと}\label{sec:example}
+
+すべての定理は整合性 (P1)(P2)(P3) を仮定している。
+そこで、\textbf{\Atwo\ では書けない機構（返答の委譲）を実際に使う}
+プログラムを一つ与え、三条件を満たすことを機械検査した。
+
+\begin{lstlisting}[language=AIPL]
+class Worker {                                  // クラス 0
+  state : int = 0
+  method add(x : int) : int  { var y = state + x; state := y; y }
+  method serve(r : reply<int>) : unit { answer r 7 }   // 他人の返答先に答える
+}
+class Front {                                   // クラス 1
+  method ask(x : int) : int {
+    var f = future w.serve(replyto);            // 自分の返答先を渡してしまう
+    0
+  }
+}
+\end{lstlisting}
+
+\texttt{Front.ask} は自分の返答先 \texttt{replyto} を \texttt{Worker} へ渡す。
+\texttt{Worker.serve} は、自分が呼ばれた future ではなく、
+\emph{渡された返答先}へ答える。
+\Atwo\ の義務レベルでは、返す義務がレベルの高い側から低い側へ移るので、これは書けない。
+\Amax\ では \textsc{T-ReplyTo} と \textsc{T-Answer} で型が付く ---
+\texttt{Front.ask} の返り値型が \tint\ だから $\rho = \tint$、
+よって $\mathtt{replyto} : \trep{\tint}$ であり、
+\texttt{Worker.serve} の引数型 \trep{\tint} と一致する。
+
+Coq 側の対応は次のとおりである（\texttt{AIPLSoundnessMaxExample.v}）。
+
+\begin{center}
+\begin{tabular}{p{0.40\textwidth}p{0.38\textwidth}r}
+\toprule
+名前 & 内容 & 行 \\
+\midrule
+\texttt{ex\_stype}, \texttt{ex\_sinit},
+  \texttt{ex\_mtab}, \texttt{ex\_mbody}, \texttt{ex\_ot0}
+  & 上のプログラム & 29--51 \\
+\texttt{ex\_sinit\_value} & (P1) & 53 \\
+\texttt{ex\_sinit\_ok} & (P2) & 56 \\
+\texttt{ex\_bodies\_ok} & (P3)。三つの本体すべてに型が付く & 60 \\
+\texttt{ex\_conf\_ok} & \texttt{Front.ask} が走っている構成が \confok & 97 \\
+\texttt{ex\_can\_step} & その構成は定理 \ref{th:prog} により一歩進める & 124 \\
+\texttt{ex\_never\_stuck} & そこから到達できるどの構成も行き詰まらない & 141 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{公理なしの確認と再現手順}
+
+\begin{lstlisting}[language=bash]
+cd ~/aios/abclcp/coq
+make            # ABCM, AIPLSoundness, AIPLSoundness2, AIPLSoundness2Example,
+                # AIPLDining, AIPLSoundnessMax, AIPLSoundnessMaxExample, ABCMEmbedding
+make check      # 40 個の Print Assumptions
+\end{lstlisting}
+
+\texttt{make check} は、既存の 25 本に本稿の 15 本を加えた 40 本すべてについて
+\begin{center}
+\texttt{Closed under the global context}
+\end{center}
+を出力する。すなわち\textbf{公理を一つも使っていない}。
+本稿の 15 本は次のものである。
+
+\begin{center}
+\small
+\begin{tabular}{ll}
+\toprule
+\texttt{AIPLSoundnessMax.no\_method\_not\_understood} & 定理 \ref{th:nmnu} \\
+\texttt{AIPLSoundnessMax.preservation} & 定理 \ref{th:pres} \\
+\texttt{AIPLSoundnessMax.preservation\_star} & 系 \ref{th:presstar} \\
+\texttt{AIPLSoundnessMax.progress} & 定理 \ref{th:prog} \\
+\texttt{AIPLSoundnessMax.type\_safety} & 定理 \ref{th:safety} \\
+\texttt{AIPLSoundnessMax.state\_type\_invariant} & 定理 \ref{th:stinv} \\
+\texttt{AIPLSoundnessMax.future\_type\_invariant} & 定理 \ref{th:futinv} \\
+\texttt{AIPLSoundnessMax.timeout\_always\_progresses} & 定理 \ref{th:timeout} \\
+\texttt{ex\_bodies\_ok}, \texttt{ex\_conf\_ok} & 整合性 (P3) と初期構成 \\
+\texttt{ex\_can\_step}, \texttt{ex\_never\_stuck} & 例題が動くこと・行き詰まらないこと \\
+\texttt{max\_admits\_deadlock} & \S\ref{sec:dl}: 型が付いてデッドロックする構成 \\
+\texttt{max\_is\_not\_deadlock\_free} & \S\ref{sec:dl}: デッドロック自由の否定 \\
+\texttt{dl\_not\_stuck} & \S\ref{sec:dl}: それでも行き詰まってはいない \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{Section} の \texttt{Variable}/\texttt{Hypothesis} は
+\texttt{End} で各定理の前提に変わる。したがって
+$\styp,\sinit,\mtab,\mbody,\Om_0$ と (P1)(P2)(P3) は\textbf{公理ではなく仮定}であり、
+\S\ref{sec:example} の例題がその仮定を実際に満たしている。
+
+\part{なぜこれが上限か}
+
+「最大」は、次の三つを合わせて主張する。
+\begin{enumerate}
+\item 加えた機構がすべて入っていること（\S\ref{sec:in}）。
+\item さらに加えると健全性・安全性が\emph{実際に}破れる機構があり、
+      その破れ方が分かっていること（\S\ref{sec:out}）。
+\item この断片ではデッドロック自由が\emph{実際に}破れること
+      --- つまり、これ以上広げないことと引き換えに得られる性質は無く、
+      逆に狭めれば得られること（\S\ref{sec:dl}）。
+\end{enumerate}
+
+\section{加えた機構}\label{sec:in}
+
+\begin{longtable}{p{0.20\textwidth}p{0.30\textwidth}p{0.42\textwidth}}
+\toprule
+機構 & AIPL の記法 & 健全性を壊さない理由 \\
+\midrule
+\endhead
+無条件の \texttt{await} & \texttt{now f} & 進行定理の第 3 の枝（待ち）に落ちるだけで、
+  行き詰まりにはならない。待つ相手の型は $\Ph$ が決めており、値が入るなら必ずその型
+  （定理 \ref{th:futinv}）。 \\
+文字列と \texttt{++} & \texttt{"a" ++ s} & 基底型を一つ増やし、演算を型で分けただけ。
+  標準形補題に一行増える。 \\
+対 & \texttt{m(a, b)}、複数フィールド & 値の構成子が増えるが、
+  値の型付けは文脈に依らないまま（補題 \ref{lem:vindep} の帰納段）。 \\
+\tres{\tau} & \texttt{ok} / \texttt{err} / \texttt{is\_ok} / \texttt{value} &
+  \texttt{value} に既定値を必須にしたので、失敗した \texttt{result} からの取り出しが
+  全域関数になる。範囲外・失敗が\emph{行き詰まりにならない}形になっている。 \\
+期限つきの待ち & \texttt{now f timeout 500 else d} &
+  既定値の型を本体と同じにしたので、どちらの枝でも型が変わらない。
+  しかも常に一歩進めるので、進行が強くなる（定理 \ref{th:timeout}）。 \\
+期限つきの待ち（result 版） & \texttt{now f timeout 500} &
+  失敗側は $\mathtt{err}_\tau$。$\tau$ は $\Ph(k)$ から取るので型が定まる。 \\
+一級の返答先 & \texttt{replyto} / \texttt{answer r v} &
+  \texttt{replyto} は値ではなく、\emph{自分のところで} $\rho_k$ に簡約される。
+  $\rho_k$ の型は $\Ph$ が決めるので、どこへ運ばれても変わらない
+  （補題 \ref{lem:vindep} の後の注意、および局所保存の \textsc{E-Answer} の場合）。 \\
+自己送信・待ちの環 & \texttt{now self.m(x)} &
+  型システムは何も禁じない。止まるかどうかは型の問題ではない。 \\
+孤児 future & --- & 誰も埋めない future があっても、
+  \heapok\ の条件 3 は「入っているなら型が合う」としか言わない。 \\
+\bottomrule
+\end{longtable}
+
+\section{加えると壊れるもの}\label{sec:out}
+
+以下は、AIPL の実装にはあるが \Amax\ に入れなかった機構である。
+入れなかった理由は\textbf{健全性か安全性が実際に破れるから}であり、
+破れ方をそれぞれ示す。合わせて、\emph{どう直せば入るか}も書く ---
+そのほとんどは、実装がすでにその形をとっている。
+
+\subsection{動的な宛先の \texttt{remote}}
+
+\texttt{remote(host, name)} の $host$、$name$ が実行時に計算される文字列だと、
+宛先 actor のクラスが型から決まらない。すると \textsc{T-Send} の第 2 前提
+$\mtab(c',m) = (\tau_a,\tau_r)$ が立たず、送信式に型を与えられない。
+無理に「宛先は \tact{?}」として型を付けると、
+\textsc{C-Deliver} の前提が満たせない構成が到達可能になり、
+配送できないメッセージが残る --- すなわち $\stuck$。
+\textbf{メソッド不理解が復活する。}
+
+直し方は二つある。
+(a) 宛先を静的な文字列リテラルに限る（現在の実装がこれである。
+    \texttt{remote(host, actor)} は文字列リテラルしか受けない）。
+(b) 遠隔呼び出しの型を \tres{\tau} にして、宛先が無い・メソッドが無いを
+    実行時の失敗として値で返す。\Amax\ には \tres{\tau} があるので、
+    この形なら\emph{そのまま入る}。
+
+\subsection{\texttt{any} と動的キャスト}
+
+\texttt{any} を入れて $\mathtt{any} \to \tint$ の暗黙変換を許すと、
+標準形補題 \ref{lem:canon} が壊れる。
+$\vdash v : \tint$ なのに $v$ が数でない、という状況が起こるので、
+局所進行の \textsc{T-Add} の場合で基底規則が当たらない。
+$\mathtt{true} + 1$ が残る。
+直し方は、キャストを \tres{\tau} を返す検査つきの操作にすること。
+
+\subsection{計算されたメソッド名}
+
+$\mathtt{future}\ t.(f(x))(v)$ のようにメソッド名を計算すると、
+\S\ref{sec:out}.1 と同じ理由で \textsc{T-Send} が書けない。
+実装 AIPL はメソッド名を識別子に限っている。
+
+\subsection{範囲検査のない添字}
+
+配列 $a[i]$ を全域でない操作として入れると、
+$i$ が範囲外のとき当てる規則が無く $\stuck$ になる。
+\Amax\ が \texttt{value} に既定値を必須にしたのと同じ手当てが要る ---
+既定値つきの $a[i]\ \mathtt{else}\ d$ か、\tres{\tau} を返す添字にすれば入る。
+（実装の配列は複製で更新される値であり、
+\texttt{array\_get} は範囲外で失敗する。ここは実装の側に手当てが要る箇所である。）
+
+\subsection{注釈のない \texttt{reply}}
+
+メソッドの返り値型が宣言されていないと、(P3) の $\rho$ と $\tau_r$ が決まらない。
+すると \texttt{replyto} に型を付けられず、\taskok\ の
+「判断の第 4 成分と結論の型がともに $\Ph(k)$」という形が作れない。
+第 1 版がまさにこの点で詰まり、
+\textbf{\texttt{web\_listen} / \texttt{web\_expose} から到達できるメソッドには
+戻り値型注釈を必須にする}という実装上の規則になった。
+本稿の (P3) は、その規則の形式化である。
+
+\subsection{\texttt{replyto} を値にすること}
+
+これは細かいが本質的である。
+$\mathtt{replyto}$ 自身を値にして他の actor へ送れるようにすると、
+補題 \ref{lem:vindep}（値の型付けは文脈に依らない）が壊れる ---
+$\mathtt{replyto}$ の型は $\rho$ に依存するからである。
+補題 \ref{lem:vindep} は代入補題と \heapok\ の両方が依存しているので、
+ここが壊れると保存定理まで壊れる。
+\Amax\ は $\mathtt{replyto}$ を\emph{式}に留め、
+簡約の結果である $\rho_k$（型は $\Ph$ 由来）だけを運べる値にした。
+一級の返答先が安全に入るのは、この一段のおかげである。
+
+\subsection{受け取る型が動的に決まる選択受信}
+
+\texttt{select} / \texttt{case} で受け取るメッセージの型が実行時に決まると、
+\msgok\ の「引数は宣言された引数型を持つ」が言えなくなり、
+\textsc{C-Deliver} で起こすタスクに型が付かない。
+受信の形をメソッドごとに固定すれば（実装がそうしている）問題は起きない。
+
+\section{直交する層}
+
+次のものは、健全性を壊さないが本稿では扱っていない。
+いずれも \Amax\ の上に\emph{層として}載る。
+
+\begin{description}
+\item[効果注釈 \texttt{!\{act,mut,ai,...\}}]
+  第 3 版（\texttt{AIPLSoundness2.v}）で機械検証済みである。
+  \tfut{\tau} の型に効果を載せ、
+  \emph{送信は引き継がず、待ちが引き継ぐ}という規則を与えると、
+  効果健全性が保存定理から出る。
+  \Amax\ に載せるには、\tfut{\tau} を $\mathtt{future}\langle\tau\,!\,\mathcal{E}\rangle$ に
+  置き換えるだけでよく、本稿のどの証明も構造は変わらない。
+\item[義務レベル \texttt{@n}]
+  第 3 版の主題であり、\emph{狭める}方向の層である。
+  \Amax\ に載せると、載せた分だけ書けるプログラムが減り、
+  代わりにデッドロック自由が得られる。
+\item[資源順序（\texttt{acquire}/\texttt{release}）]
+  \texttt{AIPLDining.v} で別に扱っている。
+  型ではなく、実行時の状態遷移についての議論である。
+\item[分散配備（\texttt{node\_allow} / \texttt{deploy} / \texttt{source\_of}）]
+  型に関係しない。どのノードで走るかは、本稿の意味論では見えない。
+\item[浮動小数・AI 呼び出し]
+  前者は基底型を増やすだけ。後者は「\tstr\ を返す不透明な関数」として入る
+  --- 中身が何であれ、型としては文字列である。
+\end{description}
+
+\section{デッドロック自由は、ここでは成り立たない}\label{sec:dl}
+
+最後に、\Amax\ が\textbf{上限であること}のいちばん直接的な証拠を挙げる。
+
+\begin{proposition}[型が付いてデッドロックする構成がある]\label{prop:dl}
+\S\ref{sec:example} のプログラムのもとで、次の構成 $C_{dl}$ は
+$\confok(C_{dl})$ かつ $\blocked(C_{dl})$ である。
+\[
+\begin{aligned}
+H_{dl} &= (\,[0;1],\ [0;0],\ [\tint;\tint],\ [\bot;\bot]\,) \\
+C_{dl} &= (\,H_{dl},\ \emptyset,\
+  [\ \langle 0,\,0,\ \mathtt{now}\ \kappa_1 \rangle,\ \
+      \langle 1,\,1,\ \mathtt{now}\ \kappa_0 \rangle\ ]\,)
+\end{aligned}
+\]
+\end{proposition}
+
+\begin{proof}
+\heapok: 長さは合っており、状態はどちらも $0 : \tint = \styp(c)$、
+解決済みの future は無い。
+$\Om_0 \sqsubseteq \Om$ は等号。メッセージは無い。
+\taskok: 第 1 のタスクは $\Om(0) = 0$、$\Ph(0) = \tint$ で、
+\textsc{T-FRef} と \textsc{T-Await} から
+$\Om;\Ph;0;\tint;\emptyset \vdash \mathtt{now}\ \kappa_1 : \tint$。
+第 2 のタスクも同様。よって $\confok$。
+$\blocked$: メッセージ列は空、タスク列は空でなく、
+$\Ps(0) = \Ps(1) = \bot$ だから両方のタスクが $\awaiting$（文脈は $[\,]$）。
+\end{proof}
+
+actor 0 のタスクは future 1 を待ち、actor 1 のタスクは future 0 を待つ。
+それぞれの future には\emph{埋める者がいる}（相手のタスクである）
+--- \Atwo\ の生産者不変条件は満たされている。
+それでも止まる。止めているのは待ちの\emph{向き}であり、
+それを禁じるのが \Atwo\ の義務レベルであった。
+\Amax\ にはそれが無い。
+
+\begin{corollary}
+\Amax\ では、定理 \ref{th:prog}（進行）の第 3 の枝を落とせない。
+すなわち $\forall C.\ \confok(C) \Rightarrow \neg\blocked(C)$ は\textbf{偽}である。
+\end{corollary}
+
+\begin{corollary}[それでも壊れてはいない]
+$\neg\,\stuck(C_{dl})$。
+\end{corollary}
+
+\begin{proof}
+定理 \ref{th:safety} を $C_{dl} \cstep^{*} C_{dl}$（0 歩）に適用する。
+あるいは直接、$\blocked(C_{dl})$ と $\stuck$ の定義から。
+\end{proof}
+
+この最後の系が、\S1.2 で述べた線引きの意味である。
+$C_{dl}$ は\emph{壊れて}いない --- 型はすべて合っており、
+未定義の操作も、理解されないメッセージも、宙に浮いた参照も無い。
+ただ\emph{答えが来ない}だけである。
+型システムに答えられるのはここまでで、
+その先（答えが来るかどうか）は義務レベルのような別の道具の仕事になる。
+
+三つの断片の到達点を、改めて並べておく。
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+ & \Aone & \Atwo & \Amax \\
+\midrule
+保存 & 定理 & 定理 & \textbf{定理 \ref{th:pres}} \\
+進行 & 定理（\texttt{await} なし） & 定理（二択） & \textbf{定理 \ref{th:prog}（三択）} \\
+型安全性 & 定理 & 定理 & \textbf{定理 \ref{th:safety}} \\
+デッドロック自由 & \texttt{await} なしの断片のみ & 定理 & \textbf{反例（命題 \ref{prop:dl}）} \\
+効果健全性 & --- & 定理 & 層として載る \\
+委譲・期限・\texttt{result} & 書けない & 書けない & \textbf{書ける} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{まとめ}
+
+\begin{enumerate}
+\item 目標を型健全性と型安全性の二つに絞ると、
+  \Atwo\ から\textbf{義務レベルと生産者不変条件を外し}、
+  \textbf{文字列・対・\tres{\tau}・期限つきの待ち・一級の返答先}を加えた
+  断片 \Amax\ まで広げられる。
+\item その範囲で、保存・進行・型安全性・状態の型不変・future の型不変・
+  期限の進行を、紙の上で証明し、Rocq 9.1.0 で機械検証した。
+  新規 15 定理、いずれも公理なし。
+\item 一級の返答先を安全にしているのは、
+  \textbf{$\mathtt{replyto}$ を値にせず、$\rho_k$ を値にする}という一段である。
+  返答先の型は $\Ph$ が決めるので、どこへ運ばれても変わらない。
+  \textbf{誰が答えても、future に入る値の型は同じ}（定理 \ref{th:futinv}）。
+\item これ以上広げると壊れるものは特定できている（\S\ref{sec:out}）。
+  そのほとんどについて、実装 AIPL はすでに壊れない形をとっている ---
+  静的な \texttt{remote} の宛先、識別子に限ったメソッド名、
+  戻り値型注釈の強制。本稿の (P3) はその規則の形式化である。
+\item そして \Amax\ では、デッドロック自由は成り立たない（命題 \ref{prop:dl}）。
+  型が付いたまま止まる構成が実在する。
+  デッドロック自由が要るなら、\Atwo\ の義務レベルまで戻って
+  言語を狭めるほかない。\textbf{これが選択の全体像である。}
+\end{enumerate}
+
+\end{document}

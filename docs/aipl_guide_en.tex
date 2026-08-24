@@ -1,0 +1,2086 @@
+% AIPL / ABCL^c+ User's Guide (English)
+%   Translation of docs/aipl_guide_ja.tex (2026-08-23 edition).
+%   Build:  lualatex -interaction=nonstopmode aipl_guide_en.tex   (twice)
+%           (pdflatex/xelatex also work: this file has no CJK.)
+\documentclass[11pt,a4paper]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+\geometry{margin=22mm}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{gray},
+  breaklines=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  keywordstyle=\bfseries,
+  commentstyle=\itshape\color{gray!130},
+}
+\lstdefinelanguage{AIPL}{
+  morekeywords={class,method,var,float,new,now,future,await,reply,send,replyto,answer,
+    call,if,else,while,do,select,case,timeout,self,sender,remote,print,
+    true,false,int,string,bool,unit,any},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+}
+\lstset{language=AIPL}
+\lstnewenvironment{term}{\lstset{language={},basicstyle=\ttfamily\footnotesize}}{}
+
+\newcommand{\ty}[1]{\ensuremath{\mathtt{#1}}}
+\newcommand{\eff}[1]{\texttt{\{#1\}}}
+
+\title{AIPL / ABCL$^{c}$+ User's Guide\\
+{\large ---\ syntax, usage, and sample programs ---}}
+\author{ABCL$^{c}$+ / AIOS implementation (\texttt{yaskodama/abclcp}, branch \texttt{make-src-base})}
+\date{2026-08-23 edition\\{\small Target: branch \texttt{make-src-base} (the current specification, including the seven disciplines)}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This is the \textbf{current} user's guide to AIPL (ABCL$^{c}$+).
+Part \ref{part:start} gives the shape of the language and the shortest path to
+running something; Part \ref{part:lang} specifies the syntax and the type
+system; Part \ref{part:disciplines} covers the seven disciplines that sit on
+top of it; Part \ref{part:sample} walks through the sample programs with their
+sources and their actual output; Part \ref{part:tool} describes the tools for
+building, running and checking; Part \ref{part:appendix} collects the grammar
+summary, the present limits, and the migration notes from the previous edition.
+
+AIPL is a concurrent language whose unit is the \textbf{actor}. A value is not
+returned with \texttt{return} but with \texttt{reply}. Three static mechanisms
+sit on top of that --- \textbf{types} (the return type is inferred from
+\texttt{reply}, and can also be annotated), \textbf{effects} (a method declares
+what it does to the world, as in \texttt{!\{ai, net\}}), and \textbf{deadlines}
+(\texttt{now ... timeout ... else ...} bounds every wait). For example, ``a
+real-time actor synchronously calls a model outside the box'' can be forbidden
+by the effect check alone.
+
+Above those sit the \textbf{seven disciplines} (Part \ref{part:disciplines}) ---
+the failure type \texttt{result}$\langle\tau\rangle$, first-class reply
+destinations, resource ordering, obligation levels, and session types. All of
+them are built so that they \textbf{work without you writing annotations}.
+As a result, \textbf{as long as the target of a wait is known as a class, or
+the level of the target node is declared, deadlock freedom is guaranteed by the
+type system}. That is not a claim on paper only: it is machine-checked in
+Coq/Rocq.
+
+What this guide describes is the \textbf{core} --- the part that all three
+implementations (OCaml, Python, JavaScript) provide. The Python implementation
+additionally has \textbf{extensions} (record types, refinement types, channels,
+ownership), so the language has two layers (\S\ref{sec:migrate}).
+
+If you only want the delta from the previous edition (2026-07-30), read
+\S\ref{sec:migrate}. \texttt{become} has been \textbf{removed from the language}.
+\end{abstract}
+
+\tableofcontents
+
+\part{Getting started}
+\label{part:start}
+
+\section{What AIPL is}
+
+AIPL is an actor language in the lineage of ABCL/1. A program is a sequence of
+\textbf{class declarations} and \textbf{global statements}; actors created from
+the classes run by sending messages to each other.
+
+\begin{lstlisting}
+class Counter {
+  var n = 0;                       // a field (the actor's state)
+  method bump() : int !{mut} {     // return type int, effect mut
+    n = n + 1;
+    reply(n);                      // hand a value back to the caller
+  }
+}
+
+var c = new Counter();             // create one actor
+print(now c.bump() timeout 100 else 0);
+\end{lstlisting}
+
+Four differences from other languages are worth learning first.
+
+\begin{enumerate}
+\item \textbf{One actor is one thread}, and it processes the messages it
+  receives one at a time. Fields are never touched concurrently.
+\item \textbf{Values come back through \texttt{reply}.} There is no
+  \texttt{return}. \texttt{reply} resolves the caller's future; the method
+  keeps running afterwards.
+\item \textbf{There are three kinds of send.} \texttt{send} (does not wait; a
+  statement), \texttt{now} (waits for the reply; an expression), and
+  \texttt{future} (does not wait; hands you a ticket; an expression).
+\item \textbf{Waiting freezes you.} While an actor waits in a \texttt{now} it
+  cannot process any other message. That is why waits carry deadlines.
+\end{enumerate}
+
+\section{Three static mechanisms}
+
+\subsection{Types --- what you give back}
+
+A method's return type is inferred from the \texttt{reply} calls in its body.
+The optional annotation \texttt{method m(x) : T} may also be written. When you
+write it, the checker verifies that every execution path replies, and the
+declared type flows into expression inference as the \emph{expected} type.
+
+\subsection{Effects --- what you do to the world}
+
+A method declares its effects with \eff{...}. There are eight of them
+(\S\ref{sec:effects}). If you omit the annotation the effects are inferred; if
+you write it, ``the effects of the body $\subseteq$ the effects you declared''
+is checked.
+
+\begin{lstlisting}
+method plan(goal) : string !{ai, net} { reply(ai_call("plan: " ++ goal)); }
+method peek()     : int    !{}        { reply(n); }
+\end{lstlisting}
+
+The point is that \texttt{ai} and \texttt{net} are separate: on-device
+inference that ``uses AI but never leaves the box'' is expressed with \eff{ai}
+alone.
+
+\subsection{Deadlines --- how long you will wait}
+
+\begin{lstlisting}
+var r = now planner.plan(g) timeout 2000 else "(timed out)";
+\end{lstlisting}
+
+If no reply arrives in time, the value of the \texttt{else} branch is used.
+If you write no \texttt{else}, the expression has type
+\texttt{result}$\langle\tau\rangle$ and cannot be used before it is checked
+(\S\ref{sec:result}).
+
+\subsection{And seven disciplines on top}
+
+Types, effects and deadlines are the ground floor. Above them sit the failure
+type, first-class reply destinations, resource ordering, obligation levels and
+session types (Part \ref{part:disciplines}). All of them are built so that they
+\textbf{work without annotations}. As a result, \textbf{as long as the target of
+a wait is known as a class, or the level of the target node is declared,
+deadlock freedom is guaranteed by the type system} (\S\ref{sec:levels}).
+
+\section{Running something in five minutes}
+
+\subsection{Building the implementation}
+
+\begin{term}
+cd ~/aios/abclcp
+make -C src thread_repl
+\end{term}
+
+Building with \texttt{dune} fails because \texttt{src/lexer.ml} is generated
+twice, so use \texttt{src/Makefile}.
+
+\subsection{Running a program}
+
+Pass a file of REPL commands with \texttt{-f}.
+
+\begin{term}
+cat > run.repl <<'EOF'
+load docs/samples/guide/g2_now_future.aipl
+compile
+EOF
+./src/abclrepl_thread -q -f run.repl < /dev/null
+\end{term}
+
+\begin{term}
+twice = 43
+awaited = 20
+v=7
+\end{term}
+
+\textbf{Do not pass a \texttt{.aipl} file to \texttt{-f} directly.} It would be
+read line by line as REPL commands, the class definitions would never be
+loaded, and you would get \texttt{Actor xxx not found}. Always write
+\texttt{load} and \texttt{compile}.
+
+\subsection{Running only the type checker}
+
+The REPL depends on SDL, so a small separate driver exists for type checking
+alone (\S\ref{sec:tc}). Once built, \texttt{./tc file.aipl} prints the table of
+return types, effects and signatures.
+
+\begin{term}
+$ ./tc docs/samples/guide/g6_effects.aipl
+=== g6_effects.aipl ===
+[OK] type check passed
+[method return types (inferred from reply)]
+  Counter#bump -> int
+  Planner#plan -> string
+  ViaNow#run -> string
+[method effects (inferred / declared)]
+  Counter#bump !{mut}
+  Planner#plan !{ai, net}
+  ViaNow#run !{ai, net}
+\end{term}
+
+\part{Language guide}
+\label{part:lang}
+
+\section{The shape of a program}
+
+A program is a \textbf{sequence of declarations}. A declaration is one of the
+following; the order is free, and names are resolved at run time.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Declaration & Meaning \\
+\midrule
+\texttt{class C \{ ... \}}            & class definition \\
+\texttt{var x = e;}                   & global variable \\
+\texttt{var x = new C(args);}         & create an actor \\
+\texttt{send t.m(args);}              & global asynchronous send \\
+\texttt{send! t.m(args);}             & the same, with the check relaxed \\
+\texttt{f(args);}                     & call a builtin function \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{quote}\small
+\texttt{if} and \texttt{while} cannot appear at global level. If you need
+control flow, put it inside a method and start it with \texttt{send}.
+\end{quote}
+
+A class is a \textbf{sequence of fields} followed by a \textbf{sequence of
+methods}.
+
+\begin{lstlisting}
+class Counter {
+  var n = 0;                    // fields come first; declare with var or float
+  float ratio = 1.5;
+  method init(start) {          // init is called automatically by new
+    n = start;
+  }
+  method bump() : int !{mut} {
+    n = n + 1;
+    reply(n);
+  }
+}
+\end{lstlisting}
+
+\begin{itemize}
+\item Fields come \textbf{before} methods.
+\item A class needs \textbf{at least one method} (the grammar has no
+  field-only class).
+\item A method named \texttt{init} is called automatically by
+  \texttt{new C(args)}. If the number of arguments does not match, creation is
+  skipped and \texttt{[Actor] x: no init; skipped} is printed.
+\item A field's type is fixed by its initializer. \texttt{var n = 0;} is
+  \ty{int}, so assigning a \ty{float} or a string to it later is a type error.
+\end{itemize}
+
+\section{Lexical structure}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.5cm}@{}}
+\toprule
+Kind & Content \\
+\midrule
+Comments   & \texttt{// to end of line}, \texttt{/* ... */} (not nestable) \\
+Keywords   & \texttt{class}, \texttt{method}, \texttt{var}, \texttt{float},
+             \texttt{new}, \texttt{send}, \texttt{send!}, \texttt{now},
+             \texttt{future}, \texttt{await}, \texttt{if}, \texttt{else},
+             \texttt{while}, \texttt{do}, \texttt{select}, \texttt{case},
+             \texttt{timeout}, \texttt{call}, \texttt{replyto},
+             \texttt{self}, \texttt{sender}, \texttt{remote},
+             \texttt{true}, \texttt{false} \\
+Integers   & \texttt{0}, \texttt{123} \\
+Floats     & \texttt{1.5}, \texttt{100.} (a trailing dot alone makes it \ty{float}) \\
+Strings    & \texttt{"..."}, with \texttt{\textbackslash\textbackslash}
+             \texttt{\textbackslash"} \texttt{\textbackslash n}
+             \texttt{\textbackslash t} \texttt{\textbackslash r} \\
+Booleans   & \texttt{true}, \texttt{false} \\
+Identifiers & \texttt{[A-Za-z\_][A-Za-z0-9\_]*} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{quote}\small
+\texttt{float} is a keyword, so it cannot be used freely as a variable or type
+name (it \emph{can} be written as a return annotation, \texttt{: float}, which
+has its own grammar rule).
+\end{quote}
+
+\section{Types}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Type & Description \\
+\midrule
+\ty{int}, \ty{float}, \ty{string}, \ty{bool}, \ty{unit} & base types \\
+\ty{T[]}          & array (handled through the \texttt{array\_*} builtins) \\
+\ty{future\ T}    & the result of a \texttt{future} send; \texttt{await} takes the \ty{T} out \\
+\ty{actor(C)}     & an actor of class \texttt{C}; the type of \texttt{new C(...)} \\
+\ty{any}          & a boundary whose content is not statically guaranteed
+                    (\texttt{sender}, remote targets) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A return annotation may be
+\texttt{int} / \texttt{float} / \texttt{string} / \texttt{bool} /
+\texttt{unit} / \texttt{any}, or a class name starting with a capital letter
+(an actor type). An unknown lowercase name is a syntax error:
+\texttt{unknown type name in return annotation}.
+
+\begin{quote}\small
+\textbf{Method parameters are monomorphic.} The type variables of a signature
+are shared by every call site, so calling the same method with \ty{int} and
+with \ty{string} conflicts. Polymorphic methods cannot be written.
+\end{quote}
+
+\begin{quote}\small
+There is \textbf{no implicit conversion} between \ty{int} and \ty{float}.
+If \texttt{var h = new Hello(5);} feeds a \texttt{float} field you get a type
+error; write \texttt{new Hello(5.)}.
+\end{quote}
+
+\section{Expressions}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Expression & Meaning \\
+\midrule
+\texttt{123}, \texttt{1.5}, \texttt{"abc"}, \texttt{true}, \texttt{false} & literals \\
+\texttt{x} & variable, field or parameter \\
+\texttt{-\,e} & unary minus; lowers to \texttt{neg(e)}. \ty{int}/\ty{float} \\
+\texttt{a ++ b} & string concatenation (both sides are stringified) \\
+\texttt{a + b}, \texttt{a - b}, \texttt{a * b} & arithmetic. \ty{int} with \ty{int} gives \ty{int};
+  \ty{float} with \ty{float} gives \ty{float} \\
+\texttt{a / b} & division. Even \ty{int} with \ty{int} gives \ty{float} (no integer division) \\
+\texttt{a == b}, \texttt{a != b} & equality. \ty{int}/\ty{float}/\ty{string}/\ty{bool} \\
+\texttt{a > b}, \texttt{a < b}, \texttt{a >= b}, \texttt{a <= b} & comparison; the result is \ty{bool} \\
+\texttt{new C(args)} & create an actor (effect \eff{mem}) \\
+\texttt{now t.m(args)} & synchronous send: wait for the reply and become that value \\
+\texttt{now t.m(args) timeout $n$ else $e$} & synchronous send with a deadline \\
+\texttt{future t.m(args)} & asynchronous send; returns \ty{future\ T} \\
+\texttt{await e} & wait for a future to resolve \\
+\texttt{await e timeout $n$ else $e'$} & \texttt{await} with a deadline \\
+\texttt{f(args)} & call a builtin function \\
+\texttt{( e )} & parentheses \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The target \texttt{t} is \textbf{a variable holding an actor reference}, or
+\texttt{remote("host:port", "actorName")}. It is not a class name.
+
+\subsection{Precedence}
+
+From weakest to strongest:
+
+\begin{center}
+equality \texttt{==} \texttt{!=} \ $<$\ comparison \texttt{>} \texttt{<} \texttt{>=} \texttt{<=}
+\ $<$\ concatenation \texttt{++} \ $<$\ additive \texttt{+} \texttt{-}
+\ $<$\ multiplicative \texttt{*} \texttt{/} \ $<$\ unary minus
+\end{center}
+
+So \texttt{1 + 2 == 3} reads as \texttt{(1 + 2) == 3}, and
+\texttt{"x=" ++ a + b} reads as \texttt{"x=" ++ (a + b)}.
+Every binary operator is \textbf{left associative} (equality included) ---
+\texttt{1 == 2 == false} reads as \texttt{((1 == 2) == false)} and evaluates to
+\texttt{true}. Unary minus is a prefix, so it can be stacked
+(\texttt{- - 3} is \texttt{3}).
+
+\subsection{Do not confuse \texttt{+} with \texttt{++}}
+
+\texttt{+} is \textbf{numeric only}. Mixing in a string gives
+\texttt{no overload of + matches (string, int)}.
+
+\begin{lstlisting}
+print("count = " ++ n);      // correct
+print("count = " + n);       // type error
+\end{lstlisting}
+
+\texttt{++} stringifies both sides first, so neither side has to be a string.
+
+\subsection{Ambiguous overloads}
+
+When both operands are unbound, \texttt{a + b} could be \ty{int} or
+\ty{float}: it has no principal type. That is an error. An annotation makes the
+expected type flow into the expression and settles it.
+
+\begin{lstlisting}
+method add(a, b)       { reply(a + b); }   // error: ambiguous overload
+method add(a, b) : int { reply(a + b); }   // the annotation settles it
+\end{lstlisting}
+
+\texttt{AIOS\_LAX\_OVERLOAD=1} restores the old behaviour (warn and pick the
+default candidate). Equality \texttt{==} and \texttt{!=} have four candidates
+but all of them return \ty{bool}, so they are never ambiguous (ambiguity is
+only reported when the \emph{return types} disagree).
+
+\section{Statements}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Statement & Meaning \\
+\midrule
+\texttt{var x = e;} & variable declaration \\
+\texttt{var x = new C(args);} & declaration that creates an actor \\
+\texttt{x = e;} & assignment \\
+\texttt{f(args);} \quad \texttt{call f(args);} & call a builtin function \\
+\texttt{send t.m(args);} & asynchronous send; does not wait for a reply \\
+\texttt{send self.m(args);} & asynchronous send to yourself \\
+\texttt{send sender.m(args);} & asynchronous send to the sender \\
+\texttt{send! t.m(args);} & send with the check relaxed \\
+\texttt{if (e) s} \quad \texttt{if (e) s else s} & conditional (the parentheses are required) \\
+\texttt{while e do s} & loop (no parentheses required) \\
+\texttt{\{ s ... \}} & block \\
+\texttt{select \{ ... \}} & selective receive \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{quote}\small
+\texttt{now self.m()} and \texttt{now sender.m()} \textbf{cannot be written} ---
+the grammar forbids them. A \texttt{now} to yourself is a self-deadlock (you are
+busy running that very method, so nobody is left to produce the reply), and not
+being able to write it is exactly the safe side. If you want to factor out a
+computation such as inverse kinematics, put it in another actor and call
+\texttt{now kin.solve(...)}.
+\end{quote}
+
+\begin{quote}\small
+A variable declaration with a type annotation, \texttt{var x : T = e;}, does
+\textbf{not exist yet}. It is in the design notes but unimplemented.
+\end{quote}
+
+\section{Actors and communication}
+
+\subsection{The three sends}
+
+\begin{center}
+\begin{tabular}{@{}llll@{}}
+\toprule
+ & Waits? & Statement or expression & Inherits the callee's effects? \\
+\midrule
+\texttt{send a.m(x);}      & no          & statement & no \\
+\texttt{now a.m(x)}        & until reply & expression (of the declared/inferred type) & \textbf{yes} \\
+\texttt{future a.m(x)}     & no          & expression (\ty{future\ T}) & no \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+``Only the side that waits carries the callee's effects'' is the rule of effect
+propagation (\S\ref{sec:effects}).
+
+\subsection{\texttt{reply}}
+
+A method does not ``return'' a value; \texttt{reply(v)} resolves the caller's
+future. The type system gives each method a return type, and every
+\texttt{reply} in the body together with every \texttt{now} / \texttt{future}
+call site shares that type.
+
+\begin{itemize}
+\item \texttt{reply} happens \textbf{at most once}. A second one would arrive
+  after the waiter already took the first value, so it would be silently
+  dropped. That is made a type error.
+\item If the return type is \emph{declared} as something other than \ty{unit},
+  the checker verifies that \textbf{every execution path replies exactly once}.
+  The body of a \texttt{while} may run zero times, so it is conservatively
+  judged as ``there is a path that does not reply''.
+\item A method with no \texttt{reply} at all is treated as returning \ty{unit}.
+  Notification-style methods called with \texttt{send} are of this kind.
+\end{itemize}
+
+\begin{lstlisting}
+method m(k) : int { reply(k); reply(k + 1); }                     // type error
+method m(k) : int { if (k > 0) { reply(1); } else { reply(2); } } // OK
+\end{lstlisting}
+
+\subsection{\texttt{select}}
+
+\begin{lstlisting}
+select {
+  case job(k) -> { reply("done:" ++ k); }
+  timeout 500 -> { print("timed out"); }
+}
+\end{lstlisting}
+
+\texttt{case m(x1, ..., xn)} is matched against the signature of the method of
+the same name. A mismatch in the number or type of arguments is a type error.
+\texttt{timeout} is in milliseconds and may be omitted.
+
+\textbf{A \texttt{reply} in a case body answers ``the selected message'', not
+the enclosing method.} The implementation switches the reply destination to the
+selected message before running the case, so the \texttt{reply} above answers
+\texttt{job}. Hence a method containing a \texttt{select} may itself be
+\ty{unit}. The \texttt{timeout} body, by contrast, runs with the enclosing
+method's reply destination.
+
+\begin{quote}\small
+\texttt{select} looks for messages that have \emph{not yet been processed}. If
+ordinary method dispatch takes the message of that name first, nothing is left
+for the case, so it is safer to design the names you \texttt{select} on so that
+nobody calls them directly (see the output in \S\ref{sec:g4}).
+\end{quote}
+
+\section{Waiting with a deadline}
+\label{sec:deadline}
+
+\subsection{Why it is needed}
+
+A \texttt{now} or \texttt{await} without a deadline waits forever if no reply
+comes. An actor is one thread and a wait blocks on a condition variable, so
+while it waits it cannot process any other message. It turns to stone.
+
+\begin{lstlisting}
+now t.m(a) timeout <milliseconds> else <expression>
+await f    timeout <milliseconds> else <expression>
+\end{lstlisting}
+
+If the reply arrives in time you get its value; otherwise you get the value of
+the \texttt{else} branch.
+
+\subsection{The rules}
+
+\begin{itemize}
+\item The \texttt{else} branch must have \textbf{the same type as the body},
+  because a timeout must not change the type of the whole expression.
+  Otherwise: \texttt{now: the else branch has type string but the call returns int}.
+\item The deadline must be \textbf{positive} (\texttt{timeout must be positive}).
+\item A \texttt{now} / \texttt{await} without a deadline is a \textbf{warning}
+  by default, and an \textbf{error} under \texttt{AIOS\_STRICT\_DEADLINE=1}.
+\item The upper bound on the number of replies is the \texttt{max} of the body
+  and the \texttt{else} branch (not their sum), since only \emph{one} of them
+  runs.
+\item A rejected future (\texttt{reject}) is distinguished from a timeout and
+  raises an exception.
+\end{itemize}
+
+In the implementation, OCaml's \texttt{Condition} has no timed wait, so the
+deadline is measured by polling at 1\,ms granularity.
+
+\subsection{Relation to type soundness}
+\label{sec:soundness}
+
+Writing a deadline makes every wait finish in finite time. But that only means
+\emph{a deadlock is converted into a failure in finite time}; the failure does
+not disappear. Two actors waiting on each other with \texttt{now} both time
+out. Nothing is stuck --- and nothing is right either.
+
+To say \textbf{that nothing gets stuck} in the type system you need not
+deadlines but \textbf{obligation levels} (\S\ref{sec:levels}). Those are
+\textbf{machine-checked in Coq/Rocq}: for the core \emph{including}
+\texttt{await}, type soundness, type safety and deadlock freedom are proved
+with no axioms (\texttt{coq/AIPLSoundness2.v}). The first version could state
+deadlock freedom only for a fragment with \texttt{await} removed, which is what
+the second version fixes.
+
+The progress theorem changed as follows.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+& What progress states \\
+\midrule
+1st version & terminal state $\lor$ can step $\lor$ \textbf{all tasks are waiting} \\
+2nd version & terminal state $\lor$ can step \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Termination is still not claimed. \texttt{while 1 > 0 do \{\}} does not stop,
+but it is not a wait, so it does not contradict progress.
+
+\section{Effects}
+\label{sec:effects}
+
+\subsection{The eight effects}
+
+\begin{center}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Effect & Meaning & Effect & Meaning \\
+\midrule
+\texttt{mut}  & assignment to a field  & \texttt{net} & communication outside the node \\
+\texttt{time} & reading the clock, waiting & \texttt{ai}  & model inference \\
+\texttt{io}   & input/output to a device & \texttt{fs}  & persistence \\
+\texttt{mem}  & dynamic allocation     & \texttt{log} & output for observation only \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This is not a newly designed taxonomy: it is the capability classification the
+evaluator already carried as run-time metadata, made static. The point is that
+\texttt{ai} and \texttt{net} are separate --- a model call that leaves the box
+has both, while on-device inference gets \eff{ai} only. ``Uses AI but never
+leaves the box'' becomes visible in the signature.
+
+\subsection{How to write them}
+
+\begin{lstlisting}
+method plan(goal) : string !{ai, net} { ... }   // after the return type
+method peek()            !{}          { ... }   // explicitly effect-free
+method tick()                         { ... }   // omitted: inferred
+\end{lstlisting}
+
+The annotation is optional (gradual). If you omit it, inference simply runs and
+nothing is said. If you write it, ``the effects of the body $\subseteq$ the
+effects declared'' is checked. Declaring more than you use is allowed. An
+unknown effect name is rejected as a typo.
+
+\begin{term}
+[Type error] line 1, col 18: unknown effect(s) network in A.m;
+  known effects are mut, time, io, mem, net, ai, fs, log
+\end{term}
+
+\subsection{What counts as an effect}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Construct & Effect \\
+\midrule
+assignment to a field        & \eff{mut} \\
+assignment to a local        & \textbf{not an effect} \\
+\texttt{new C(...)}          & \eff{mem} \\
+calling a builtin            & that function's effects (\S\ref{sec:builtins}) \\
+send to a \texttt{remote(...)} target & \eff{net} \\
+local send with \texttt{now} & \textbf{inherits the callee's effects} \\
+\texttt{send} / \texttt{future} & does not inherit \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+That \texttt{mut} covers only assignment to fields is deliberate: it lets a
+pure actor (safe to replicate) and an actor with external effects (exactly one
+at a time) be told apart by the effect set alone.
+
+Propagation through \texttt{now} iterates to a fixpoint. Effects only grow, so
+it terminates.
+
+\subsection{What this lets you forbid}
+
+\begin{lstlisting}
+class Controller {
+  method step(s) : string !{io, time} {
+    var r = now planner.plan(s) timeout 100 else "";   // plan is !{ai, net}
+    reply(r);
+  }
+}
+\end{lstlisting}
+
+\begin{term}
+[Type error] method Controller.step declares {io, time}
+  but its body has {ai, net, io, time} (missing {ai, net})
+\end{term}
+
+``A real-time actor synchronously calls an agent outside the box'' is forbidden
+by the effect check alone. What used to be stated as a design decision now
+holds mechanically in the type system.
+
+\begin{quote}\small
+\textbf{A known hole.} Splitting a \texttt{now} into \texttt{future} and
+\texttt{await} \emph{escapes} this check: the implementation adds the
+propagation edge only at the \texttt{now} site and not at the \texttt{await}.
+A reproduction is in
+\texttt{docs/samples/}\allowbreak\texttt{soundness2\_effect\_gap.aipl}.
+The fix (carrying effects in the \ty{future} type) is described in the second
+soundness report.
+\end{quote}
+
+\part{The seven disciplines}
+\label{part:disciplines}
+
+On top of types, effects and deadlines sit seven disciplines. All of them are
+built so that they \textbf{work without annotations} --- because the
+information they need is usually already written in the program.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{5.6cm}p{4.0cm}@{}}
+\toprule
+Discipline & How you write it & What it stops \\
+\midrule
+Effects & \texttt{!\{ai, net\}} & the real-time side waiting on a model outside the box \\
+Deadlines & \texttt{timeout $n$ else $e$} & waits that never return \\
+Failure type & \texttt{timeout $n$} (no \texttt{else}) & letting a timed-out value flow on as a normal one \\
+First-class reply & \texttt{replyto} / \texttt{answer} / parameter type \texttt{reply} & dropped replies and double replies \\
+Resource order & \texttt{acquire} / \texttt{release} / \texttt{resource\_order} & forgetting to release, double acquire, acquiring in reverse order \\
+Obligation levels & \texttt{@$n$} (inferred if omitted) & cycles of waiting \\
+Session types & \texttt{protocol\_define} / \texttt{\_start} / \texttt{\_end} & steps taken out of order \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Putting failure in the type --- \texttt{result}$\langle\tau\rangle$}
+\label{sec:result}
+
+If you write \texttt{else} on a deadline, the timed-out value and the normal
+value have \textbf{the same type}. The program cannot ask whether $-1$ came
+back because it timed out or because $-1$ was computed.
+
+Write no \texttt{else} and you get \texttt{result}$\langle\tau\rangle$.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+How you write it & Type \\
+\midrule
+\texttt{now a.m(x) timeout 200 else -1} & \ty{int} \\
+\texttt{now a.m(x) timeout 200} & \texttt{result}$\langle$\ty{int}$\rangle$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Use \texttt{is\_ok} / \texttt{timed\_out} / \texttt{value} to take the value out.
+
+\begin{lstlisting}
+var a = now s.fast(42) timeout 200;      // result<int>
+if (is_ok(a)) { print("fast ok " ++ value(a, -1)); }
+else          { print("fast timed out"); }
+\end{lstlisting}
+
+A \texttt{result}$\langle\tau\rangle$ cannot be used as a number. Feeding it
+into arithmetic without checking stops the program at compile time.
+
+\begin{term}
+no overload of + matches (result int, int)
+\end{term}
+
+\section{Making the reply destination a first-class value}
+\label{sec:reply1st}
+
+\texttt{replyto} yields, as a value, the reply destination of the message
+currently being processed. Its type is \texttt{reply}$\langle\rho\rangle$
+(where $\rho$ is the method's return type), and \texttt{answer(r, v)} sends the
+reply. \texttt{reply(v)} is sugar for that.
+
+With the parameter annotation \texttt{reply} you can hand it to another actor.
+A front desk takes the request and a specialist answers \textbf{directly}.
+
+\begin{lstlisting}
+class Backend {
+  method handle(r: reply, x) : unit !{} {
+    answer(r, x * 2);            // answer Frontend's caller directly
+  }
+}
+class Frontend {
+  var b = new Backend();
+  method ask(x) : int !{} {
+    send b.handle(replyto, x);   // pass the destination on; do not reply here
+  }
+}
+\end{lstlisting}
+
+A reply destination is \textbf{linear}: using it exactly once is an obligation.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{7.6cm}@{}}
+\toprule
+Rule & Content \\
+\midrule
+Creation & \texttt{var r = replyto;} creates the obligation \\
+Consumption & \texttt{answer(r, v)}, or passing it as a send argument, discharges it \\
+Exactly once & the same \texttt{r} must not be used twice \\
+Nothing left & no obligation may remain when the method returns \\
+Branches & the two branches of an \texttt{if} must join in the same state \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{quote}\small
+The check is closed within a method. A reply destination \textbf{cannot be kept
+in a field} (a field's type is fixed by its initializer). A bounded buffer that
+``collects senders and answers them later'' therefore cannot be written
+directly in the core as it stands.
+\end{quote}
+
+\section{Resource order}
+\label{sec:resorder}
+
+Effects are a \textbf{set}, so they cannot express order; ``take it and give it
+back'' cannot be said. So the \texttt{acquire} / \texttt{release} pairs are
+tracked through the body instead.
+
+\begin{lstlisting}
+class Bus {
+  var n = 0;
+  method read(addr) : int !{mut} {
+    acquire("i2c");
+    n = n + 1;
+    var v = addr * 2;
+    release("i2c");           // delete this line and it is a type error
+    reply(v);
+  }
+}
+\end{lstlisting}
+
+There are three rules. Nothing may still be held when the method returns. You
+may not release what you do not hold. You may not acquire twice. The two
+branches of an \texttt{if} must join holding the same things, and the body of a
+\texttt{while} must not change what is held.
+
+\subsection{A global order --- stopping reverse acquisition}
+
+Checking pairs is not enough. If two actors take the same two resources in
+\textbf{opposite order}, both pairings are correct, yet at run time they wait
+for each other.
+
+No new annotation is needed. The nesting ``$s$ was acquired while $r$ was
+held'' \emph{is} the claim $r < s$. The claims are collected from the whole
+program and checked for cycles.
+
+\begin{term}
+resource order: cache -> db -> cache is circular;
+  cache before db (in Reader.run); db before cache (in Writer.run).
+  Acquiring in opposite orders deadlocks
+\end{term}
+
+Every edge of the cycle carries \textbf{where it came from}, so the two places
+that acquire in opposite order are named directly.
+
+You may also write \texttt{resource\_order("bus -> dev")} instead of relying on
+inference. A declaration simply enters the same table as an edge, so if the
+declaration and the actual acquisitions disagree, that shows up as a cycle too.
+The inferred order can be printed with \texttt{AIOS\_SHOW\_LEVELS=1}.
+
+\begin{term}
+[resource] bus                  @0
+[resource] dev                  @1
+\end{term}
+
+\begin{quote}\small
+Only \texttt{acquire} calls whose resource name is a \textbf{string literal}
+can be tracked. A name held in a variable is invisible statically, so the
+declared order is also enforced at run time
+(\texttt{AIOS\_STRICT\_RESOURCE=1} reports the places that could not be tracked).
+\end{quote}
+
+\section{Obligation levels --- stopping cycles of waiting}
+\label{sec:levels}
+
+There are four shapes in which a wait never returns: a cycle of waits, a wait
+that is never replied to, a \texttt{select} waiting for a message that never
+comes, and resources acquired in reverse order. \textbf{Obligation levels}
+address the first.
+
+Each method gets a number, and \textbf{a wait must always go to a strictly
+larger number}.
+
+\begin{lstlisting}
+class Leaf { method f(x)  : int @2 !{} { reply(x + 1); } }
+class Mid  { var l = new Leaf();
+             method g(x)  : int @1 !{} { reply(now l.f(x) timeout 200 else 0); } }
+\end{lstlisting}
+
+\textbf{You do not have to write them.} If you omit them, they are inferred by
+a fixpoint that pushes levels up along the wait edges. An explicit annotation
+is treated as a fixed point; if it cannot be satisfied, that is where the
+contradiction is.
+
+\begin{term}
+obligation level: B9#g (@2) waits on A9#f (@2);
+                  a wait must go to a strictly higher level
+obligation levels do not converge; the wait graph has a cycle
+\end{term}
+
+The inferred levels can be printed with \texttt{AIOS\_SHOW\_LEVELS=1}.
+
+\subsection{Waits that cross nodes}
+
+In a mesh the target lives on another node and is invisible statically. So each
+node declares a \textbf{floor} for its levels, and a wait towards that node
+must go up.
+
+\begin{lstlisting}
+node_level("rt0", 10);            // the real-time node is a leaf (high level)
+\end{lstlisting}
+
+\begin{term}
+obligation level: Ctl2#go (@7) waits on node rt0 (floor @1);
+                  a wait across nodes must go up
+\end{term}
+
+This is exactly the same shape as checking effects at the border with
+\texttt{node\_allow}.
+
+\subsection{How much is guaranteed}
+
+\textbf{As long as the target of a wait is known as a class, or the level of the
+target node is declared, deadlock freedom is guaranteed by the type system.}
+This is not a claim on paper only --- it is machine-checked in Coq/Rocq for the
+core \emph{including} \texttt{await} (\texttt{coq/AIPLSoundness2.v}, no axioms).
+
+The conditions matter. A dynamic target is invisible. Levels are per method, so
+two instances of the same class are treated alike. Termination and starvation
+are separate problems.
+
+\section{Session types --- the order of an exchange}
+\label{sec:session}
+
+``Open it, then read, then close it at the end'' is a promise that neither
+deadlines nor the existence of a sender can express. AIPL already had
+\textbf{run-time} session protocols, so the type checker reads
+\textbf{the same declaration}. No new declaration is needed.
+
+\begin{lstlisting}
+protocol_define("Pipeline", "f.get -> r.scale -> st.put");
+var sid = protocol_start("Pipeline");
+
+var a = now f.get(4)    timeout 200 else 0;
+var b = now r.scale(a)  timeout 200 else 0;
+var c = now st.put(b)   timeout 200 else 0;
+protocol_end(sid);
+\end{lstlisting}
+
+Get the order wrong and it is reported before the program runs.
+
+\begin{term}
+protocol Pipeline: expected r.scale but the program sends st.put here
+protocol Pipeline is incomplete at protocol_end; next expected st.put
+\end{term}
+
+(An example of real output.)
+
+\begin{term}
+protocol P29: expected b.step2 but the program sends c.step3 here
+\end{term}
+
+\subsection{When the session crosses actors}
+
+In a real program the steps do not fit in one straight sequence: you call one
+front-desk actor, and the remaining steps happen inside its body.
+
+A synchronous send (\texttt{now} / \texttt{aios\_now}) \textbf{runs to
+completion before} the caller continues. So the callee's sequence of sends can
+be spliced in at the call site (behaviour expansion), and a session that
+crosses actors can still be matched as a single sequence.
+
+Asynchronous sends (\texttt{send} / \texttt{future}) are not spliced in ---
+there is no telling when they run. If the callee contains steps, completion is
+left to the run-time check (\texttt{AIOS\_STRICT\_PROTOCOL=1} reports it).
+
+\begin{quote}\small
+Steps refer to roles \textbf{by name}, so \textbf{pass actors as arguments}.
+If you keep them in fields, the run-time name (\texttt{c\#f}) and the static
+name (\texttt{f}) disagree and the step cannot point at the role.
+\end{quote}
+
+\section{The \texttt{select} discipline}
+\label{sec:selectrule}
+
+Two things are required of a \texttt{select}.
+
+\begin{enumerate}
+\item \textbf{Write a deadline.} A \texttt{select} without a \texttt{timeout}
+  clause waits forever for a message that may never come.
+\item \textbf{Check that a sender exists.} If nobody in this program sends the
+  \texttt{m} of \texttt{case m(...)}, it is either a typo or something you
+  forgot to write.
+\end{enumerate}
+
+\begin{term}
+select waits for W2.ghost but nothing in this program sends it
+select without a timeout waits forever; write `timeout <ms> -> { ... }`
+\end{term}
+
+Both are warnings by default. When sends are dynamic, or the program is exposed
+to the outside, no judgement is possible, so the check is simply not made ---
+\textbf{the language does not see the whole world}.
+
+\section{Mesh deployment}
+\label{sec:mesh}
+
+An actor's source is shipped to another node and is parsed and type-checked
+\textbf{at the destination} before it is instantiated. The effect annotations
+travel with the code and are matched against the receiving node's policy.
+
+\begin{lstlisting}
+node_allow("rt0", "mut, log, time");     // effects the real-time node accepts
+deploy("rt0", "Servo", "servo1");        // ship Servo's source to rt0 and instantiate
+var d = now remote("rt0", "servo1").step(3) timeout 200 else -1;
+\end{lstlisting}
+
+\begin{term}
+[deploy] Servo -> rt0/servo1 (compiled at destination)
+\end{term}
+
+Ship code carrying \texttt{ai} or \texttt{net} to a real-time node and it is
+stopped at the border. Effects turn from a discipline inside one node into
+\textbf{immigration control between nodes}.
+
+\section{Escape hatches (environment variables)}
+\label{sec:escape}
+
+Every default is on the strict side. Environment variables exist that loosen
+things, but they are not meant for everyday use. The list is in
+\S\ref{sec:envvars}.
+
+\part{Reference}
+
+\section{What the type checker looks at}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.0cm}@{}}
+\toprule
+Check & Content \\
+\midrule
+Method existence   & does the local target have a method of that name \\
+Argument count and type & do the actual arguments match what the body requires \\
+\texttt{reply} type & do all \texttt{reply} calls have the same (declared) type \\
+\texttt{reply} count & at most once; with an annotation, exactly once on every path \\
+select matching    & do the \texttt{case} arity and argument types match the signature \\
+Annotations when exposed & do the methods of a \texttt{web\_expose}d actor carry annotations \\
+Overloads          & is the candidate unique (ambiguity is an error) \\
+Effects            & do the declared effects cover the body's; are the effect names known \\
+Deadlines          & the type of the \texttt{else} branch, positivity, presence \\
+Failure type       & is a \texttt{result}$\langle\tau\rangle$ used without being checked \\
+Reply linearity    & is \texttt{replyto} used exactly once \\
+\texttt{reply} totality & does a method waited on by \texttt{now}/\texttt{await} reply on every path \\
+Resources          & the \texttt{acquire}/\texttt{release} pairs and cycles in the acquisition order \\
+Obligation levels  & does every wait go up; the same across node borders \\
+Sessions           & is the order of sends the order of \texttt{protocol\_define} \\
+select             & is there a deadline; does anybody send the awaited message \\
+Assignment to undeclared names & is a name assigned to without a \texttt{var} declaration \\
+Deployment border  & do the shipped code's effects fit the receiver's policy \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Representative messages:
+
+\begin{term}
+no method foo in actor(C)
+type mismatch                                  <- argument or assignment type
+no overload of + matches (string, int)         <- + is numeric only
+ambiguous overload of + for ('a, 'a): candidate return types are float / int
+reply type mismatch: this method is declared to reply with int,
+  but replies with string here
+method m is declared to reply with int, but some execution path does not reply
+method m may reply more than once on some path
+select: case m binds 1 variable(s) but method m takes 2
+actor C is reachable from outside this program, but m has no return type
+  annotation; ...
+method C.m declares {log, time} but its body has {ai, log, net}
+  (missing {ai, net})
+unknown effect(s) network in A.m; known effects are mut, time, io, mem, ...
+now: the else branch has type string but the call returns int
+now: timeout must be positive
+now without a deadline waits forever;
+  write `now ... timeout <ms> else <expr>`      <- warning by default
+assignment to undeclared name: cout (write `var cout = ...` to declare it)
+no overload of + matches (result int, int)     <- check a result before using it
+method Silent4.f is waited on by now/await but does not reply on every path
+resource i2c is released without being acquired
+method Dev4.use returns while still holding i2c
+resource order: cache -> db -> cache is circular; ...
+obligation level: B9#g (@2) waits on A9#f (@2);
+  a wait must go to a strictly higher level
+obligation levels do not converge; the wait graph has a cycle
+protocol P29: expected b.step2 but the program sends c.step3 here
+select waits for W2.ghost but nothing in this program sends it   <- warning
+select without a timeout waits forever                            <- warning
+deploy: Servo.step is @3 but node rt0 has floor @10
+\end{term}
+
+\section{Exposing to the outside}
+\label{sec:expose}
+
+\texttt{web\_listen(port)} starts an HTTP gateway, and
+\texttt{web\_expose(path, actorName)} gives an exposed endpoint an alias.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Endpoint & Content \\
+\midrule
+\texttt{GET /}                & a small UI \\
+\texttt{POST /api/send}       & \texttt{to=<actor>\&method=<m>\&args=<a,b>} reaches any actor \\
+\texttt{POST /api/x/<key>}    & reaches the alias registered with \texttt{web\_expose} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{POST /api/send} \textbf{can reach any actor by name}. In other words it
+is \texttt{web\_listen} that opens the border; \texttt{web\_expose} only adds an
+alias. The type checker takes that into account: for an actor named by
+\texttt{web\_expose}, a return annotation on every method (except \texttt{init})
+is \textbf{mandatory}, and with \texttt{web\_listen} alone it is a
+\textbf{warning}. The far side cannot see the body, so the reply type can only
+travel as a declaration.
+
+\texttt{AIOS\_LAX\_EXPOSE=1} downgrades the error to a warning.
+
+Arguments arriving over HTTP are built by interpreting the string as \ty{int}
+$\to$ \ty{float} $\to$ \ty{string}, in that order. An annotation cannot make
+the boundary less dynamic, but it can declare \emph{which type you promise}.
+
+\section{Builtin functions and their effects}
+\label{sec:builtins}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.4cm}l@{}}
+\toprule
+Group & Names & Effect \\
+\midrule
+Math & \texttt{sin}, \texttt{cos}, \texttt{tan}, \texttt{asin}, \texttt{acos},
+  \texttt{atan}, \texttt{sqrt}, \texttt{exp}, \texttt{log10}, \texttt{abs},
+  \texttt{floor}, \texttt{ceil}, \texttt{round} & \eff{} \\
+Basic & \texttt{typeof}, \texttt{reply}, \texttt{neg} & \eff{} \\
+Output & \texttt{print} & \eff{log} \\
+Time & \texttt{wait} & \eff{time} \\
+Arrays (read) & \texttt{array\_get}, \texttt{array\_len} & \eff{} \\
+Arrays (allocate) & \texttt{array\_empty}, \texttt{array\_push}, \texttt{array\_set} & \eff{mem} \\
+Actor creation & \texttt{spawn} & \eff{mem} \\
+Drawing (SDL) & \texttt{sdl\_init}, \texttt{sdl\_clear}, \texttt{sdl\_line},
+  \texttt{sdl\_erase\_line}, \texttt{sdl\_present}, \texttt{sdl\_line\_c} & \eff{io} \\
+Memory and tasks & \texttt{aios\_memory\_put/get/has/keys},
+  \texttt{aios\_task\_create/set/get/info}, \texttt{aios\_tasks} & \eff{fs} \\
+Model inference & \texttt{ai\_call}, \texttt{ai\_call\_with\_system},
+  \texttt{model\_generate}, \texttt{gemini\_generate},
+  \texttt{openai\_generate} & \eff{ai, net} \\
+Communication and exposure & \texttt{web\_listen}, \texttt{web\_expose},
+  \texttt{aios\_now}, \texttt{aios\_future},
+  \texttt{remote\_review}, \texttt{remote\_review\_ja},
+  \texttt{remote\_reviewer\_host} & \eff{net} \\
+Introspection & \texttt{capabilities}, \texttt{capability\_prims},
+  \texttt{aios\_kernel}, \texttt{aios\_actors}, \texttt{aios\_actor\_info},
+  \texttt{aios\_actor\_methods}, \texttt{aios\_mailbox\_len},
+  \texttt{actor\_dump} & \eff{log} \\
+Events & \texttt{aios\_emit}, \texttt{aios\_events},
+  \texttt{aios\_events\_since}, \texttt{aios\_event\_count} & \eff{log} \\
+Protocols & \texttt{protocol\_define/start/use/current/state/end/events} & \eff{log} \\
+Services & \texttt{aios\_register\_service}, \texttt{aios\_services},
+  \texttt{aios\_service\_actor}, \texttt{aios\_service\_info} & \eff{log} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A primitive that is not in this table is treated as effect-free.
+
+\part{Sample programs}
+\label{part:sample}
+
+The samples in this part are the ten programs in \texttt{docs/samples/guide/}.
+All of them type-check, their output is exactly as printed here, and
+\textbf{the three implementations (OCaml, Python, JavaScript) agree on that
+output} --- verified with \texttt{tools/run\_all\_impls.sh}.
+(The sources in the repository carry Japanese comments; the listings below are
+the same programs with the comments translated.)
+
+Samples for the more advanced features (\texttt{result}$\langle\tau\rangle$,
+delegating a reply destination, resource order, obligation levels, session
+types, mesh deployment) are the twenty programs in
+\texttt{docs/samples/paper/}; the examples in Part \ref{part:disciplines} come
+from there.
+
+\section{g1: classes, fields, \texttt{send}, string concatenation}
+
+\begin{lstlisting}
+// g1: class, field, init, method, send, string concatenation
+class Greeter {
+  var count = 0;              // a field, initialized as int
+
+  method init(name) {         // called automatically by new
+    print("hello, " ++ name); // ++ concatenates (both sides are stringified)
+  }
+
+  method tick() : unit {      // return annotation; no reply, so unit
+    count = count + 1;        // + is numeric only
+    print("tick " ++ count);
+  }
+}
+
+var g = new Greeter("AIPL");
+send g.tick();                // asynchronous; does not wait for a reply
+send g.tick();
+\end{lstlisting}
+
+\begin{term}
+hello, AIPL
+tick 1
+tick 2
+\end{term}
+
+\texttt{init} is called automatically by \texttt{new Greeter("AIPL")}.
+\texttt{tick} does not \texttt{reply}, so it declares \ty{unit} and the
+coverage check does not apply. \texttt{send} does not wait for a reply, so the
+two \texttt{tick}s are processed in order. \texttt{count + 1} is \ty{int} with
+\ty{int}, so it stays \ty{int} and prints as \texttt{1}, \texttt{2}.
+
+The inferred effects are \texttt{Greeter\#init !\{log\}} and
+\texttt{Greeter\#tick !\{log, mut\}}.
+
+\section{g2: \texttt{now} / \texttt{future} / \texttt{await} and annotations}
+
+\begin{lstlisting}
+// g2: now / future / await and the return annotation
+class Calc {
+  // with an annotation, every reply is matched against this type and
+  // replying on every path is checked as well
+  method twice(a) : int {
+    reply(a * 2);
+  }
+
+  // without one, the type is inferred from reply (-> string)
+  method label(a) {
+    reply("v=" ++ a);
+  }
+}
+
+var c = new Calc();
+
+var s = now c.twice(21);      // now is an expression; the result is int
+print("twice = " ++ (s + 1)); // usable as int in arithmetic
+
+var f = future c.twice(10);   // future gives future int
+var v = await f;              // await takes the value out
+print("awaited = " ++ v);
+
+print(now c.label(7));        // the inferred string
+\end{lstlisting}
+
+\begin{term}
+twice = 43
+awaited = 20
+v=7
+\end{term}
+
+\texttt{twice} declares \ty{int}, so \texttt{now c.twice(21)} is \ty{int} and
+can be used in the arithmetic \texttt{s + 1}. \texttt{label} omits the
+annotation, and \ty{string} is inferred from \texttt{reply("v=" ++ a)}.
+
+This sample writes no deadlines, so the type checker emits three warnings.
+
+\begin{term}
+[warn] line 16, col 9: now without a deadline waits forever;
+  write `now ... timeout <ms> else <expr>`
+\end{term}
+
+\section{g3: several actors, and a \texttt{now} across actors}
+
+\begin{lstlisting}
+// g3: several actors, and a now that crosses actors
+class Stock {
+  var n = 10;
+
+  method take(k) : int {
+    n = n - k;
+    if (n < 0) { n = 0; }
+    reply(n);
+  }
+}
+
+class Front {
+  // Stock.take returns int; that becomes the type of the now,
+  // which in turn feeds place's own string
+  method place(k) : string {
+    var left = now stock.take(k);
+    if (left > 0) {
+      reply("ok, left=" ++ left);
+    } else {
+      reply("sold out");
+    }
+  }
+}
+
+var stock = new Stock();
+var front = new Front();
+
+print(now front.place(3));
+print(now front.place(99));
+\end{lstlisting}
+
+\begin{term}
+ok, left=7
+sold out
+\end{term}
+
+\texttt{Stock.take} returns \ty{int}; that becomes the type of the \texttt{now}
+inside \texttt{Front.place}, which then feeds \texttt{place}'s own \ty{string}.
+Types propagate across actor boundaries.
+
+Because \texttt{place} declares \ty{string}, the checker verifies that both
+branches of the \texttt{if} reply. Delete one and you get
+\texttt{some execution path does not reply}.
+
+Note that \texttt{n = n - k} with \ty{int} \texttt{n} forces \texttt{k} to be
+\ty{int}, consistent with \texttt{place(3)} at the call site; writing
+\texttt{place("x")} would be an \emph{argument} type error.
+
+Both methods have effect \eff{mut} (assignment to field \texttt{n}), and
+\texttt{Front\#place} inherits \texttt{Stock\#take}'s \eff{mut} through the
+\texttt{now}.
+
+\section{g4: \texttt{select}, and which message a \texttt{reply} answers}
+\label{sec:g4}
+
+\begin{lstlisting}
+// g4: select / case / timeout, and which message a case's reply answers
+class Worker {
+  // the job message that arrives from outside
+  method job(k) : string {
+    reply("direct:" ++ k);
+  }
+
+  // wait for job with select. The reply in the case body answers job,
+  // so serve itself replies to nothing and stays unit
+  method serve() : unit {
+    print("waiting");
+    select {
+      case job(k) -> {
+        print("got " ++ k);
+        reply("via select:" ++ k);
+      }
+      timeout 500 -> {
+        print("timed out");
+      }
+    }
+  }
+}
+
+var w = new Worker();
+send w.serve();
+print(now w.job(1));
+\end{lstlisting}
+
+\begin{term}
+direct:1
+waiting
+timed out
+\end{term}
+
+The \texttt{reply} in the body of \texttt{case job(k)} answers \texttt{job},
+not \texttt{serve}, so \texttt{serve} may stay \ty{unit}. The type checker also
+matches that \texttt{reply} against \texttt{job}'s return type.
+
+The output shows \textbf{a design caveat this example carries}. Ordinary method
+dispatch processed \texttt{now w.job(1)} first, so by the time \texttt{serve}'s
+\texttt{select} ran, no \texttt{job} was left in the mailbox and it fell
+through to the \texttt{timeout}. It is safer to design the message names you
+\texttt{select} on so that they are not called directly.
+
+\section{g5: exposing to the outside makes annotations mandatory}
+
+\begin{lstlisting}
+// g5: exposing an actor makes the return annotation mandatory
+//     web_listen opens the border, and POST /api/send can reach any actor.
+//     The far side cannot see the body, so the reply type can only
+//     travel as a declaration.
+class Echo {
+  method say(msg) : string {   // without the annotation this is a type error
+    reply("echo: " ++ msg);
+  }
+  method note(msg) : unit {
+    print("[note] " ++ msg);
+  }
+}
+
+var echo = new Echo();
+
+web_listen(8080);
+web_expose("/echo", "echo");
+
+print("try POST /api/x/echo with method=say&args=hi");
+\end{lstlisting}
+
+This program type-checks. Remove the annotation on \texttt{say} and you get:
+
+\begin{term}
+[Type error] line 16, col 1: actor Echo is reachable from outside this
+  program, but say has no return type annotation; a remote caller cannot
+  see the body, so the reply type has to be declared (method say(...) : T)
+\end{term}
+
+Running \texttt{web\_listen(8080)} starts the gateway and blocks listening, so
+check it from another terminal.
+
+\begin{term}
+$ curl -s -X POST http://localhost:8080/api/x/echo \
+       -d 'method=say&args=hi'
+\end{term}
+
+\section{g6: effect annotations and propagation}
+
+\begin{lstlisting}
+// g6: the effect annotation !{...}
+//
+//     The existing capability classification, made static. Eight effects:
+//       mut  write your own state        net  communication outside the node
+//       time reading the clock, waiting  ai   model inference
+//       io   input/output to a device    fs   persistence
+//       mem  dynamic allocation          log  output for observation only
+//
+//     Omit the annotation and it is inferred from the body. Write it and
+//     "the body's effects  the declared effects" is checked (more is allowed).
+class Counter {
+  var n = 0;
+
+  method bump() : int !{mut} {   // assignment to a field is mut
+    n = n + 1;
+    reply(n);
+  }
+  method peek() : int !{} {      // effect-free: pure, so free to replicate
+    reply(n);
+  }
+  method show() : unit !{log} {  // print is log
+    print("n = " ++ n);
+  }
+}
+
+class Planner {
+  // ai_call leaves the box, so it has both ai and net.
+  // It shows up in the signature, so which actors leave the box is visible
+  method plan(goal) : string !{ai, net} {
+    reply(ai_call("plan: " ++ goal));
+  }
+}
+
+class ViaNow {
+  // now waits, so it inherits the callee's effects.
+  // Without declaring {ai, net} this is a type error
+  method run(g) : string !{ai, net} {
+    var r = now planner.plan(g);
+    reply(r);
+  }
+}
+
+class ViaSend {
+  // send does not wait, so it does not inherit. Effect-free is fine
+  method fire(g) : unit !{} {
+    send planner.plan(g);
+  }
+}
+
+var planner = new Planner();
+var c = new Counter();
+var a = new ViaNow();
+var b = new ViaSend();
+
+// ai_call would hit an external API, so only Counter is exercised here
+print(now c.bump());
+print(now c.peek());
+send c.show();
+\end{lstlisting}
+
+\begin{term}
+1
+1
+n = 1
+\end{term}
+
+The effect table printed by the type checker is the point of this sample.
+
+\begin{term}
+[method effects (inferred / declared)]
+  Counter#bump !{mut}          <- assignment to a field
+  Counter#peek !{}             <- pure
+  Counter#show !{log}          <- print
+  Planner#plan !{ai, net}      <- ai_call
+  ViaNow#run   !{ai, net}      <- now, so it inherited plan's effects
+  ViaSend#fire !{}             <- send, so it did not
+\end{term}
+
+Remove the \eff{ai, net} declaration from \texttt{ViaNow.run} and it fails with
+\texttt{declares \{\} but its body has \{ai, net\}}. \texttt{ViaSend.fire} may
+stay \eff{}. The rule that \textbf{only the side that waits carries the
+callee's effects} is visible right here.
+
+\section{g7: \texttt{now} / \texttt{await} with deadlines}
+
+\begin{lstlisting}
+// g7: now / await with a deadline
+//
+//     Without a deadline, a now or await waits forever if no reply comes.
+//     An actor is one thread, so while it waits it cannot process any
+//     other message -- it turns to stone.
+//
+//       now t.m(a) timeout <ms> else <expr>
+//       await f    timeout <ms> else <expr>
+//
+//     The else branch must have the same type as the body.
+class Slow {
+  method work(k) : int !{time} {
+    wait(300);              // takes 300 ms
+    reply(k * 2);
+  }
+  method fast(k) : int !{} {
+    reply(k * 2);
+  }
+}
+
+var s = new Slow();
+
+// returns in time
+var a = now s.fast(21) timeout 1000 else 0;
+print("fast = " ++ a);
+
+// times out -> the value of the else branch
+var b = now s.work(21) timeout 50 else 0;
+print("slow(timed out) = " ++ b);
+
+// awaiting a future with a deadline
+var f = future s.fast(5);
+var c = await f timeout 1000 else 0;
+print("await = " ++ c);
+\end{lstlisting}
+
+\begin{term}
+fast = 42
+slow(timed out) = 0
+await = 10
+\end{term}
+
+\texttt{work} takes 300\,ms, so the \texttt{now} with a 50\,ms deadline times
+out and becomes the \texttt{0} of the \texttt{else} branch. \texttt{fast} makes
+the 1000\,ms deadline and returns \texttt{42}.
+
+This sample also passes under \texttt{AIOS\_STRICT\_DEADLINE=1} (every wait has
+a deadline). Change \texttt{else 0} to \texttt{else "zero"} and you get:
+
+\begin{term}
+[Type error] now: the else branch has type string but the call returns int
+\end{term}
+
+\section{g8: equality, unary minus, boolean literals}
+
+\begin{lstlisting}
+// g8: equality, unary minus, boolean literals
+//
+//     The lexer and the evaluator had all of these, but the expression
+//     grammar did not, so they could not be written.
+//
+//       ==  !=          equality, on int / float / string / bool
+//       - e             unary minus; lowers to neg(e)
+//       true  false     boolean literals
+//
+//     Precedence is equality < comparison < ++ < additive < multiplicative
+//     < unary minus, so 1 + 2 == 3 reads as (1 + 2) == 3.
+class C {
+  var flag = false;                     // a bool field
+  method set(v) : unit !{mut} { flag = v; }
+  method get() : bool !{} { reply(flag); }
+  method t() : unit !{log, mut} {
+    flag = true;
+    if (flag == true)  { print("literal true ok"); }
+    if (flag != false) { print("literal false ok"); }
+    var b = 1 < 2;
+    print("b = " ++ b);
+    print("not-eq: " ++ (true != false));
+  }
+}
+var c = new C();
+send c.t();
+\end{lstlisting}
+
+\begin{term}
+literal true ok
+literal false ok
+b = true
+not-eq: true
+\end{term}
+
+All of these existed in the lexer and the evaluator but had \emph{no expression
+grammar rule}, so they could not be written; the previous edition listed them
+as a known gap. \texttt{flag} is initialized with \texttt{false}, so it is
+\ty{bool}, and the parameter of \texttt{set(v)} is wired to \ty{bool} as well.
+
+\section{g9: passing an actor as an argument}
+
+\begin{lstlisting}
+// g9: passing an actor as a message argument
+//
+//     With the parameter annotation `method m(x: D)` you can send to the
+//     actor you received. Without it the parameter type is undetermined
+//     and you get `send target is not actor`.
+class D { method ping() : unit !{log} { print("pong"); } }
+class P {
+  method viaAnno(x: D) : unit !{log} {
+    print("got actor");
+    send x.ping();
+    print("after send");
+  }
+}
+var d = new D();
+var p = new P();
+send p.viaAnno(d);
+\end{lstlisting}
+
+\begin{term}
+got actor
+after send
+pong
+\end{term}
+
+The parameter annotation \texttt{d: Device} fixes the class of that argument;
+passing anything else is a type error. This annotation also adds an edge for
+obligation levels (\S\ref{sec:levels}), which is exactly why \textbf{levels did
+not need to be carried on actor types}.
+
+\section{g10: two classes with a field of the same name}
+
+\begin{lstlisting}
+// g10: two different classes may have a field of the same name
+//
+//      A class body is checked under that class's own fields, so
+//      Fork's held and Latch's held are different things.
+class Fork {
+  var held = 0;
+  method take() : int !{mut} { held = 1; reply(held); }
+}
+class Latch {
+  var held = 0;
+  method arm()  : int !{mut} { held = 2; reply(held); }
+}
+var f = new Fork();
+var l = new Latch();
+print("fork  = " ++ (now f.take() timeout 200 else -1));
+print("latch = " ++ (now l.arm()  timeout 200 else -1));
+\end{lstlisting}
+
+\begin{term}
+fork  = 1
+latch = 2
+\end{term}
+
+\begin{quote}\small
+This is a regression test. The OCaml implementation used to \emph{stack} fields
+into the type environment, so an assignment to the second class's \texttt{held}
+was rejected as an overloaded name (Python and JavaScript were correct). Of the
+586 programs at hand, 119 contained two classes with a field of the same name,
+but in almost all of them another error came first and hid it.
+\end{quote}
+
+\section{Negative samples}
+
+\texttt{docs/samples/reply\_inference/} holds samples whose purpose is to
+confirm that they \emph{do not} pass.
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+File & What happens \\
+\midrule
+\texttt{s2\_missing\_reply}      & the result of a forgotten \texttt{reply} is used in arithmetic \\
+\texttt{s3\_conflict}            & branches \texttt{reply} with different types \\
+\texttt{s5\_overload\_ambiguity} & \texttt{a + b} with no principal type \\
+\texttt{s8\_annotation\_conflict}& a \texttt{reply} that contradicts the declaration \\
+\texttt{s9\_missing\_path}       & some path does not \texttt{reply} \\
+\texttt{s10\_expose\_unannotated}& an exposed actor without annotations \\
+\texttt{s12\_service\_exposed}   & the same, in the exposed integration sample \\
+\texttt{s14\_select\_pattern}    & a \texttt{case} arity that differs from the signature \\
+\texttt{s15\_double\_reply}      & a double \texttt{reply} \\
+\midrule
+\multicolumn{2}{@{}l@{}}{directly under \texttt{docs/samples/}} \\
+\texttt{soundness2\_effect\_gap} & \texttt{future}+\texttt{await} escapes the effect check (a known hole) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\part{Building and running}
+\label{part:tool}
+
+\section{Building the implementation}
+
+\begin{term}
+cd src && make thread_repl
+\end{term}
+
+Building with \texttt{dune} fails because \texttt{src/lexer.ml} is generated
+twice, so use \texttt{src/Makefile}.
+
+\section{Running a program}
+
+Pass a file of REPL commands with \texttt{-f}.
+
+\begin{term}
+cat > run.repl <<'EOF'
+load docs/samples/guide/g7_deadline.aipl
+compile
+EOF
+./src/abclrepl_thread -q -f run.repl < /dev/null
+\end{term}
+
+The main REPL commands are
+\texttt{load} / \texttt{compile} / \texttt{list} / \texttt{send} /
+\texttt{ast} / \texttt{pprint} / \texttt{script} / \texttt{exit}.
+
+\section{Running only the type checker}
+\label{sec:tc}
+
+The REPL depends on SDL, so a small driver exists for type checking alone.
+
+\begin{term}
+ocamlfind ocamlc -package unix -thread -linkpkg -w -a -I src -o tc \
+  src/location.cmo src/types.cmo src/ast.cmo src/typing_env.cmo \
+  src/infer.cmo src/typecheck.cmo src/parser.cmo src/lexer.cmo \
+  docs/samples/reply_inference/tc_main.ml
+
+./tc docs/samples/guide/g3_actors.aipl
+\end{term}
+
+It prints the table of inferred and declared return types, the effects of each
+method, and the signature of each class.
+
+\section{The type/run-time differential test}
+
+There is a harness that compares the return type the checker assigned with the
+type of the value actually \texttt{reply}ed at run time.
+
+\begin{term}
+python3 scripts/type_runtime_diff.py abclc/*.aipl docs/samples/guide/*.aipl
+\end{term}
+
+With \texttt{AIOS\_TYPE\_TRACE=1} the implementation prints
+\texttt{[rtype] Class\#method = tag} on every \texttt{reply}. This mechanism
+actually found an inconsistency where integer arithmetic returned a \ty{float}
+($\vdash e : \ty{int}$ yet $e \Downarrow$ \texttt{VFloat}).
+A deliberately mismatching negative sample can be marked as known with
+\texttt{// TYPE\_RUNTIME\_DIFF: expect-mismatch}.
+
+\textbf{Run it whenever you change the types.} It is the standing device for
+catching a break in preservation.
+
+\section{Environment variables}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Variable & Effect \\
+\midrule
+\texttt{AIOS\_QUIET=1}            & suppress debug output such as type schemes \\
+\texttt{AIOS\_STRICT\_DEADLINE=1} & make a \texttt{now} / \texttt{await} without a deadline an error \\
+\texttt{AIOS\_LAX\_OVERLOAD=1}    & make an ambiguous overload a warning instead of an error \\
+\texttt{AIOS\_LAX\_EXPOSE=1}      & make a missing annotation on an exposed actor a warning \\
+\texttt{AIOS\_TYPE\_TRACE=1}      & print an \texttt{[rtype]} line on every \texttt{reply} \\
+\texttt{AIOS\_MODEL\_PROVIDER}    & choose the provider for AI calls \\
+\texttt{ABCL\_AI\_PROVIDER}       & the same (old name) \\
+\texttt{REMOTE\_REVIEWER\_HOSTPORT} & the target of \texttt{remote\_review} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\part{Appendix}
+\label{part:appendix}
+
+\section{Grammar summary}
+
+\begin{term}
+program    ::= decl+
+
+decl       ::= "class" ID "{" field* method+ "}"
+             | "var" ID "=" expr ";"
+             | "var" ID "=" "new" ID "(" args ")" ";"
+             | "send"  target "." ID "(" args ")" ";"
+             | "send!" target "." ID "(" args ")" ";"
+             | ID "(" args ")" ";"
+
+field      ::= "var"   ID "=" expr ";"
+             | "float" ID "=" expr ";"
+
+method     ::= "method" ID "(" params ")" ret? lvl? eff? "{" stmt+ "}"
+params     ::= (param ("," param)*)?
+param      ::= ID | ID ":" ClassName | ID ":" "reply"
+ret        ::= ":" ("int"|"float"|"string"|"bool"|"unit"|"any"|ClassName)
+lvl        ::= "@" INT                    -- obligation level; inferred if omitted
+eff        ::= "!" "{" (ID ("," ID)*)? "}"
+
+target     ::= ID
+             | "remote" "(" STRING "," STRING ")"
+
+stmt       ::= ID "=" expr ";"
+             | "var" ID "=" expr ";"
+             | "var" ID "=" "new" ID "(" args ")" ";"
+             | ID "(" args ")" ";"
+             | "call" ID "(" args ")" ";"
+             | "send"  ("self"|"sender"|target) "." ID "(" args ")" ";"
+             | "send!" target "." ID "(" args ")" ";"
+             | "if" "(" expr ")" stmt ("else" stmt)?
+             | "while" expr "do" stmt
+             | "{" stmt* "}"
+             | "select" "{" case* timeout_case? "}"
+
+case         ::= "case" ID "(" ids? ")" "->" "{" stmt+ "}"
+timeout_case ::= "timeout" INT "->" "{" stmt+ "}"
+
+expr       ::= INT | FLOAT | STRING | "true" | "false" | ID
+             | "-" expr
+             | expr ("=="|"!="|">"|"<"|">="|"<="|"++"|"+"|"-"|"*"|"/") expr
+             | "new" ID "(" args ")"
+             | "now" target "." ID "(" args ")" deadline?
+             | "future" target "." ID "(" args ")"
+             | "await" expr deadline?
+             | "replyto"                  -- the reply destination as a value
+             | ID "(" args ")"
+             | "(" expr ")"
+
+-- with else it is tau; without else it is result<tau>
+deadline   ::= "timeout" INT "else" expr
+             | "timeout" INT
+\end{term}
+
+Operator precedence, weakest first:
+\texttt{==} \texttt{!=} $\;<\;$
+\texttt{>} \texttt{<} \texttt{>=} \texttt{<=} $\;<\;$
+\texttt{++} $\;<\;$
+\texttt{+} \texttt{-} $\;<\;$
+\texttt{*} \texttt{/} $\;<\;$ unary minus. Every binary operator is
+\textbf{left associative} (equality included) --- \texttt{1 == 2 == false}
+reads as \texttt{((1 == 2) == false)} and evaluates to \texttt{true}. Unary
+minus is a prefix and can be stacked (\texttt{- - 3} is \texttt{3}).
+
+\section{Environment variables of the implementation}
+\label{sec:envvars}
+
+Some variables change how checking and execution behave. Set them to
+\texttt{1} to enable; the default is always ``not enabled''.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.4cm}@{}}
+\toprule
+Variable & Effect \\
+\midrule
+\texttt{AIOS\_STRICT\_DEADLINE} &
+  make a \texttt{now} / \texttt{await} without a deadline an \textbf{error};
+  by default it is only a warning. Set it if you want to stay inside the
+  fragment for which the soundness theorem holds (AIPL$^{-2}$) \\
+\texttt{AIOS\_LAX\_OVERLOAD} &
+  restore the \textbf{old behaviour} for ambiguous overloads: warn and pick the
+  default candidate. The default is strict (an error) \\
+\texttt{AIOS\_LAX\_EXPOSE} &
+  downgrade a missing annotation on an exposed actor (\S\ref{sec:expose}) to a
+  warning. The default is an error \\
+\texttt{AIOS\_TYPE\_TRACE} &
+  print \texttt{[rtype] Class\#method = tag} on every \texttt{reply}; used by
+  the differential test (\texttt{scripts/type\_runtime\_diff.py}) that compares
+  the static return type with the type actually returned \\
+\texttt{AIOS\_QUIET} &
+  suppress informational messages from the checker and the REPL \\
+\texttt{AIOS\_STRICT\_PROTOCOL} &
+  warn about the ``unfinished'' part when the steps of a session cannot be laid
+  out statically. Silent by default (\S\ref{sec:session}) \\
+\texttt{AIOS\_STRICT\_RESOURCE} &
+  report \texttt{acquire} calls whose name is not a string literal; the order
+  cannot be checked there (\S\ref{sec:resorder}) \\
+\texttt{AIOS\_SHOW\_LEVELS} &
+  print the inferred obligation levels and the global resource order \\
+\texttt{AIOS\_LAX\_WAIT} &
+  downgrade the detection of circular waits from an error to a warning.
+  The default is an error \\
+\texttt{AIOS\_LAX\_ACTOR} &
+  do not distinguish actor types (unify \texttt{actor(A)} with
+  \texttt{actor(B)}). The default is to distinguish them \\
+\texttt{AIOS\_LAX\_ASSIGN} &
+  allow assignment to an undeclared name (the old behaviour).
+  The default is an error \\
+\texttt{AIOS\_MODEL\_PROVIDER} &
+  the model vendor used by \texttt{ai\_call}; the default is \texttt{gemini} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent For instance, to work under the discipline of always writing deadlines:
+
+\begin{lstlisting}
+AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
+\end{lstlisting}
+
+\section{Common pitfalls}
+
+\begin{itemize}
+\item \textbf{\texttt{now} is an expression.} \texttt{now x.m();} is a syntax
+  error; always receive it, as in
+  \texttt{var r = now x.m() timeout 100 else 0;}.
+\item \textbf{The target of \texttt{send} is a variable}, not a class name.
+\item \textbf{\texttt{now self.m()} cannot be written} (it would be a
+  self-deadlock, so the grammar forbids it). To factor out a computation, move
+  it to another actor.
+\item \textbf{You cannot assign an actor to \texttt{var x = 0;} later}
+  (it has been inferred as \ty{int}). Create it as
+  \texttt{var x = new Foo();} from the start.
+\item \textbf{String concatenation is \texttt{++}}; \texttt{+} is numeric only.
+\item \textbf{Fields come before methods.}
+\item \textbf{Write a deadline on every wait.} Otherwise you get a warning, and
+  under \texttt{AIOS\_STRICT\_DEADLINE=1} it does not pass at all.
+\item \textbf{Effects are checked once you declare them} (gradual). Declare
+  nothing and nothing is said; declare something and the difference from the
+  body is pointed at.
+\end{itemize}
+
+\section{Present limits}
+
+\begin{itemize}
+\item Splitting a wait into \texttt{future} + \texttt{await} escapes effect
+  propagation (the ``known hole'' in \S\ref{sec:effects}). Fixing it requires
+  carrying effects in the \ty{future} type.
+\item There is no variable declaration with a type annotation,
+  \texttt{var x : T = e;}.
+\item \texttt{sender} is \ty{any}, so \texttt{send sender.m(...)} checks
+  neither the existence of the method nor its types.
+\item The result of a remote send (\texttt{remote(...)}) stays \ty{any}. There
+  is no mechanism for reading the interface description of the peer node.
+\item Method parameters are monomorphic; polymorphic methods cannot be written.
+\item There is no implicit conversion between \ty{int} and \ty{float}, and
+  \texttt{a + b} with both operands unbound needs an annotation.
+\item There are no array literals \texttt{[...]}; build arrays with
+  \texttt{array\_empty} and \texttt{array\_push}.
+\item A reply destination (\texttt{replyto}) \textbf{cannot be kept in a
+  field}, though it can be passed as an argument (\S\ref{sec:reply1st}).
+  A field's type comes from its initializer, so \texttt{var w = 0;} is \ty{int}
+  and \texttt{w = replyto} is a type mismatch.
+\item The global resource order can only be followed for \texttt{acquire} calls
+  whose name is a \textbf{string literal} (\S\ref{sec:resorder}).
+\item The static session check reaches only as far as \textbf{synchronous}
+  callees (\S\ref{sec:session}).
+\item Termination is not guaranteed. Deadlock freedom means ``nothing gets
+  stuck'', not ``everything finishes''. \texttt{while 1 > 0 do \{\}} does not
+  stop, but it is not a wait.
+\end{itemize}
+
+\section{Changes from the previous edition}
+\label{sec:migrate}
+
+What changed since the previous edition (2026-07-30).
+
+\subsection{Removed from the language}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.6cm}@{}}
+\toprule
+ & Content \\
+\midrule
+\texttt{become} & \textbf{removed from the language}. ABCL/1 does not have it;
+  once restricted enough to keep types sound it becomes almost the same as
+  writing a state field and a branch; and not one of 543 real programs used it.
+  Write behaviour replacement with a state field and \texttt{if} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Added}
+
+None of these break existing programs. Every annotation may be omitted, and
+omitting it means it is inferred.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{7.4cm}l@{}}
+\toprule
+ & Content & Section \\
+\midrule
+Failure type & a wait with no \texttt{else} returns \texttt{result}$\langle\tau\rangle$
+  & \S\ref{sec:result} \\
+First-class reply & \texttt{replyto} / \texttt{answer} / parameter type \texttt{reply}, treated linearly
+  & \S\ref{sec:reply1st} \\
+Resource order & the \texttt{acquire} / \texttt{release} pairs, and the global order read from their nesting
+  & \S\ref{sec:resorder} \\
+Obligation levels & \texttt{@$n$}, inferred if omitted; also enforced across node borders
+  & \S\ref{sec:levels} \\
+Session types & the type checker reads the run-time protocol declarations
+  & \S\ref{sec:session} \\
+The \texttt{select} discipline & a mandatory deadline, and a check that a sender exists
+  & \S\ref{sec:selectrule} \\
+Mesh deployment & ship the source and type-check it at the destination before instantiating
+  & \S\ref{sec:mesh} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Made stricter}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.6cm}@{}}
+\toprule
+ & Content \\
+\midrule
+Assignment to undeclared names & now \textbf{rejected}. Previously a new
+  variable was silently created, so a misspelled field name produced no error
+  at all (\texttt{AIOS\_LAX\_ASSIGN=1} restores the old behaviour) \\
+Actor types & \texttt{actor(A)} and \texttt{actor(B)} are now distinguished
+  (\texttt{AIOS\_LAX\_ACTOR=1} restores the old behaviour) \\
+\texttt{reply} totality & a method waited on by \texttt{now}/\texttt{await}
+  must \texttt{reply} on every path, whatever its return type \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{The file extension}
+
+The source extension is \texttt{.aipl} (\texttt{.abcl} has been retired
+completely). The implementation does not look at the extension, so old files
+still load, but write new ones as \texttt{.aipl}.
+
+\subsection{Core and extensions --- the language has two layers}
+
+There are three implementations, but they are \textbf{not the same language}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{4.0cm}p{5.4cm}@{}}
+\toprule
+Layer & Implemented by & Content \\
+\midrule
+\textbf{Core} & all three & the specification this guide describes \\
+\textbf{Extensions} & the Python implementation only & record types, row
+  polymorphism, refinement types via \texttt{where}, CSP channels, ownership
+  (\texttt{pub}/\texttt{move}), tuples, \texttt{match}, saga,
+  \texttt{scope \{ future ... \}} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{This guide specifies the core only.} Which layer a program belongs to
+can be determined mechanically with \texttt{tools/classify\_corpus.sh}
+(see \texttt{docs/AIPL\_LAYERS.md}).
+
+\section{Related documents}
+
+\begin{itemize}
+\item \texttt{docs/aipl\_paper5\_ja.pdf} ---
+  \textbf{the paper (5th edition, latest)}. The current specification, and what
+  was taken from (or left out of) ABCL/1 and Kobayashi's type systems, with the
+  reasons and the trade-offs.
+\item \texttt{coq/AIPLSoundness2.v} ---
+  \textbf{the machine-checked proof (2nd version)}, in Coq/Rocq. For the core
+  \emph{including} \texttt{await}, type soundness, type safety and deadlock
+  freedom are proved with no axioms. The header also discusses the
+  \textbf{largest syntax} for which all three hold at once.
+\item \texttt{coq/AIPLSoundness.v} --- the 1st version (deadlock freedom only
+  for the fragment without \texttt{await}).
+\item \texttt{docs/AIPL\_LAYERS.md} ---
+  \textbf{AIPL has two layers}: the definitions of core (all three
+  implementations) and extensions (Python only), and the classification by
+  \texttt{tools/classify\_corpus.sh}.
+\item \texttt{docs/aipl\_reply\_inference\_ja.pdf} --- return type inference
+  from \texttt{reply}, the rationale for annotations, and measurements.
+\item \texttt{docs/aipl\_vs\_abcl1\_ja.pdf} --- a comparison with ABCL/1.
+\item \texttt{docs/aipl\_abcl1\_features\_ja.pdf} --- the features inherited
+  from ABCL/1.
+\item \texttt{docs/aipl\_kobayashi\_synthesis\_ja.pdf} --- a design proposal
+  for taking in the results of Kobayashi's work.
+\item \texttt{docs/ABCLCP\_TYPE\_SOUNDNESS\_REPORT.md} --- type soundness
+  (Markdown).
+\item \texttt{docs/AIOS\_LANGUAGE\_DESIGN.md}, \texttt{docs/CAPABILITIES.md} ---
+  the design as AIOS and the list of capabilities.
+\item \texttt{docs/samples/reply\_inference/README.md} --- what the negative
+  samples are for.
+\end{itemize}
+
+\end{document}
