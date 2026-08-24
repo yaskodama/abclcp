@@ -8,7 +8,7 @@ COQFLAGS = -R . ""
 
 # ABCM.v は ~/seminar/abcm-soundness/ABCM.v へのシンボリックリンク（単一の原本）
 VS = ABCM.vo AIPLSoundness.vo AIPLSoundness2.vo AIPLSoundness2Example.vo \
-     AIPLDining.vo ABCMEmbedding.vo
+     AIPLDining.vo AIPLSoundnessMax.vo AIPLSoundnessMaxExample.vo ABCMEmbedding.vo
 
 all: $(VS)
 
@@ -22,13 +22,17 @@ AIPLSoundness2Example.vo: AIPLSoundness2Example.v AIPLSoundness2.vo
 	$(COQC) $(COQFLAGS) AIPLSoundness2Example.v
 AIPLDining.vo: AIPLDining.v AIPLSoundness2.vo
 	$(COQC) $(COQFLAGS) AIPLDining.v
+AIPLSoundnessMax.vo: AIPLSoundnessMax.v
+	$(COQC) $(COQFLAGS) AIPLSoundnessMax.v
+AIPLSoundnessMaxExample.vo: AIPLSoundnessMaxExample.v AIPLSoundnessMax.vo
+	$(COQC) $(COQFLAGS) AIPLSoundnessMaxExample.v
 ABCMEmbedding.vo: ABCMEmbedding.v AIPLSoundness.vo ABCM.vo
 	$(COQC) $(COQFLAGS) ABCMEmbedding.v
 
 # ABCMEmbedding_simulation_WIP.v は未完成なので all に含めない
 
 check: all
-	@printf 'Require Import AIPLSoundness AIPLSoundness2 AIPLSoundness2Example AIPLDining ABCMEmbedding.\n\
+	@printf 'Require Import AIPLSoundness AIPLSoundness2 AIPLSoundness2Example AIPLDining AIPLSoundnessMax AIPLSoundnessMaxExample ABCMEmbedding.\n\
 Print Assumptions no_method_not_understood.\n\
 Print Assumptions preservation.\n\
 Print Assumptions progress.\n\
@@ -53,7 +57,22 @@ Print Assumptions tr_ht.\n\
 Print Assumptions e_bodies_ok.\n\
 Print Assumptions tr_step.\n\
 Print Assumptions tr_estep.\n\
-Print Assumptions abcm_translation_never_stuck.\n' > _chk.v
+Print Assumptions abcm_translation_never_stuck.\n\
+Print Assumptions AIPLSoundnessMax.no_method_not_understood.\n\
+Print Assumptions AIPLSoundnessMax.preservation.\n\
+Print Assumptions AIPLSoundnessMax.preservation_star.\n\
+Print Assumptions AIPLSoundnessMax.progress.\n\
+Print Assumptions AIPLSoundnessMax.type_safety.\n\
+Print Assumptions AIPLSoundnessMax.state_type_invariant.\n\
+Print Assumptions AIPLSoundnessMax.future_type_invariant.\n\
+Print Assumptions AIPLSoundnessMax.timeout_always_progresses.\n\
+Print Assumptions ex_bodies_ok.\n\
+Print Assumptions ex_conf_ok.\n\
+Print Assumptions ex_can_step.\n\
+Print Assumptions ex_never_stuck.\n\
+Print Assumptions max_admits_deadlock.\n\
+Print Assumptions max_is_not_deadlock_free.\n\
+Print Assumptions dl_not_stuck.\n' > _chk.v
 	@$(COQC) $(COQFLAGS) _chk.v 2>/dev/null | grep -v '^$$'
 	@rm -f _chk.v _chk.vo* _chk.glob
 
