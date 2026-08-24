@@ -1,230 +1,129 @@
-# 次のセッションへの引き継ぎ（AIPL 3実装）
+# 次のセッションへの引き継ぎ（AIPL）
 
-最終更新: 2026-08-22
+最終更新: 2026-08-24
 
 ## 30秒で状況を掴む
 
-AIPL には実装が3つある。**OCaml 版が正**。
+AIPL には実装が三つあり、**言語は二層**である。
 
 | | 場所 | 動かし方 |
 |---|---|---|
 | OCaml 版（正） | `~/aios/abclcp` (branch `make-src-base`) | `cd src && make thread_repl` → `./src/abclrepl_thread -q -f run.repl` |
 | Py-I | `~/test-bed/aios-claude/src/python-aipl` (branch `add-index-html-aice-portal`) | `python3 aipl_main.py x.aipl` |
-| JS-I | `~/projects/drone-hil/abcl` (branch `feat/hybrid-zrp-routing`) | ブラウザ実装。CLI は `node ~/aios/abclcp/tools/js_run.mjs x.aipl <JSIパス>` |
+| JS-I | `~/projects/drone-hil/abcl` (branch `feat/hybrid-zrp-routing`) | `node ~/aios/abclcp/tools/js_check.mjs x.aipl <JSIパス>` |
 
-**3実装は同期済み**。ガイドのサンプル g1..g9 が全て動き、出力も一致する。
-全リポジトリ commit 済み・push 済み（2026-08-01 時点）。
+**まず `docs/AIPL_LAYERS.md` を読む。** 核（三実装すべて）と拡張（Py-I のみ）の定義、
+分類の仕方、これまでに直した処理系の欠陥が全部そこにある。
 
-まず状況確認はこれ一発:
-
-```sh
-sh ~/aios/abclcp/tools/run_all_impls.sh
-```
-
-3実装で同じサンプルを流し、出力を並べて「一致 / ★差あり」を出す。
-**何か触ったら必ずこれを流す。** 過去に2回、これで退行に気づいた。
-
-## 2026-08 に入れたもの（3実装すべてに展開済み）
-
-論文 `docs/aipl_paper3_ja.tex`（第3版・30頁）が現在の仕様の説明そのもの。
-公開先は https://kodamay.org/reports/2026-08-22_aipl_paper3.pdf （要 Basic 認証）。
-
-| 機能 | 書き方 | 効くもの |
-|---|---|---|
-| 失敗を型に出す | `timeout n`（else 無し）→ `result<τ>`、`is_ok`/`value` | 期限切れの握り潰し |
-| 順序つき効果 | `acquire(r)` / `release(r)` | 取り忘れ・返し忘れ |
-| 一級の返信先 | 引数型 `reply`、`answer(r,v)`、`replyto` | 返信の線形性（owed, spent） |
-| メッシュ配備 | `source_of` / `node_allow` / `deploy` | ノード境界での効果検査 |
-| 義務レベル | `@n` 注釈＋不動点推論、`node_level` | 循環待ち（経路1） |
-| `select` の規律 | 期限の義務づけ＋送り手の存在検査 | 待ちっぱなし（経路3） |
-| セッション型 | `protocol_define`/`protocol_start`/`protocol_end` | やり取りの**順序**違反（アクターをまたいでも追う） |
-| 資源への全体順序 | 取得の入れ子から推論（`resource_order("a -> b")` で明示も可） | 逆順の取得 |
-
-`become` は外した（`docs/samples/removed/` に旧テストと理由）。
-
-**セッション型は新しい宣言を作っていない。** 実行時に既にあった（Coq 検証済みの）
-プロトコル宣言を、型検査の側が読むようにしただけ。誤検出を二度直している ----
-(a) セッションがアクターをまたぐ例（→ 手順が全部その並びに現れる時だけ「やり残し」を
-誤りとする。`AIOS_STRICT_PROTOCOL=1` で警告に）、(b) 手順が `"main_thread.run"` なのに
-プログラムは `"main"` へ送る綴り違い（→ **手順に含まれない宛先への送信は見ない**）。
-
-**アクターをまたぐセッションは「振る舞い展開」で解いた。** 多者間セッション型も
-委譲も要らなかった。`now`/`aios_now` は呼び先が呼び出し側の続きより先に走り切るので、
-**呼び先の送信列をその場に差し込む**。非同期(`send`/`future`)は差し込まず、
-呼び先が手順を含むなら「静的に並べられない」と印を付けて実行時に任せる。
-名前は解決表でたどる — `aios_register_service("main","main_thread")`、
-`var x = new C()`、引数の型注釈 `method run(f: Fetch, ...)`。
-**プログラムは一行も変えていない。**
-
-罠: **フィールドに持ったアクターは役になれない**。実行時は `c#f` と持ち主で
-修飾した名前で呼ぶが、静的な側はクラスの実体を一つに決められない。
-サンプルは引数で渡す形にすること。
-
-**資源への全体順序も新しい注釈を作っていない。** 「r を持ったまま s を取った」
-という入れ子が、そのまま r < s の辺である。全体から集めて閉路を見る。
-閉路の各辺に「どこで生まれたか」を持たせてあるので、
-**逆順に取っている二か所がそのままエラーに出る**。
-閉路が無ければ位相の高さがそのまま順序（`AIOS_SHOW_LEVELS=1` で見える）。
-リテラルでない名前の acquire は追えないので、宣言順序は**実行時にも効かせている**
-（`AIOS_STRICT_RESOURCE=1` で追えなかった場所を知らせる）。
-
-## 残っている課題
-
-1. **非同期の呼び先をまたぐセッション**。展開は同期の呼び先しか差し込めない。
-   `send`/`future` の先で手順が進む場合は実行時任せ。多者間セッション型＋委譲
-   （線形な `session<S>` を引数で引き回す）なら追えるが、プログラムの書き換えが要る。
-2. **資源がアクターの実体であるときの順序**。順序は資源の「名前」についてのもの。
-   哲学者のように `lo`/`hi` が同じクラスの別インスタンスだと、
-   義務レベルが `Class#method` を鍵にしているので区別できない（`types.ml:180`）。
-   精緻化型か、フィールドによる順序宣言 `resource_order_by("Fork","id")` が要る。
-   なお「名前が動的な acquire」は582本を測って**一件も無かった**（穴は空）。
-3. **メソッド内の失敗の伝わり方が3実装で違う**。宣言順序違反を実行時に捕まえたとき、
-   呼び出し側の `now ... timeout ... else` が返すものが
-   OCaml=停止 / Py-I=`None` / JS-I=`else` の値、と割れる。
-   `result<τ>` に載せる道と揃える必要がある。
-4. **JS-I はトップレベル文をクラスより前に書けない**（`resource_order` や
-   `protocol_define` を先頭に置くと Parse error）。OCaml 版は書ける。
-   サンプルは s18/s19 とも宣言をクラスの後ろに置いて回避している。
-5. **弾かれるべきテストの実装差**: 31本×3実装＝93枠のうち **10枠**が食い違う
-   （OCaml 版は 29本すべて期待どおり）。JS-I にメソッド存在／引数個数／引数型／
-   戻り値型／アクター型／`result` 型の検査が無い。Py-I は r14（future でないものへの
-   `await`）と r8（1文字クラス名）。`sh tools/run_reject_tests.sh` で表が出る。
-6. **機械検証の範囲**。`AIPLSoundness.v`（1121行・公理なし）が押さえているのは
-   **効果と期限を落とした AIPL⁻**。効果つきは証明されていない。論文の §4 に明記した。
-
-## 用意してある道具（`~/aios/abclcp/tools/`）
-
-| ファイル | 用途 |
-|---|---|
-| `run_all_impls.sh` | 3実装でサンプルを流して出力を突き合わせる |
-| `js_run.mjs` | JS-I をヘッドレスで実行（ブラウザ実装なので足場が要る） |
-| `js_parse.mjs` | JS-I でパースだけ試す |
-| `plus_to_concat.py` | `+` → `++` を構文木で判定して移行する（後述） |
-| `tc_main.ml` | 型検査だけ走らせるドライバの素 |
-| `run_reject_tests.sh` | 「弾かれるべき29本」を3実装に流して表にする |
-| `js_check.mjs` | JS-I の型検査だけ走らせる |
-
-型検査ドライバのビルド:
+状況確認は三つ。**何か触ったら必ず流す。**
 
 ```sh
-cd /tmp && ocamlfind ocamlc -package unix -thread -linkpkg -g -w -a \
-  -I ~/aios/abclcp/src -o tc \
-  ~/aios/abclcp/src/location.cmo ~/aios/abclcp/src/types.cmo ~/aios/abclcp/src/ast.cmo \
-  ~/aios/abclcp/src/typing_env.cmo ~/aios/abclcp/src/infer.cmo ~/aios/abclcp/src/typecheck.cmo \
-  ~/aios/abclcp/src/parser.cmo ~/aios/abclcp/src/lexer.cmo ~/aios/abclcp/tools/tc_main.ml
+sh tools/run_all_impls.sh      # 通るプログラムの出力が3実装で一致するか
+sh tools/run_reject_tests.sh   # 弾かれるべき31本が止まるか（3実装の表）
+sh tools/classify_corpus.sh    # 核 / 拡張 / 意図的な不正例 / 要修正 を数える
+cd coq && make && make check   # 形式化。40個すべて公理なしのはず
 ```
 
-## 言語の現状（3実装で揃っているもの）
+## いまの数字（2026-08-24）
 
-- 拡張子は **`.aipl`**（`.abcl` は全廃。4リポジトリ 478 本を改名済み）
-- `++` が文字列連結。**`+` は数値専用**
-- 優先順位は 等値 < 比較 < `++` < 加減 < 乗除 < 単項マイナス。**すべて左結合**（等値も含む）
-- `true` / `false` リテラル
-- 戻り値型注釈 `method m(x) : T`（Py-I は `-> T` も受ける）
-- 効果注釈 `method m(x) : T !{log, mut}`
-- 引数の型注釈 `method m(x: D)`
-- 期限つきの待ち `now t.m(a) timeout 100 else 0` / `await f timeout 100 else 0`
-- 型検査: reply 線形性・戻り値型の義務・期限警告（**3実装で件数まで一致**）
-- アクターをメッセージの引数として渡せる（`g9_actor_arg.aipl`）
-
-### 環境変数（OCaml 版）
-
-| 変数 | 効果 |
+| | |
 |---|---|
-| `AIOS_STRICT_DEADLINE=1` | 期限なしの now/await をエラーに（既定は警告）。型健全性の定理が成立する範囲に留まるスイッチ |
-| `AIOS_LAX_OVERLOAD=1` | 曖昧なオーバーロードを従来動作に戻す |
-| `AIOS_LAX_EXPOSE=1` | 公開アクターの注釈漏れを警告に落とす |
-| `AIOS_TYPE_TRACE=1` | reply ごとに `[rtype]` を出す（差分テスト用） |
-| `AIOS_QUIET=1` | 情報メッセージを抑止 |
-| `AIOS_MODEL_PROVIDER` | `ai_call` のモデル事業者（既定 gemini） |
+| コーパス | 核 161 / 拡張 333 / 意図的な不正例 61 / **要修正 25** |
+| paper サンプル | 20本中18本が3実装で出力一致 |
+| 弾かれるべきテスト | 31本 × 3実装 = 93枠のうち食い違い10枠（OCaml版は31本すべて期待どおり） |
+| 形式化 | `make check` が 40 個すべて `Closed under the global context` |
 
-Py-I も `AIOS_STRICT_DEADLINE=1` を見る。
+## ★ この作業でいちばん効いたこと
 
-## 残っている課題
+要修正は 182 → 25 に減った。効いたのは**サンプルの書き換えではなく、
+処理系の欠陥を直したこと**だった。
 
-優先度順。どれも着手可能な状態。
-
-1. **メソッド内の `return` が JS-I に無い**（Py-I は受ける）。
-   `~/projects/drone-hil/bench/*.aipl` 3本がこれで止まっている
-   （`method get_meals(unused) { return meals; }`）。
-   引数型注釈を入れて失敗位置は 37→74 行に進んだが、次がこれ。
-2. **`typeof` の書式が揃っていない**。
-   OCaml `actor(D) { ping : () -> unit }` / Py-I `actor(D, methods=[ping])` /
-   **JS-I には存在しない**（`Unknown function: typeof`）。
-   このため g9 から `typeof` を外した経緯がある。
-3. **アクター型が区別されない**（OCaml）。`unify` が `TActor` 同士を無条件に
-   成功させるので `actor[A]` と `actor[B]` が単一化できてしまう。
-   型健全性レポート第2版で「モデルが実装より厳しい」と書いた箇所。
-4. **効果伝播の穴**（OCaml）。`now` を `future` + `await` に分けると
-   効果検査を逃れる。再現サンプルは `docs/samples/soundness2_effect_gap.aipl`。
-   修正方針は `TFuture of ty` → `TFuture of ty * eff` にして `Await` が
-   効果を加えること。`now_edges` と不動点は不要になる。**未着手**。
-5. **型注釈付き変数宣言 `var x : T = e` が未実装**（仕様案にはある）。
-6. **出力のフラッシュ揺らぎ**（OCaml REPL）。スクリプト終了時に最後の1行を
-   取りこぼすことがある。実装差ではないので比較時は複数回流して判断する。
-
-## 触るときの注意（過去に踏んだ罠）
-
-- **`git checkout -- src/` は禁物**。生成物（`lexer.ml` / `parser.ml`）と
-  バイナリが追跡されているので、実装ごと消える。一度やって全部やり直した。
-- **`params` を使う文法規則は2つある**（`method_decl` と `select_case`）。
-  片方だけ直して g4 を deadlock に戻した。JS-I の `grammar.jison` も同様。
-- **`+` → `++` の移行を正規表現でやってはいけない**。`+` は `++` より強く
-  結合するので `"a" + b + c` の1つだけ替えると意味が変わる。
-  `tools/plus_to_concat.py` が構文木で連鎖を判定する。
-  **ただし構文木は文字列リテラルの中を見ない** ---- 実行時コンパイル用の
-  ソースを文字列で持つファイル（Dynamic.aipl 等）は別途処理が要る。
-- **検査の指摘は件数でなく実物を開く**。reply 検査で 62 件出たが 59 件が
-  誤検出だった（Py-I のメソッドは `return` でも返せる、`function` は対象外）。
-- **警告が出力経路に載っているか確かめる**。Py-I の `check()` が issues しか
-  返しておらず、足した警告が `--type-check` にも現れなかった。
-- **`_test_channels.py`（Py-I）は元から不安定**。producer と drain の競合で
-  6回中3回程度落ちる。退行の指標にしないこと。
-- Py-I のテスト基準値は **15通過 / 5失敗**（`_test_aiactor`,
-  `_test_multiprovider`, `_test_signatures`, `_test_sitegen`, `_test_typeck`
-  は元から失敗）。
-
-## 文書
-
-`~/aios/abclcp/docs/` にある。すべて kodamay.org に掲載済み。
-
-| PDF | 内容 |
+| 直した欠陥 | 効果 |
 |---|---|
-| `aipl_three_impl_parity_ja.pdf` (11p) | **今回の作業記録**。6つの不具合と見つけ方 |
-| `aipl_guide_ja.pdf` (26p) | ユーザーズガイド。サンプル8本を全文つきで解説 |
-| `aipl_soundness2_ja.pdf` (13p) | 型健全性・型安全性の第2版。期限で進行定理が二択に |
-| `aipl_soundness_ja.pdf` (28p) | 同 第1版 |
-| `aipl_reply_inference_ja.pdf` (36p) | reply からの戻り値型推論 |
-| `aipl_abcl1_features_ja.pdf` (29p) | where / express mode / 理想仕様 |
-| `aipl_kobayashi_synthesis_ja.pdf` (16p) | 小林研究の取り込み検討 |
+| Py-I: 署名の省略可能引数 `[, end:int]`・入れ子・先頭を読めていなかった | 48本 |
+| Py-I: 精緻化型 `int where P` が基底型 `int` と両立しないと判定 | 17本 |
+| Py-I: 署名パーサが `record{a:int, b:int}` の中のカンマで引数を切る | 6本 |
+| Py-I: 既定値を落とすつもりで `k >= 0` を `k >` に切る | 5本 |
+| Py-I: `++`（文字列連結）が `any` に落ちる | 検出漏れ |
+| OCaml: 別クラスの同名フィールドが多重定義になる | 119本が該当 |
 
-## kodamay.org（別リポジトリ）
+**教訓**: サンプルが大量に落ちているときは、まずサンプルを疑うのではなく
+**検査器を疑う**。同じ第一エラーが何十本も並んでいたら、まず間違いなく検査器側である。
 
-`~/kodamay_org_site/kodamay.org`（branch `main`）。**54本掲載**。
+## ★ 私がやらかしたこと（同じ轍を踏まないために）
 
-- 一覧の生成: `python3 tools/gen_aice_page.py`（エントリはこのスクリプトに書く）
-- **アップロードは未実施**。`sh tools/upload_aice_aipl.sh` をユーザーが実行する
-  （XREA のパスワード入力が要るので、こちらからは実行できない）。
-  未送信の差分: ガイド26p版への差し替え、自作10本、今回の11pレポート
-- `.gitignore` が**ホワイトリスト方式**。新しいファイルは `git add -f` が要る
+1. **`git add -A` を使ってはならない。**
+   `ocaml-app/abclcp-project` で先生の未コミット 132ファイル・64万行を
+   自分のコミットに巻き込み、push までした。force push で巻き戻した
+   （退避ブランチ `backup/before-force-160dd7e` が手元にある。不要なら消す）。
+   **触ったファイルだけを名指しで `git add` する。**
 
-### 判断待ちの2件
+2. **一括置換のあとは必ず全数検査する。**
+   - 期限を足す道具が、文字列リテラルの中の `now a.m(...)` という「文字列」に反応した
+   - record の型注釈の一括置換が、値の側の `{inner: {...}}` まで書き換えた
+   - 「メソッドをフィールドの後ろへ移す」変換が、複数行にわたる
+     `var x = f(\n ..., \n ...);` をフィールドと誤認し、method 行を途中に差し込んだ
+     （`aios_user_three_role_ai.aipl`。コミットまでしてしまい、あとで復旧）
 
-- **柴山悦哉「An ABCL Kernel Language and Its Semantics」の原論文スキャンと
-  日本語訳**（`~/projects/semantics/20260603_001.pdf`, `ABCL_意味論.pdf`）。
-  第三者の著作物なので未掲載。許諾状況が確認できれば掲載できる
-- **マニュアル類**（xinu-pi5 / rpi4 / rpi3 の ja/en）。
-  「レポート・論文」ではないので保留中
+   道具は `tools/add_deadlines.py` に、文字列とコメントを伏せてから走査し
+   閉じ括弧は対応を数える形で残してある。**変換のあとは括弧の対応と
+   両処理系の判定を必ず確かめる。**
 
-## リポジトリの状態（2026-08-01 時点）
+3. **自分の記憶より実物を見る。** このセッションで二度、
+   「まだ入っていない」と思った機能が既に入っていた（効果の機械検証、
+   `AIPLSoundness2.v` の中身）。着手前に必ずファイルを開く。
 
-| リポジトリ | ブランチ | 状態 |
-|---|---|---|
-| `aios/abclcp` | `make-src-base` | commit・push 済み |
-| `test-bed/aios-claude` | `add-index-html-aice-portal` | commit・push 済み |
-| `projects/drone-hil` | `feat/hybrid-zrp-routing` | commit・push 済み |
-| `aipl_line_simulator` | `main` | commit・push 済み |
-| `kodamay_org_site/kodamay.org` | `main` | commit・push 済み（サーバー反映は未） |
+## 触ってはいけないもの
 
-`abclcp` に未追跡の `.aux` / `.log` / `.out` / `.toc` が 32 個あるが、
-LaTeX の中間生成物なのでコミットしない。
+- `abclc/aios_user_three_role_ai.aipl` に**期限を足さない**。
+  論文 第5版 §11.3 が「モデルを待つ四箇所すべてに期限が無い」ことを
+  実測の証拠として引いている。ファイル先頭に `@keep as-is` と書いてある。
+- `docs/samples/paper/` と `docs/samples/guide/` は論文の引用元。
+  出力を変えるときは論文も直す。
+
+## 「弾かれるのが正しい」プログラムの印
+
+```
+// @expect reject: <なぜ落ちるのが正しいか>
+```
+
+`tools/classify_corpus.sh` がこれを読んで「意図的な不正例」に数える。
+併せて**印が正直かどうか**も見る（両方の処理系が通してしまうなら警告）。
+`Typecheck*.aipl` と `Effects.aipl` は `_test_typeck.py` が
+「N件の問題が出ること」を検証している実演用サンプルなので、**直すとテストが落ちる**。
+
+## 残っている作業
+
+1. **要修正 25 本**。塊はもう無い。内訳は
+   `new X` の引数個数 3 / `reply` しない・複数回 5 / チャネルの引数型 2 /
+   `!` の parse 2 / LevelZ の `if`・`while` が先頭 2 / `LPAR` at col 30 2 / 個別 9。
+   多くは `aice-*-evolution` / `nextgen` / `experiments/2026-05-*` の研究記録。
+2. **弾かれるべきテストの実装差 10枠**。JS-I にメソッド存在／引数個数／引数型／
+   戻り値型／アクター型／`result` 型の検査が無い。Py-I は r14 と r8。
+3. **AICE ポータル配下のダッシュボード**。`pyi`(:8899) と `phil5`(:8901) は
+   正典の Py-I を向くようにした。`web`(:8765) と `node`(:8091) は未確認。
+4. **次の形式化**。期限は `AIPLSoundnessMax.v` で入った。
+   残るのは `result<τ>` / 返信先の線形性 / 資源の順序 / セッション型。
+   返信先の線形性が入りやすい（`replyto`/`answer` を構文に足して線形に追う）。
+5. **論文への反映**。`AIPLSoundnessMax.v`（期限の形式化、40定理）と
+   `docs/aipl_soundness4_ja.tex`（25p）が入ったので、第5版 §10.4 の
+   「機械検証まで届いたのは効果とデッドロック自由の二つ」は更新が要る。
+
+## 掃除（次回いらなければ止める）
+
+- `localhost:3000` の aipl-web、`mongo7` コンテナ、colima が**稼働したまま**
+  （`kill $(lsof -ti tcp:3000 -sTCP:LISTEN)` / `docker stop mongo7` / `colima stop`）
+- ローカル Mongo に検証用アカウント `aipl-verify-local@example.invalid` を作った
+- `ocaml-app/abclcp-project` に先生の未コミット 61 ファイルがある（**触らないこと**）
+
+## 公開物
+
+| | |
+|---|---|
+| 論文 第5版（43p） | https://kodamay.org/reports/2026-08-23_aipl_paper5.pdf |
+| 第4版（38p）・第3版（32p）・第2版・第1版 | 同じ `reports/` 配下。一覧は `aice-aipl.html` |
+| 本番サイト | https://airilab.app （2026-08-23 に v10 を出した） |
+| 再生成 | `~/kodamay_org_site/kodamay.org/tools/gen_aice_page.py` → lftp で s296.xrea.com |
+
+`heroku login` は**このセッション経由では動かない**（TTY が無く `setRawMode` で落ちる）。
+`osascript` で Terminal.app を開いてもらい、そこで実行する。
