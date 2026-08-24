@@ -1,13 +1,13 @@
 # AIPL 形式化 — セッション再開用ドキュメント
 
-最終更新: 2026-07-28（A1 埋め込みまで完了・公開/非公開の分離まで完了）
+最終更新: 2026-08-24（AIPL⁻max = 健全性・安全性が成り立つ最大の断片まで完了）
 
 ## 30 秒で状況を把握する
 
 ```bash
 export PATH="$HOME/.opam/5.1.1/bin:$PATH"
 cd ~/aios/abclcp/coq
-make check          # 14 個の主定理がすべて Closed under the global context
+make check          # 40 個の定理がすべて Closed under the global context
 ```
 
 これが全部通れば、前回の到達点がそのまま再現できている。
@@ -16,7 +16,11 @@ make check          # 14 個の主定理がすべて Closed under the global con
 
 | ファイル | 行数 | 状態 | 内容 |
 |---|---|---|---|
-| `AIPLSoundness.v` | 1121 | 通る | AIPL⁻ の型健全性・型安全性 |
+| `AIPLSoundness.v` | 1121 | 通る | AIPL⁻ の型健全性・型安全性（第1版） |
+| `AIPLSoundness2.v` | 1524 | 通る | AIPL⁻² = 義務レベル＋効果。**デッドロック自由**まで（第3版） |
+| `AIPLSoundness2Example.v` | 140 | 通る | 上の仮定が空虚でないことの確認 |
+| `AIPLSoundnessMax.v` | 1510 | 通る | **AIPL⁻max**。健全性・安全性が成り立つ最大の断片（第4版） |
+| `AIPLSoundnessMaxExample.v` | 214 | 通る | 委譲を使う例題＋**デッドロックする型付き構成**の反例 |
 | `AIPLDining.v` | 566 | 通る | 哲学者の食事問題のデッドロック自由 |
 | `ABCMEmbedding.v` | 343 | 通る | ABCM ⊂ AIPL⁻ の埋め込み |
 | `ABCMEmbedding_simulation_WIP.v` | 176 | **通らない** | 構成レベルのシミュレーション（未完） |
@@ -67,6 +71,50 @@ make check          # 14 個の主定理がすべて Closed under the global con
 
 `tr_afree` が構造的に説明していること: **ABCM の進行定理が二択で AIPL⁻ が三択なのは、
 ABCM が AIPL⁻ の「await を含まない断片」にちょうど収まっているから**である。
+
+### AIPL⁻² のデッドロック自由と効果（`AIPLSoundness2.v`, 第3版）
+
+義務レベル（`future` の型に「埋める側のレベル」を持たせ、待ちは必ず上へ）と
+実行時不変条件 `prod_ok`（未解決 future には必ず埋める者がいる）で、
+**`await` を取り除かないまま** `deadlock_free` / `progress_total` を証明してある。
+効果も同じ型に載せ、**送信は引き継がず待ちが引き継ぐ**規則で `effect_soundness` まで。
+
+⚠ **事故の記録**: このファイルは一度 `596471e` で効果なし版へ巻き戻されていた
+（`AIPLSoundness2Example.v` / `AIPLDining.v` / `Makefile` は効果あり版を前提にしていたため
+`make` が落ちる）。復旧は `git show 'e877755:coq/AIPLSoundness2.v' > coq/AIPLSoundness2.v`。
+**効果あり版の原本コミットは `e877755`。**
+
+### AIPL⁻max の型健全性・型安全性（`AIPLSoundnessMax.v`, 第4版）
+
+問い: *デッドロック自由を諦めるなら、健全性・安全性を保ったまま言語はどこまで広げられるか。*
+
+第3版から**外した**もの: 義務レベル（`await` の側条件）、`prod_ok`、効果。
+**加えた**もの: 文字列と `++`、対、`result<τ>`、期限つきの待ち2種
+（`timeout n else d` と `timeout n`）、**一級の返答先 `reply<τ>`**（`replyto` / `answer`）。
+
+型判断は `ht ot ft C R G e T` = `Ω;Φ;c;ρ;Γ ⊢ e:τ`。
+**レベル L を外して、返り値型 ρ を入れた**のが一行の要約
+（`ρ` = 実行中メソッドの返り値型 = `replyto` の型 = そのタスクの future の型）。
+
+| 定理 | 内容 |
+|---|---|
+| `no_method_not_understood` | 飛ぶメッセージは宛先実在・メソッド存在・引数型一致 |
+| `preservation` / `preservation_star` | 保存 |
+| `progress` | 終状態 ∨ 一歩進める ∨ 全タスクが待ち（**三択**） |
+| `type_safety` | 到達可能な構成は `stuck` にならない |
+| `state_type_invariant` / `future_type_invariant` | 状態と future の型が保たれる（**委譲しても**） |
+| `timeout_always_progresses` / `timeout_never_awaits` | 期限つきの待ちは必ず一歩進める |
+| `max_admits_deadlock` / `max_is_not_deadlock_free` | **型が付いたままデッドロックする構成が実在** |
+| `dl_not_stuck` | それでも `stuck` ではない（壊れてはいない） |
+
+**設計上いちばん効いている一点**: `replyto` を**値にしない**こと。
+値にすると `value_ht_indep`（値の型付けは文脈に依らない）が壊れ、代入補題と保存定理まで倒れる。
+`replyto` は自分のところで `ρ_k`（型は `Φ` 由来）へ簡約され、運べるのはその `ρ_k` だけ。
+これにより「**誰が答えても future に入る値の型は同じ**」が成り立つ。
+
+これ以上広げると壊れるもの（第4版 PDF §16 に破れ方つきで列挙）:
+動的な宛先の `remote`、`any`、計算されたメソッド名、範囲検査のない添字、
+注釈のない `reply`、そして `replyto` を値にすること。
 
 ## 設計上の要点（忘れやすいもの）
 
@@ -136,7 +184,12 @@ ABCM が AIPL⁻ の「await を含まない断片」にちょうど収まって
 |---|---|---|---|
 | ML (Hindley–Milner) | `~/hm_prover/hm_safety_report_ja.tex` | 同 `.pdf` | 14（英語版 9） |
 | ABCM | `~/seminar/abcm-soundness/abcm_soundness_ja.tex` | 同 `.pdf` | 15 |
-| AIPL | `~/aios/abclcp/docs/aipl_soundness_ja.tex` | 同 `.pdf` | 28 |
+| AIPL（第1版） | `~/aios/abclcp/docs/aipl_soundness_ja.tex` | 同 `.pdf` | 28 |
+| AIPL（第3版・デッドロック自由） | `~/aios/abclcp/docs/aipl_soundness3_ja.tex` | 同 `.pdf` | 11 |
+| **AIPL（第4版・AIPL⁻max）** | `~/aios/abclcp/docs/aipl_soundness4_ja.tex` | 同 `.pdf` | 25 |
+
+第3版・第4版は **kodamay.org/aice-aipl.html** に公開済み
+（`reports/2026-08-23_aipl_soundness3.pdf` / `reports/2026-08-24_aipl_soundness4.pdf`)。
 
 ビルド: `lualatex -interaction=nonstopmode <file>.tex` を **3 回**（相互参照のため）。
 
