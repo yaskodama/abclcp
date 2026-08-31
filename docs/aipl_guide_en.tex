@@ -1775,7 +1775,7 @@ Variable & Effect \\
 \end{tabular}
 \end{center}
 
-\section{Running on real hardware --- Xinu / Raspberry Pi 3}
+\section{Running on real hardware --- Xinu / Raspberry Pi 3 and Pi 5}
 \label{sec:xinu}
 
 AIPL programs also run on a \textbf{bare-metal Raspberry Pi 3} (Embedded Xinu):
@@ -1793,6 +1793,7 @@ Runtime & What it does & Checks \\
 OCaml REPL (canonical) & checks types, effects, deadlines, the seven disciplines & \textbf{yes} \\
 Host VM (Mac) & runs \texttt{.avm}; values are readable & no \\
 Xinu hardware (Pi 3) & the in-kernel VM runs \texttt{.avm} & no \\
+Xinu hardware (Pi 5) & AIPL is lowered to C and JITed to AArch64 in-kernel & no \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1935,16 +1936,86 @@ actor}. The destination of \texttt{reply} needs the same care: after a split,
 canonical implementation, but \textbf{more methods are generated} than were
 written.
 
+\subsection{The Pi 3 holds exactly one module at a time}
+\label{sec:pi3-onemodule}
+
+The Pi 3 VM has \textbf{a single module slot}
+(\texttt{static unsigned char vm\_mod[...]}). \texttt{/actor/loadvm}
+\textbf{overwrites it}, so \textbf{only the most recently loaded module is
+live}.
+
+This bites silently. Routes registered earlier \textbf{stay in the table};
+only the actors behind them stop working --- calling one gets no reply, and
+\texttt{vm\_web\_call} sits out its full 90 seconds and returns empty. After
+loading thirteen modules back to back, the \texttt{/sage} and \texttt{/echo}
+exposed first had both gone quiet, while an actor loaded at that moment
+answered instantly.
+
+\begin{itemize}
+\item \textbf{Try one module at a time} on the hardware; check it before
+  loading the next.
+\item A stale entry in \texttt{/api/routes} is not evidence that it is alive,
+  and the same path can appear twice --- the lookup \textbf{stops at the first
+  match}, so the earlier registration wins.
+\end{itemize}
+
 \subsection{The ten canonical guide samples on hardware}
 
 Every one of g1--g10 from Part \ref{part:sample} lowers to \texttt{.avm}, loads
 onto the Pi 3, and starts as an actor (all ten report \texttt{accepted=1}).
-Note what that claim covers: \texttt{accepted=1} says ``loaded and started'',
-\textbf{not} that the output is correct. Values can only be compared for
-externally exposed paths, so the samples whose output has been checked on the
-hardware itself are g5 (\texttt{/echo}) and the \texttt{ai\_call} example
-(\texttt{/sage}). Output for the rest is compared on the host VM.
+That claim holds \textbf{for one module loaded at a time}; it does \textbf{not}
+mean the ten run side by side (\S\ref{sec:pi3-onemodule}).
+And \texttt{accepted=1} says ``loaded and started'', \textbf{not} that the
+output is correct. Values can only be compared for externally exposed paths, so
+the samples whose output has been checked on the hardware itself are g5
+(\texttt{/echo}) and the \texttt{ai\_call} example (\texttt{/sage}). Output for
+the rest is compared on the host VM.
 
+\subsection{The Pi 5 --- the other board}
+\label{sec:xinu-pi5}
+
+The Pi 5 (\texttt{192.168.3.101}) \textbf{works differently}. Instead of
+interpreting bytecode, it lowers AIPL to C on the board and the in-kernel C
+compiler \texttt{cc} \textbf{JITs that to AArch64 machine code}. In that
+compiler \texttt{int} is 8 bytes, matching AIPL's tagged 64-bit value.
+
+\begin{term}
+# POST the AIPL source itself (a body starting with "class " goes through abcl2c)
+curl --data-binary @prog.abcl "http://192.168.3.101/cc"
+MODEL[, there was a little girl named Lily. She loved to play outside in the p]END
+=> 0
+\end{term}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & Pi 3 & Pi 5 \\
+\midrule
+Execution & in-kernel VM interprets \texttt{.avm} & AIPL$\to$C$\to$in-kernel \texttt{cc} JIT \\
+Loading & \texttt{POST /actor/loadvm?ask=0} (port 8080) & \texttt{POST /cc} (port 80) \\
+Reading values & \texttt{web\_expose} + \texttt{/api/x/} & straight out of the \texttt{/cc} reply \\
+Modules resident & \textbf{exactly one} (\S\ref{sec:pi3-onemodule}) & JITed per run \\
+Value kinds & integers and strings & integers, strings, floats, lists \\
+\texttt{ai\_call} & instruction \texttt{0x52} & runtime \texttt{v\_ai\_call} \\
+Kernel & 1.09\,MB $\to$ 2.16\,MB & 0.94\,MB $\to$ 2.02\,MB \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Same model, same generated text.}
+\texttt{ai\_call("Once upon a time")} agreed to the byte (72 of them) across the
+Pi 3, the Pi 5 and the reference build on the Mac. Only the speed differs: the
+Pi 5 takes 0.42--0.64 seconds per call. The Pi 3 took 2--6 seconds when freshly
+booted, and 16.6 seconds once thirteen modules had been loaded and their actors
+had piled up (generation yields to the scheduler once per token, so more
+resident actors cost more --- though that causal link has \textbf{not been
+isolated}).
+
+The Pi 5's \texttt{abcl2c} accepts \textbf{only the builtins it knows}. Any call
+other than \texttt{print} / \texttt{puts} / \texttt{ai\_call} fails with
+\texttt{unknown function: <name>}; a misspelled \texttt{ai\_cal("hi")} stops on
+the board rather than quietly becoming something else.
 
 \part{Appendix}
 \label{part:appendix}

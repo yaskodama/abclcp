@@ -1,4 +1,4 @@
-This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  31 AUG 2026 13:35
+This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  31 AUG 2026 16:23
  restricted system commands enabled.
 **aipl_guide_ja.tex
 (./aipl_guide_ja.tex
@@ -1354,12 +1354,12 @@ LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
-Removing  `ltj.listings_unicode' from `process_input_buffer'.
+Removing  `ltj.listings_unicode' from `process_input_buffer'. [5]
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
-Removing  `ltj.listings_unicode' from `process_input_buffer'. [5](load cache: ex
-tra_lmmono8-regular.luc)
+Removing  `ltj.listings_unicode' from `process_input_buffer'.(load cache: extra_
+lmmono8-regular.luc)
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
 (Font)              scaled to size 7.3977pt on input line 169.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
@@ -1378,17 +1378,17 @@ Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
-Inserting `ltj.process_input_buffer' in `process_input_buffer'.
-Removing  `ltj.listings_unicode' from `process_input_buffer'. [6]
+Inserting `ltj.process_input_buffer' in `process_input_buffer'. [6]
+Removing  `ltj.listings_unicode' from `process_input_buffer'.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
-Removing  `ltj.listings_unicode' from `process_input_buffer'.
+Removing  `ltj.listings_unicode' from `process_input_buffer'. [7]
 
 LaTeX Font Warning: Font shape `OT1/cmtt/m/n' in size <4.5> not available
 (Font)              size <5> substituted on input line 278.
 
-[7] [8]
+[8]
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
@@ -1665,22 +1665,27 @@ Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'. [33]
 LaTeX Font Info:    Font shape `JT3/gt/bx/n' in size <9> not available
-(Font)              Font shape `JT3/gt/m/n' tried instead on input line 1599.
+(Font)              Font shape `JT3/gt/m/n' tried instead on input line 1600.
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 7.60036pt on input line 1599.
+(Font)              scaled to size 7.60036pt on input line 1600.
 LaTeX Font Info:    Font shape `JY3/gt/bx/n' in size <9> not available
-(Font)              Font shape `JY3/gt/m/n' tried instead on input line 1599.
+(Font)              Font shape `JY3/gt/m/n' tried instead on input line 1600.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 7.60036pt on input line 1599.
-Removing  `ltj.process_input_buffer' from `process_input_buffer'.
-Inserting `ltj.listings_unicode' in `process_input_buffer'.
-Inserting `ltj.process_input_buffer' in `process_input_buffer'. [34]
-Removing  `ltj.listings_unicode' from `process_input_buffer'. [35]
+(Font)              scaled to size 7.60036pt on input line 1600.
+ [34]
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
-Removing  `ltj.listings_unicode' from `process_input_buffer'. [36] [37] [38] [3
-9]
+Removing  `ltj.listings_unicode' from `process_input_buffer'.
+Removing  `ltj.process_input_buffer' from `process_input_buffer'.
+Inserting `ltj.listings_unicode' in `process_input_buffer'.
+Inserting `ltj.process_input_buffer' in `process_input_buffer'. [35]
+Removing  `ltj.listings_unicode' from `process_input_buffer'. [36]
+Removing  `ltj.process_input_buffer' from `process_input_buffer'.
+Inserting `ltj.listings_unicode' in `process_input_buffer'.
+Inserting `ltj.process_input_buffer' in `process_input_buffer'.
+Removing  `ltj.listings_unicode' from `process_input_buffer'. [37] [38] [39] [4
+0]
 (./aipl_guide_ja.aux)
  ***********
 LaTeX2e <2025-11-01>
@@ -1691,19 +1696,22 @@ L3 programming layer <2026-01-19>
 LaTeX Font Warning: Size substitutions with differences
 (Font)              up to 0.5pt have occurred.
 
+
+LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
+
 Package rerunfilecheck Info: File `aipl_guide_ja.out' has not changed.
-(rerunfilecheck)             Checksum: 0B92327F23801FF925AD824DBCCAE680;11175.
+(rerunfilecheck)             Checksum: 32AA498D44044701C7B590D9FD7E2FD3;11620.
 )
 
 Here is how much of LuaTeX's memory you used:
- 15697 strings out of 476076
- 1822884,662416 words of node,token memory allocated
+ 15719 strings out of 476076
+ 1822844,662416 words of node,token memory allocated
  1066 words of node memory still in use:
    10 hlist, 2 vlist, 5 rule, 2 glue, 4 kern, 1 glyph, 203 attribute, 57 glue_sp
 ec, 30 attribute_list, 1 write, 13 user_defined nodes
-   avail lists: 1:26,2:190864,3:1338,4:69843,5:23197,6:108,7:20560,8:10,9:63234,
-10:53,11:2236
- 37011 multiletter control sequences out of 65536+600000
+   avail lists: 1:26,2:197395,3:1338,4:72107,5:23937,6:110,7:20657,8:9,9:65288,1
+0:53,11:2304
+ 37025 multiletter control sequences out of 65536+600000
  142 fonts using 99621495 bytes
  119i,10n,112p,2065b,987s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/opentype/public/lm
@@ -1743,10 +1751,10 @@ Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy9.pf
 b></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/ams
 fonts/cm/cmtt10.pfb></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/font
 s/type1/public/amsfonts/cm/cmtt9.pfb>
-Output written on aipl_guide_ja.pdf (39 pages, 591764 bytes).
+Output written on aipl_guide_ja.pdf (40 pages, 601162 bytes).
 
-PDF statistics: 1519 PDF objects out of 1728 (max. 8388607)
- 1402 compressed objects within 15 object streams
- 776 named destinations out of 1000 (max. 1048576)
- 697 words of extra memory for PDF output out of 10000 (max. 100000000)
+PDF statistics: 1541 PDF objects out of 1728 (max. 8388607)
+ 1423 compressed objects within 15 object streams
+ 784 named destinations out of 1000 (max. 1048576)
+ 713 words of extra memory for PDF output out of 10000 (max. 100000000)
 

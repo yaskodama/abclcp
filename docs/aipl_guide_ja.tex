@@ -1470,7 +1470,7 @@ $e \Downarrow$ \texttt{VFloat}）が実際に見つかった。
 \end{tabular}
 \end{center}
 
-\section{実機で動かす --- Xinu / Raspberry Pi 3}
+\section{実機で動かす --- Xinu / Raspberry Pi 3 と Pi 5}
 \label{sec:xinu}
 
 AIPL のプログラムは、\textbf{ベアメタルの Raspberry Pi 3}（Embedded Xinu）の上でも動く。
@@ -1487,6 +1487,7 @@ OS も libc も無く、カーネル自身がアクターの実行機構を持�
 OCaml 版 REPL（正典） & 型・効果・期限・七つの規律を検査する & \textbf{する} \\
 ホスト VM（Mac） & \texttt{.avm} を実行し、値まで読める & しない \\
 Xinu 実機（Pi 3） & カーネル内の VM が \texttt{.avm} を実行する & しない \\
+Xinu 実機（Pi 5） & AIPL を C に直し、機内 \texttt{cc} が AArch64 に JIT する & しない \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1623,17 +1624,86 @@ Pi 3 では\textbf{機外に出ない}。効果検査は保守的に見積もる
 メソッドに入った時点で呼び出し元を \texttt{\_\_snd} に退避している。
 利用者から見た挙動は正典と同じだが、\textbf{生成されるメソッド数は元より多い}。
 
+\subsection{Pi 3 は一度に一つのモジュールしか持てない}
+\label{sec:pi3-onemodule}
+
+Pi 3 の VM は\textbf{モジュール置き場を一つしか持たない}
+（\texttt{static unsigned char vm\_mod[...]}）。
+\texttt{/actor/loadvm} は\textbf{そこを上書きする}ので、
+\textbf{生きているのは最後に読み込んだモジュールだけ}である。
+
+これは黙って効く。先に登録した公開ルートは\textbf{そのまま残り}、
+指し先のアクターだけが動かなくなる ---
+呼んでも返信が来ず、\texttt{vm\_web\_call} の 90 秒を待ち切って空が返る。
+実際、モジュールを 13 本続けて投入したあとでは、
+最初に公開した \texttt{/sage} と \texttt{/echo} がどちらも無応答になり、
+そのとき投入した新しいアクターだけが即座に応えた。
+
+\begin{itemize}
+\item \textbf{実機で試すときは 1 本ずつ}。投入したら、次を投入する前に確かめる。
+\item ルート表（\texttt{/api/routes}）に古い項目が残っていても、
+  それが生きている証拠にはならない。同じ名前が二重に並ぶこともある
+  （検索は\textbf{先頭一致で打ち切る}ので、先に登録された方が選ばれる）。
+\end{itemize}
+
 \subsection{正典ガイド 10 本の実機確認}
 
 第 \ref{part:sample} 部の g1--g10 は、いずれも \texttt{.avm} に落ちて
 Pi 3 に読み込まれ、アクターとして起動する（10 本すべて \texttt{accepted=1}）。
-ただし \texttt{accepted=1} が言うのは「読み込んで走り出した」までで、
+ただし、この主張が言えるのは\textbf{1 本ずつ順に投入した場合}であって、
+\textbf{10 本が同時に動くという意味ではない}
+（\S\ref{sec:pi3-onemodule}）。
+さらに \texttt{accepted=1} が言うのは「読み込んで走り出した」までで、
 \textbf{出力の正しさまでは見ていない}。
 値まで突き合わせられるのは外部公開した経路だけなので、
 実機で出力まで確かめてあるのは g5（\texttt{/echo}）と、
 \texttt{ai\_call} を公開した例（\texttt{/sage}）である。
 それ以外の出力照合はホスト VM 側で行う。
 
+\subsection{Pi 5 --- もう一つの実機}
+\label{sec:xinu-pi5}
+
+Pi 5（\texttt{192.168.3.101}）は\textbf{実行方式が違う}。
+バイトコードを解釈するのではなく、AIPL を機内で C に直し、
+機内の C コンパイラ \texttt{cc} が\textbf{その場で AArch64 の機械語に JIT} する。
+\texttt{cc} の \texttt{int} は 8 バイトで、AIPL のタグ付き 64 ビット値と一致する。
+
+\begin{term}
+# AIPL のソースをそのまま POST する（先頭が "class " なら機内 abcl2c を通る）
+curl --data-binary @prog.abcl "http://192.168.3.101/cc"
+MODEL[, there was a little girl named Lily. She loved to play outside in the p]END
+=> 0
+\end{term}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & Pi 3 & Pi 5 \\
+\midrule
+実行方式 & \texttt{.avm} をカーネル内 VM が解釈 & AIPL$\to$C$\to$機内 \texttt{cc} が JIT \\
+投入 & \texttt{POST /actor/loadvm?ask=0}（8080 番） & \texttt{POST /cc}（80 番） \\
+値の読み方 & \texttt{web\_expose} + \texttt{/api/x/} & \texttt{/cc} の応答にそのまま出る \\
+同時に持てるモジュール & \textbf{1 本だけ}（\S\ref{sec:pi3-onemodule}） & 実行のたびに JIT \\
+値の種類 & 整数と文字列 & 整数・文字列・浮動小数・リスト \\
+\texttt{ai\_call} & \eff{} 命令 \texttt{0x52} & ランタイム \texttt{v\_ai\_call} \\
+カーネル & 1.09\,MB $\to$ 2.16\,MB & 0.94\,MB $\to$ 2.02\,MB \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{同じモデル・同じ生成文である。}
+\texttt{ai\_call("Once upon a time")} は Pi 3・Pi 5・Mac の参照実装のいずれでも
+72 バイト一致した。違うのは速さだけで、Pi 5 は 1 回 0.42--0.64 秒である。
+Pi 3 は起動直後で 2--6 秒、モジュールを 13 本投入してアクターが積み上がった
+状態では 16.6 秒だった
+（生成はトークンごとにスケジューラへ譲るので、常駐アクターが増えるほど遅くなる。
+ただしこの因果関係は\textbf{まだ切り分けていない}）。
+
+Pi 5 側の \texttt{abcl2c} は、\textbf{受け付ける組込みだけを受け付ける}。
+\texttt{print} / \texttt{puts} / \texttt{ai\_call} 以外の関数呼び出しは
+\texttt{unknown function: <名前>} で失敗する。
+綴りを間違えた \texttt{ai\_cal("hi")} も実機でその場で止まる。
 
 \part{付録}
 \label{part:appendix}

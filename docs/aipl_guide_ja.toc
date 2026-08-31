@@ -1,9 +1,9 @@
 \contentsline {part}{第I部\hspace {1\zw }はじめに}{4}{part.1}%
-\contentsline {section}{\numberline {1}AIPL とは}{4}{section.1}%
+\contentsline {section}{\numberline {1}AIPL とは}{5}{section.1}%
 \contentsline {section}{\numberline {2}三つの静的な仕組み}{5}{section.2}%
 \contentsline {subsection}{\numberline {2.1}型 --- 何を返すか}{5}{subsection.2.1}%
 \contentsline {subsection}{\numberline {2.2}効果 --- 世界に何をするか}{5}{subsection.2.2}%
-\contentsline {subsection}{\numberline {2.3}期限 --- いつまで待つか}{5}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.3}期限 --- いつまで待つか}{6}{subsection.2.3}%
 \contentsline {subsection}{\numberline {2.4}そのうえに七つの規律がある}{6}{subsection.2.4}%
 \contentsline {section}{\numberline {3}5 分で動かす}{6}{section.3}%
 \contentsline {subsection}{\numberline {3.1}処理系のビルド}{6}{subsection.3.1}%
@@ -66,22 +66,24 @@
 \contentsline {section}{\numberline {36}型検査だけを走らせる}{31}{section.36}%
 \contentsline {section}{\numberline {37}型と実行値の差分テスト}{31}{section.37}%
 \contentsline {section}{\numberline {38}環境変数}{31}{section.38}%
-\contentsline {section}{\numberline {39}実機で動かす --- Xinu / Raspberry Pi 3}{32}{section.39}%
+\contentsline {section}{\numberline {39}実機で動かす --- Xinu / Raspberry Pi 3 と Pi 5}{32}{section.39}%
 \contentsline {subsection}{\numberline {39.1}三つの実行系と、その役割分担}{32}{subsection.39.1}%
 \contentsline {subsection}{\numberline {39.2}\texttt {.avm} へのコンパイルと投入}{32}{subsection.39.2}%
 \contentsline {subsection}{\numberline {39.3}実機で値を読む}{32}{subsection.39.3}%
 \contentsline {subsection}{\numberline {39.4}機内の小型モデル --- \texttt {ai\_call}}{33}{subsection.39.4}%
 \contentsline {subsection}{\numberline {39.5}実機側の限界}{34}{subsection.39.5}%
-\contentsline {subsection}{\numberline {39.6}正典ガイド 10 本の実機確認}{34}{subsection.39.6}%
-\contentsline {part}{第VII部\hspace {1\zw }付録}{34}{part.7}%
-\contentsline {section}{\numberline {40}文法の要約}{34}{section.40}%
-\contentsline {section}{\numberline {41}処理系の環境変数}{36}{section.41}%
-\contentsline {section}{\numberline {42}よくある落とし穴}{36}{section.42}%
-\contentsline {section}{\numberline {43}現状の限界}{37}{section.43}%
-\contentsline {section}{\numberline {44}前版からの変更点}{37}{section.44}%
-\contentsline {subsection}{\numberline {44.1}言語から外したもの}{37}{subsection.44.1}%
-\contentsline {subsection}{\numberline {44.2}足したもの}{37}{subsection.44.2}%
-\contentsline {subsection}{\numberline {44.3}厳しくなったもの}{38}{subsection.44.3}%
-\contentsline {subsection}{\numberline {44.4}拡張子}{38}{subsection.44.4}%
-\contentsline {subsection}{\numberline {44.5}核と拡張 --- 言語は二層である}{38}{subsection.44.5}%
-\contentsline {section}{\numberline {45}関連文書}{38}{section.45}%
+\contentsline {subsection}{\numberline {39.6}Pi 3 は一度に一つのモジュールしか持てない}{34}{subsection.39.6}%
+\contentsline {subsection}{\numberline {39.7}正典ガイド 10 本の実機確認}{35}{subsection.39.7}%
+\contentsline {subsection}{\numberline {39.8}Pi 5 --- もう一つの実機}{35}{subsection.39.8}%
+\contentsline {part}{第VII部\hspace {1\zw }付録}{35}{part.7}%
+\contentsline {section}{\numberline {40}文法の要約}{35}{section.40}%
+\contentsline {section}{\numberline {41}処理系の環境変数}{37}{section.41}%
+\contentsline {section}{\numberline {42}よくある落とし穴}{37}{section.42}%
+\contentsline {section}{\numberline {43}現状の限界}{38}{section.43}%
+\contentsline {section}{\numberline {44}前版からの変更点}{38}{section.44}%
+\contentsline {subsection}{\numberline {44.1}言語から外したもの}{38}{subsection.44.1}%
+\contentsline {subsection}{\numberline {44.2}足したもの}{38}{subsection.44.2}%
+\contentsline {subsection}{\numberline {44.3}厳しくなったもの}{39}{subsection.44.3}%
+\contentsline {subsection}{\numberline {44.4}拡張子}{39}{subsection.44.4}%
+\contentsline {subsection}{\numberline {44.5}核と拡張 --- 言語は二層である}{39}{subsection.44.5}%
+\contentsline {section}{\numberline {45}関連文書}{39}{section.45}%

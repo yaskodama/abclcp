@@ -66,22 +66,24 @@
 \contentsline {section}{\numberline {36}Running only the type checker}{27}{section.36}%
 \contentsline {section}{\numberline {37}The type/run-time differential test}{27}{section.37}%
 \contentsline {section}{\numberline {38}Environment variables}{27}{section.38}%
-\contentsline {section}{\numberline {39}Running on real hardware --- Xinu / Raspberry Pi 3}{27}{section.39}%
+\contentsline {section}{\numberline {39}Running on real hardware --- Xinu / Raspberry Pi 3 and Pi 5}{27}{section.39}%
 \contentsline {subsection}{\numberline {39.1}Three runtimes, and what each is for}{28}{subsection.39.1}%
 \contentsline {subsection}{\numberline {39.2}Compiling to \texttt {.avm} and loading it}{28}{subsection.39.2}%
 \contentsline {subsection}{\numberline {39.3}Reading values back from the board}{28}{subsection.39.3}%
 \contentsline {subsection}{\numberline {39.4}An on-board model --- \texttt {ai\_call}}{29}{subsection.39.4}%
 \contentsline {subsection}{\numberline {39.5}What the hardware path does not have}{29}{subsection.39.5}%
-\contentsline {subsection}{\numberline {39.6}The ten canonical guide samples on hardware}{30}{subsection.39.6}%
-\contentsline {part}{VII\hspace {1em}Appendix}{30}{part.7}%
-\contentsline {section}{\numberline {40}Grammar summary}{30}{section.40}%
-\contentsline {section}{\numberline {41}Environment variables of the implementation}{31}{section.41}%
+\contentsline {subsection}{\numberline {39.6}The Pi 3 holds exactly one module at a time}{30}{subsection.39.6}%
+\contentsline {subsection}{\numberline {39.7}The ten canonical guide samples on hardware}{30}{subsection.39.7}%
+\contentsline {subsection}{\numberline {39.8}The Pi 5 --- the other board}{30}{subsection.39.8}%
+\contentsline {part}{VII\hspace {1em}Appendix}{31}{part.7}%
+\contentsline {section}{\numberline {40}Grammar summary}{31}{section.40}%
+\contentsline {section}{\numberline {41}Environment variables of the implementation}{32}{section.41}%
 \contentsline {section}{\numberline {42}Common pitfalls}{32}{section.42}%
-\contentsline {section}{\numberline {43}Present limits}{32}{section.43}%
+\contentsline {section}{\numberline {43}Present limits}{33}{section.43}%
 \contentsline {section}{\numberline {44}Changes from the previous edition}{33}{section.44}%
-\contentsline {subsection}{\numberline {44.1}Removed from the language}{33}{subsection.44.1}%
-\contentsline {subsection}{\numberline {44.2}Added}{33}{subsection.44.2}%
-\contentsline {subsection}{\numberline {44.3}Made stricter}{33}{subsection.44.3}%
-\contentsline {subsection}{\numberline {44.4}The file extension}{33}{subsection.44.4}%
+\contentsline {subsection}{\numberline {44.1}Removed from the language}{34}{subsection.44.1}%
+\contentsline {subsection}{\numberline {44.2}Added}{34}{subsection.44.2}%
+\contentsline {subsection}{\numberline {44.3}Made stricter}{34}{subsection.44.3}%
+\contentsline {subsection}{\numberline {44.4}The file extension}{34}{subsection.44.4}%
 \contentsline {subsection}{\numberline {44.5}Core and extensions --- the language has two layers}{34}{subsection.44.5}%
-\contentsline {section}{\numberline {45}Related documents}{34}{section.45}%
+\contentsline {section}{\numberline {45}Related documents}{35}{section.45}%
