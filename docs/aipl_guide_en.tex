@@ -44,7 +44,7 @@
 \title{AIPL / ABCL$^{c}$+ User's Guide\\
 {\large ---\ syntax, usage, and sample programs ---}}
 \author{ABCL$^{c}$+ / AIOS implementation (\texttt{yaskodama/abclcp}, branch \texttt{make-src-base})}
-\date{2026-08-23 edition\\{\small Target: branch \texttt{make-src-base} (the current specification, including the seven disciplines)}}
+\date{2026-08-31 edition\\{\small Target: branch \texttt{make-src-base} (the current specification, including the seven disciplines)}}
 
 \begin{document}
 \maketitle
@@ -56,6 +56,7 @@ running something; Part \ref{part:lang} specifies the syntax and the type
 system; Part \ref{part:disciplines} covers the seven disciplines that sit on
 top of it; Part \ref{part:sample} walks through the sample programs with their
 sources and their actual output; Part \ref{part:tool} describes the tools for
+% (including running on bare-metal Raspberry Pi 3, \S\ref{sec:xinu})
 building, running and checking; Part \ref{part:appendix} collects the grammar
 summary, the present limits, and the migration notes from the previous edition.
 
@@ -1774,6 +1775,177 @@ Variable & Effect \\
 \end{tabular}
 \end{center}
 
+\section{Running on real hardware --- Xinu / Raspberry Pi 3}
+\label{sec:xinu}
+
+AIPL programs also run on a \textbf{bare-metal Raspberry Pi 3} (Embedded Xinu):
+no operating system underneath, no libc, and the kernel itself carries the
+actor machinery.
+
+\subsection{Three runtimes, and what each is for}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Runtime & What it does & Checks \\
+\midrule
+OCaml REPL (canonical) & checks types, effects, deadlines, the seven disciplines & \textbf{yes} \\
+Host VM (Mac) & runs \texttt{.avm}; values are readable & no \\
+Xinu hardware (Pi 3) & the in-kernel VM runs \texttt{.avm} & no \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This is the most important point in this section. \textbf{The \texttt{.avm} path
+does not type-check.} Return-type annotations (\texttt{: string}), obligation
+levels (\texttt{@3}) and effects (\texttt{!\{log\}}) are \textbf{accepted as
+syntax and then discarded}. Every static guarantee comes from the canonical
+(OCaml) side; the hardware is where \textbf{something already checked} is run.
+So the workflow has two stages: pass the type check of \S\ref{sec:tc} first,
+then lower to \texttt{.avm} and ship it to the board.
+
+\subsection{Compiling to \texttt{.avm} and loading it}
+
+An \texttt{.avm} file is integer actor bytecode (the first four bytes are
+\texttt{AVM1}), and the format is \textbf{the same} on the host VM and on the
+Pi 3.
+
+\begin{term}
+# 1. .aipl -> .avm
+./_build/default/compile_avm.exe prog.aipl prog.avm
+
+# 2. check the values on the host VM first
+./_build/default/server.exe 8099 --no-open
+curl --data-binary @prog.avm "http://127.0.0.1:8099/actor/loadvm?ask=0"
+curl "http://127.0.0.1:8099/api/console"
+
+# 3. send it to the board (the Pi 3 listens on 8080)
+curl --data-binary @prog.avm "http://192.168.3.50:8080/actor/loadvm?ask=0"
+loadvm: body=131 accepted=1 spawned actor id=1
+\end{term}
+
+\textbf{No kernel reflash is needed.} The \texttt{.avm} module is loaded into
+the running kernel and starts as an actor there and then. The SD card is only
+swapped when a \textbf{new VM instruction} has been added.
+
+\begin{itemize}
+\item \textbf{Without \texttt{?ask=0} nothing comes back.} Forget it and the
+  request sits for 25 seconds and closes with zero bytes received. It looks
+  exactly like a dead board, so suspect this first.
+\item The board is \textbf{fragile under back-to-back HTTP}; leave 2--4 seconds
+  between requests.
+\end{itemize}
+
+\subsection{Reading values back from the board}
+
+\texttt{print} on the Pi 3 goes to \textbf{the serial line}, so it cannot be
+read over the network. At present the only way to read a value back from the
+hardware is \textbf{external exposure} (\S\ref{sec:expose}).
+
+\lstinputlisting{samples/guide/g5_web.aipl}
+
+\begin{term}
+curl "http://192.168.3.50:8080/api/routes"
+/echo -> a6
+
+curl "http://192.168.3.50:8080/api/x/echo?method=say&args=hi"
+echo: hi
+\end{term}
+
+\texttt{args} is URL-decoded before it is passed in (\texttt{\%20} and
+\texttt{+} become spaces). The reply is awaited for up to 90 seconds, and the
+wait ends as soon as the reply arrives.
+
+\subsection{An on-board model --- \texttt{ai\_call}}
+\label{sec:xinu-ai}
+
+The Pi 3 kernel has \textbf{a small language model baked into it}.
+\texttt{ai\_call} does not reach out to a service; it \textbf{runs inference on
+the board}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Model & \texttt{stories260K} (Llama 2 shape; \texttt{dim}=64, 5 layers, 8 heads, vocab 512) \\
+Size & about 260K parameters, 1.06\,MB in fp32 \\
+Where & the \texttt{.rodata} of the kernel image (kernel: 1.09\,MB $\to$ 2.16\,MB) \\
+Arithmetic & soft float, D-cache off, 32-bit A53 \\
+Measured & 2--6 seconds per \texttt{ai\_call} round trip (24 tokens generated) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{term}
+curl "http://192.168.3.50:8080/api/x/sage?method=ask&args=Once%20upon%20a%20time"
+MODEL[, there was a little girl named Lily. She loved to play outside in the p]END
+\end{term}
+
+The effect table (\S\ref{sec:builtins}) gives \texttt{ai\_call} the effect
+\eff{ai, net}, yet on the Pi 3 \textbf{nothing leaves the board}. The effect
+checker over-approximates, so the fact that \eff{net} does not actually occur
+here does not compromise its soundness: it may forbid too much, never too
+little.
+
+\textbf{The host VM (Mac) has no model.} Calling \texttt{ai\_call} there
+returns a string prefixed with \texttt{(no local model on host)}. It does not
+manufacture a plausible-looking answer --- the absence of a model is written
+into the value rather than quietly hidden.
+
+\subsection{What the hardware path does not have}
+
+The \texttt{.avm} path accepts a \textbf{subset} of the canonical language.
+What is missing \textbf{fails on the spot}; nothing is dropped silently.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Feature & \texttt{.avm} path & Note \\
+\midrule
+Classes, fields, \texttt{send} / \texttt{send!} & yes & \\
+Method-local \texttt{var}, \texttt{reply} & yes & locals become hidden fields \\
+\texttt{if} / \texttt{while} & yes & \textbf{\texttt{while (c) do} --- parentheses required} \\
+\texttt{now} / \texttt{future} / \texttt{await} / deadlines & yes & via \textbf{continuation splitting} (below) \\
+\texttt{select} / \texttt{case} / \texttt{timeout} & yes & a \texttt{case} name must be a real method \\
+Strings (values, \texttt{++}, arguments) & yes & \\
+\texttt{web\_listen} / \texttt{web\_expose} & yes & \\
+\texttt{ai\_call} & yes & on-board model (\S\ref{sec:xinu-ai}) \\
+\midrule
+Type / effect / level annotations & accepted, \textbf{discarded} & checked on the canonical side \\
+\ty{float} and float literals & no & values are integers and strings only \\
+Arrays (\texttt{array\_*}) & no & \texttt{avm: unsupported expression} \\
+Math builtins (\texttt{sqrt} etc.) & no & likewise \\
+\texttt{spawn} & no & likewise \\
+\texttt{remote(...)} sends & no & \texttt{parse: unexpected token} \\
+\texttt{replyto} & no & \texttt{avm: unknown variable} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A word on \textbf{continuation splitting}. The VM has no instruction for a
+synchronous call that returns a value. So wherever \texttt{now},
+\texttt{await} or \texttt{select} appears, the method is \textbf{cut in two}
+and the remainder is emitted as a separate method. To carry values across the
+cut, method-local \texttt{var}s are turned into \textbf{hidden fields of the
+actor}. The destination of \texttt{reply} needs the same care: after a split,
+\texttt{sender} is no longer the original caller, so the caller is saved into
+\texttt{\_\_snd} on entry to the method. The behaviour a user sees matches the
+canonical implementation, but \textbf{more methods are generated} than were
+written.
+
+\subsection{The ten canonical guide samples on hardware}
+
+Every one of g1--g10 from Part \ref{part:sample} lowers to \texttt{.avm}, loads
+onto the Pi 3, and starts as an actor (all ten report \texttt{accepted=1}).
+Note what that claim covers: \texttt{accepted=1} says ``loaded and started'',
+\textbf{not} that the output is correct. Values can only be compared for
+externally exposed paths, so the samples whose output has been checked on the
+hardware itself are g5 (\texttt{/echo}) and the \texttt{ai\_call} example
+(\texttt{/sage}). Output for the rest is compared on the host VM.
+
+
 \part{Appendix}
 \label{part:appendix}
 
@@ -1917,6 +2089,11 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \item \textbf{Fields come before methods.}
 \item \textbf{Write a deadline on every wait.} Otherwise you get a warning, and
   under \texttt{AIOS\_STRICT\_DEADLINE=1} it does not pass at all.
+\item \textbf{Add \texttt{?ask=0} when loading onto hardware.} Without it
+  \texttt{/actor/loadvm} never answers, which looks like a dead board
+  (\S\ref{sec:xinu}).
+\item \textbf{\texttt{print} on the board goes to the serial line.} To read a
+  value over the network, \texttt{web\_expose} it and call \texttt{/api/x/}.
 \item \textbf{Effects are checked once you declare them} (gradual). Declare
   nothing and nothing is said; declare something and the difference from the
   body is pointed at.
@@ -1925,6 +2102,11 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \section{Present limits}
 
 \begin{itemize}
+\item \textbf{What runs on the hardware (Xinu / Pi 3) is a subset of the
+  canonical language.} No \ty{float}, arrays, math builtins, \texttt{spawn},
+  \texttt{remote} or \texttt{replyto}; type, effect and level annotations are
+  accepted and discarded (checking happens on the canonical side).
+  See \S\ref{sec:xinu}.
 \item Splitting a wait into \texttt{future} + \texttt{await} escapes effect
   propagation (the ``known hole'' in \S\ref{sec:effects}). Fixing it requires
   carrying effects in the \ty{future} type.

@@ -42,7 +42,7 @@
 \title{AIPL / ABCL$^{c}$+ ユーザーズガイド\\
 {\large ---\ 文法・使い方・サンプルプログラム ---}}
 \author{ABCL$^{c}$+ / AIOS 処理系（\texttt{yaskodama/abclcp}, branch \texttt{make-src-base}）}
-\date{2026年08月23日版\\{\small 対象: branch \texttt{make-src-base}（七つの規律を含む現行仕様）}}
+\date{2026年08月31日版\\{\small 対象: branch \texttt{make-src-base}（七つの規律を含む現行仕様）}}
 
 \begin{document}
 \maketitle
@@ -53,7 +53,7 @@
 第 \ref{part:lang} 部で文法と型システムの仕様、
 第 \ref{part:disciplines} 部でその上に載る七つの規律を、
 第 \ref{part:sample} 部でサンプルプログラムをソースと実行結果つきで、
-第 \ref{part:tool} 部でビルド・実行・検査の道具立てを、
+第 \ref{part:tool} 部でビルド・実行・検査の道具立て（\textbf{ベアメタルの Raspberry Pi 3 で動かす手順}を含む、\S\ref{sec:xinu}）を、
 第 \ref{part:appendix} 部に文法の要約・現状の限界・旧版からの移行を置く。
 
 AIPL は\textbf{アクター}を単位とする並行言語で、値は \texttt{return} ではなく
@@ -1470,6 +1470,171 @@ $e \Downarrow$ \texttt{VFloat}）が実際に見つかった。
 \end{tabular}
 \end{center}
 
+\section{実機で動かす --- Xinu / Raspberry Pi 3}
+\label{sec:xinu}
+
+AIPL のプログラムは、\textbf{ベアメタルの Raspberry Pi 3}（Embedded Xinu）の上でも動く。
+OS も libc も無く、カーネル自身がアクターの実行機構を持っている環境である。
+
+\subsection{三つの実行系と、その役割分担}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+実行系 & 何をするか & 検査 \\
+\midrule
+OCaml 版 REPL（正典） & 型・効果・期限・七つの規律を検査する & \textbf{する} \\
+ホスト VM（Mac） & \texttt{.avm} を実行し、値まで読める & しない \\
+Xinu 実機（Pi 3） & カーネル内の VM が \texttt{.avm} を実行する & しない \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+ここが本節でいちばん大事な点である。\textbf{\texttt{.avm} 経路は型検査をしない。}
+戻り値型の注釈 \texttt{: string}、義務レベル \texttt{@3}、効果 \texttt{!\{log\}} は
+\textbf{構文としては受理するが、そのまま捨てる}。
+静的な保証はすべて正典（OCaml 版）の側で得るものであり、
+実機は\textbf{検査を通したものを走らせる場所}である。
+つまり運用は二段構えになる ---
+まず \S\ref{sec:tc} の型検査を通し、それから \texttt{.avm} に落として実機へ送る。
+
+\subsection{\texttt{.avm} へのコンパイルと投入}
+
+\texttt{.avm} は整数アクターのバイトコード（先頭 4 バイトが \texttt{AVM1}）で、
+ホスト VM と Pi 3 とで\textbf{同じ形式}である。
+
+\begin{term}
+# 1. .aipl -> .avm
+./_build/default/compile_avm.exe prog.aipl prog.avm
+
+# 2. まずホスト VM で値を確かめる
+./_build/default/server.exe 8099 --no-open
+curl --data-binary @prog.avm "http://127.0.0.1:8099/actor/loadvm?ask=0"
+curl "http://127.0.0.1:8099/api/console"
+
+# 3. 実機へ送る（Pi 3 は 8080 番）
+curl --data-binary @prog.avm "http://192.168.3.50:8080/actor/loadvm?ask=0"
+loadvm: body=131 accepted=1 spawned actor id=1
+\end{term}
+
+\textbf{カーネルを焼き直す必要は無い。} \texttt{.avm} は動作中のカーネルに読み込まれ、
+その場でアクターとして起動する。SD カードを差し替えるのは、
+VM に\textbf{新しい命令}を足したときだけである。
+
+\begin{itemize}
+\item \textbf{\texttt{?ask=0} を落とすと応答が返らない。}
+  付け忘れると 25 秒待っても 0 バイトのまま切れる。
+  板の故障と間違えやすいので、まずここを疑うとよい。
+\item 板は\textbf{立て続けの HTTP に弱い}。要求と要求の間は 2--4 秒空ける。
+\end{itemize}
+
+\subsection{実機で値を読む}
+
+Pi 3 の \texttt{print} は\textbf{シリアルへ出る}ので、ネットワーク越しには読めない。
+実機で戻り値を読む方法は、いまのところ\textbf{外部公開だけ}である
+（\S\ref{sec:expose}）。
+
+\lstinputlisting{samples/guide/g5_web.aipl}
+
+\begin{term}
+curl "http://192.168.3.50:8080/api/routes"
+/echo -> a6
+
+curl "http://192.168.3.50:8080/api/x/echo?method=say&args=hi"
+echo: hi
+\end{term}
+
+\texttt{args} は URL エンコードを解いてから渡される（\texttt{\%20} と \texttt{+} が空白になる）。
+返信を待つ上限は 90 秒で、返信が来た時点で抜ける。
+
+\subsection{機内の小型モデル --- \texttt{ai\_call}}
+\label{sec:xinu-ai}
+
+Pi 3 のカーネルには\textbf{小型の言語モデルが焼き込んである}。
+\texttt{ai\_call} は外部のサービスを呼ぶのではなく、\textbf{機内で推論する}。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+モデル & \texttt{stories260K}（Llama 2 構成、\texttt{dim}=64・5 層・8 ヘッド・語彙 512） \\
+規模 & 約 26 万パラメータ、fp32 で 1.06\,MB \\
+置き場所 & カーネル像の \texttt{.rodata}（カーネルは 1.09\,MB $\to$ 2.16\,MB） \\
+演算 & ソフト浮動小数点、D-cache 無効の 32 ビット A53 \\
+実測 & \texttt{ai\_call} 1 回の往復が 2--6 秒（24 トークン生成） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{term}
+curl "http://192.168.3.50:8080/api/x/sage?method=ask&args=Once%20upon%20a%20time"
+MODEL[, there was a little girl named Lily. She loved to play outside in the p]END
+\end{term}
+
+効果表（\S\ref{sec:builtins}）で \texttt{ai\_call} は \eff{ai, net} とされているが、
+Pi 3 では\textbf{機外に出ない}。効果検査は保守的に見積もる側なので、
+実機で \eff{net} が実際には立たないことは検査の健全性を損なわない
+（禁止しすぎることはあっても、見逃すことはない）。
+
+\textbf{ホスト VM（Mac）はモデルを持っていない。}
+そちらで \texttt{ai\_call} を呼ぶと
+\texttt{(no local model on host)} を前置した文字列が返る。
+それらしい応答を作って返すことはしない ---
+モデルが無いことは、黙って隠すのではなく値に書いてある。
+
+\subsection{実機側の限界}
+
+\texttt{.avm} 経路が受け付けるのは、正典の言語の\textbf{部分集合}である。
+足りないものは\textbf{その場でエラーになる}（黙って落ちることはない）。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+機能 & \texttt{.avm} 経路 & 備考 \\
+\midrule
+クラス・フィールド・\texttt{send} / \texttt{send!} & ○ & \\
+メソッド局所の \texttt{var}・\texttt{reply} & ○ & 局所変数は隠しフィールドになる \\
+\texttt{if} / \texttt{while} & ○ & \textbf{\texttt{while (c) do} と括弧が要る} \\
+\texttt{now} / \texttt{future} / \texttt{await} / 期限 & ○ & \textbf{継続分割}で実現（下記） \\
+\texttt{select} / \texttt{case} / \texttt{timeout} & ○ & \texttt{case} 名は実在のメソッドに限る \\
+文字列（値・\texttt{++}・引数） & ○ & \\
+\texttt{web\_listen} / \texttt{web\_expose} & ○ & \\
+\texttt{ai\_call} & ○ & 機内モデル（\S\ref{sec:xinu-ai}） \\
+\midrule
+型・効果・レベルの注釈 & 受理して\textbf{捨てる} & 検査は正典側で \\
+\ty{float}・浮動小数リテラル & × & 値は整数と文字列のみ \\
+配列（\texttt{array\_*}） & × & \texttt{avm: unsupported expression} \\
+数学組込み（\texttt{sqrt} 等） & × & 同上 \\
+\texttt{spawn} & × & 同上 \\
+\texttt{remote(...)} 送信 & × & \texttt{parse: unexpected token} \\
+\texttt{replyto} & × & \texttt{avm: unknown variable} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{継続分割}について一言。VM には「値を返す同期呼び出し」の命令が無い。
+そこで \texttt{now} / \texttt{await} / \texttt{select} が現れる位置で
+\textbf{メソッドを二つに割り}、続きを別メソッドとして生成している。
+割った先へ値を渡すために、メソッド局所の \texttt{var} を
+\textbf{アクターの隠しフィールド}にしてある。
+\texttt{reply} の宛先も、分割後は \texttt{sender} が元の呼び出し元ではなくなるので、
+メソッドに入った時点で呼び出し元を \texttt{\_\_snd} に退避している。
+利用者から見た挙動は正典と同じだが、\textbf{生成されるメソッド数は元より多い}。
+
+\subsection{正典ガイド 10 本の実機確認}
+
+第 \ref{part:sample} 部の g1--g10 は、いずれも \texttt{.avm} に落ちて
+Pi 3 に読み込まれ、アクターとして起動する（10 本すべて \texttt{accepted=1}）。
+ただし \texttt{accepted=1} が言うのは「読み込んで走り出した」までで、
+\textbf{出力の正しさまでは見ていない}。
+値まで突き合わせられるのは外部公開した経路だけなので、
+実機で出力まで確かめてあるのは g5（\texttt{/echo}）と、
+\texttt{ai\_call} を公開した例（\texttt{/sage}）である。
+それ以外の出力照合はホスト VM 側で行う。
+
+
 \part{付録}
 \label{part:appendix}
 
@@ -1607,6 +1772,10 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \item \textbf{フィールドはメソッドより前}に書く。
 \item \textbf{待ちには期限を書く}。書かないと警告が出るし、
   \texttt{AIOS\_STRICT\_DEADLINE=1} では通らない。
+\item \textbf{実機へ送るときは \texttt{?ask=0} を付ける}。
+  \texttt{/actor/loadvm} に付け忘れると応答が返らず、板の故障に見える（\S\ref{sec:xinu}）。
+\item \textbf{実機の \texttt{print} はシリアルに出る}。ネットワーク越しに値を読むには
+  \texttt{web\_expose} して \texttt{/api/x/} を叩く。
 \item \textbf{効果は申告すると検査される}（gradual）。申告しなければ
   何も言われない。書けば実体との差を突いてくる。
 \end{itemize}
@@ -1614,6 +1783,9 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \section{現状の限界}
 
 \begin{itemize}
+\item \textbf{実機（Xinu / Pi 3）で動く範囲は正典の部分集合である。}
+  \ty{float}・配列・数学組込み・\texttt{spawn}・\texttt{remote}・\texttt{replyto} が無く、
+  型・効果・レベルの注釈は受理して捨てる（検査は正典側で行う）。詳細は \S\ref{sec:xinu}。
 \item \texttt{future} + \texttt{await} に分けて書くと効果伝播を逃れる
   （\S\ref{sec:effects} の「既知の穴」）。修正には
   \ty{future} の型に効果を載せる必要がある。
