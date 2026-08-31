@@ -1976,15 +1976,7 @@ the rest is compared on the host VM.
 
 The Pi 5 (\texttt{192.168.3.101}) \textbf{works differently}. Instead of
 interpreting bytecode, it lowers AIPL to C on the board and the in-kernel C
-compiler \texttt{cc} \textbf{JITs that to AArch64 machine code}. In that
-compiler \texttt{int} is 8 bytes, matching AIPL's tagged 64-bit value.
-
-\begin{term}
-# POST the AIPL source itself (a body starting with "class " goes through abcl2c)
-curl --data-binary @prog.abcl "http://192.168.3.101/cc"
-MODEL[, there was a little girl named Lily. She loved to play outside in the p]END
-=> 0
-\end{term}
+compiler \texttt{cc} \textbf{JITs that to AArch64 machine code}.
 
 \begin{center}
 \small
@@ -1993,6 +1985,7 @@ MODEL[, there was a little girl named Lily. She loved to play outside in the p]E
  & Pi 3 & Pi 5 \\
 \midrule
 Execution & in-kernel VM interprets \texttt{.avm} & AIPL$\to$C$\to$in-kernel \texttt{cc} JIT \\
+Front end & \texttt{compile\_avm} on the Mac & \texttt{abcl2c} \textbf{on the board} \\
 Loading & \texttt{POST /actor/loadvm?ask=0} (port 8080) & \texttt{POST /cc} (port 80) \\
 Reading values & \texttt{web\_expose} + \texttt{/api/x/} & straight out of the \texttt{/cc} reply \\
 Modules resident & \textbf{exactly one} (\S\ref{sec:pi3-onemodule}) & JITed per run \\
@@ -2003,19 +1996,98 @@ Kernel & 1.09\,MB $\to$ 2.16\,MB & 0.94\,MB $\to$ 2.02\,MB \\
 \end{tabular}
 \end{center}
 
-\textbf{Same model, same generated text.}
-\texttt{ai\_call("Once upon a time")} agreed to the byte (72 of them) across the
-Pi 3, the Pi 5 and the reference build on the Mac. Only the speed differs: the
-Pi 5 takes 0.42--0.64 seconds per call. The Pi 3 took 2--6 seconds when freshly
-booted, and 16.6 seconds once thirteen modules had been loaded and their actors
-had piled up (generation yields to the scheduler once per token, so more
-resident actors cost more --- though that causal link has \textbf{not been
-isolated}).
+\subsubsection*{Running something}
 
-The Pi 5's \texttt{abcl2c} accepts \textbf{only the builtins it knows}. Any call
-other than \texttt{print} / \texttt{puts} / \texttt{ai\_call} fails with
-\texttt{unknown function: <name>}; a misspelled \texttt{ai\_cal("hi")} stops on
-the board rather than quietly becoming something else.
+Because the front end lives \textbf{on the board}, AIPL source can be sent as
+is. A body beginning with \texttt{class} goes through \texttt{abcl2c};
+anything else is treated as C.
+
+\begin{term}
+curl --data-binary @prog.abcl "http://192.168.3.101/cc"
+MODEL[, there was a little girl named Lily. She loved to play outside in the p]END
+=> 0
+\end{term}
+
+The trailing \texttt{=> 0} is what \texttt{main} returned. From the shell,
+\texttt{cc <file>} and \texttt{make <file>} handle \texttt{.abcl} /
+\texttt{.aipl} transparently, and \texttt{llm <prompt>} drives the on-board
+model directly (its output goes to the serial line).
+
+\subsubsection*{What a program becomes}
+
+What you write stays AIPL, but the generated C is readable. Classes become
+\textbf{numbers}, objects are entries in a \texttt{g\_obj[]} array, methods are
+functions named \texttt{m\_<Class>\_<method>}, and a method call becomes a
+\texttt{dispatch} indexed by those numbers.
+
+\begin{term}
+struct Obj { int cls; int f[1]; };   /* f[] holds the fields */
+struct Obj g_obj[2048];
+int m_Sage_ask(int self, int a0, int a1, int a2, int a3) { ... }
+int dispatch(int self, int meth, int a0, int a1, int a2, int a3);
+int main() { int v_s = v_int(g_spawn(0)); dispatch(v_int_of(v_s), 0, ...); }
+\end{term}
+
+\textbf{In this \texttt{cc}, \texttt{int} is 8 bytes} (stated in
+\texttt{cc/ccpriv.h}). That matches AIPL's tagged 64-bit value, so a string
+(a pointer into the heap) held in an \texttt{int} variable is not truncated.
+
+Values are handled through runtime functions: \texttt{v\_int} \texttt{v\_str}
+\texttt{v\_floatlit} \texttt{v\_add} \texttt{v\_sub} \texttt{v\_mul}
+\texttt{v\_div} \texttt{v\_lt} \texttt{v\_le} \texttt{v\_eq} \texttt{v\_ne}
+\texttt{v\_and} \texttt{v\_or} \texttt{v\_not} \texttt{v\_truthy}
+\texttt{v\_int\_of} \texttt{v\_print} \texttt{v\_ai\_call} \texttt{v\_list\_*}.
+\texttt{v\_add} \textbf{concatenates} when either side is a string, so on the
+Pi 5 a single \texttt{+} covers both numeric addition and concatenation
+(there is no \texttt{++}).
+
+\subsubsection*{The on-board model}
+
+\texttt{ai\_call} lowers to \texttt{v\_ai\_call}, which renders the prompt to a
+string, calls \texttt{llm\_run}, and copies the result into the value heap as a
+string. The model is \textbf{the same one} as on the Pi 3
+(\S\ref{sec:xinu-ai}), and \texttt{ai\_call("Once upon a time")} agreed to the
+byte (72 of them) across the Pi 3, the Pi 5 and the reference build on the Mac.
+Only the speed differs: \textbf{the Pi 5 takes 0.42--0.64 seconds per call}.
+The Pi 3 took 2--6 seconds freshly booted, and 16.6 seconds once thirteen
+modules had been loaded and their actors had piled up (generation yields to the
+scheduler once per token, so more resident actors cost more --- though that
+causal link has \textbf{not been isolated}).
+
+\subsubsection*{What the on-board front end accepts}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Accepted & classes, fields, methods, \texttt{var}, assignment, \texttt{if}/\texttt{else}, \\
+     & \texttt{while} (with or without \texttt{do}), \texttt{return}, \\
+     & \texttt{new} (arguments allowed when the class has \texttt{init}), \\
+     & \texttt{now} (returns a value), \texttt{send}, integers, strings, floats, \\
+     & \texttt{+ - * /}, comparisons, \texttt{print} / \texttt{puts}, \texttt{ai\_call} \\
+\midrule
+Rejected & \textbf{type, level and effect annotations} (\texttt{: string} gives \texttt{method: expected '\{'}) \\
+     & \texttt{reply} / \texttt{replyto} / \texttt{future} / \texttt{await} \\
+     & \texttt{select} / \texttt{case} / \texttt{timeout} \\
+     & \texttt{++} (use \texttt{+}), arrays \texttt{array\_*}, \texttt{spawn}, \texttt{remote} \\
+     & any call other than \texttt{print} / \texttt{puts} / \texttt{ai\_call} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Refusals name the thing: \texttt{not supported on this device: future},
+\texttt{unknown function: sqrt},
+\texttt{new: class has no init to take arguments}.
+\textbf{Nothing quietly turns into something else.}
+
+\textbf{This is a good deal narrower than the canonical language.} None of
+g1--g10 from \S\ref{part:sample} passes this front end, because every one of
+them carries a return-type annotation. To run them on the Pi 5, drop the
+annotations, replace \texttt{reply} with \texttt{return} plus \texttt{now}, and
+turn \texttt{++} into \texttt{+}. The Pi 3's \texttt{.avm} path
+(\S\ref{sec:xinu}) \textbf{accepts and discards} annotations, so canonical
+sources pass there unchanged --- the two boards' front ends have different
+temperaments.
 
 \part{Appendix}
 \label{part:appendix}

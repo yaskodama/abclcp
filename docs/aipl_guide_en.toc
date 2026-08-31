@@ -78,12 +78,12 @@
 \contentsline {part}{VII\hspace {1em}Appendix}{31}{part.7}%
 \contentsline {section}{\numberline {40}Grammar summary}{31}{section.40}%
 \contentsline {section}{\numberline {41}Environment variables of the implementation}{32}{section.41}%
-\contentsline {section}{\numberline {42}Common pitfalls}{32}{section.42}%
-\contentsline {section}{\numberline {43}Present limits}{33}{section.43}%
-\contentsline {section}{\numberline {44}Changes from the previous edition}{33}{section.44}%
+\contentsline {section}{\numberline {42}Common pitfalls}{33}{section.42}%
+\contentsline {section}{\numberline {43}Present limits}{34}{section.43}%
+\contentsline {section}{\numberline {44}Changes from the previous edition}{34}{section.44}%
 \contentsline {subsection}{\numberline {44.1}Removed from the language}{34}{subsection.44.1}%
 \contentsline {subsection}{\numberline {44.2}Added}{34}{subsection.44.2}%
-\contentsline {subsection}{\numberline {44.3}Made stricter}{34}{subsection.44.3}%
-\contentsline {subsection}{\numberline {44.4}The file extension}{34}{subsection.44.4}%
-\contentsline {subsection}{\numberline {44.5}Core and extensions --- the language has two layers}{34}{subsection.44.5}%
+\contentsline {subsection}{\numberline {44.3}Made stricter}{35}{subsection.44.3}%
+\contentsline {subsection}{\numberline {44.4}The file extension}{35}{subsection.44.4}%
+\contentsline {subsection}{\numberline {44.5}Core and extensions --- the language has two layers}{35}{subsection.44.5}%
 \contentsline {section}{\numberline {45}Related documents}{35}{section.45}%

@@ -1666,14 +1666,6 @@ Pi 3 に読み込まれ、アクターとして起動する（10 本すべて \t
 Pi 5（\texttt{192.168.3.101}）は\textbf{実行方式が違う}。
 バイトコードを解釈するのではなく、AIPL を機内で C に直し、
 機内の C コンパイラ \texttt{cc} が\textbf{その場で AArch64 の機械語に JIT} する。
-\texttt{cc} の \texttt{int} は 8 バイトで、AIPL のタグ付き 64 ビット値と一致する。
-
-\begin{term}
-# AIPL のソースをそのまま POST する（先頭が "class " なら機内 abcl2c を通る）
-curl --data-binary @prog.abcl "http://192.168.3.101/cc"
-MODEL[, there was a little girl named Lily. She loved to play outside in the p]END
-=> 0
-\end{term}
 
 \begin{center}
 \small
@@ -1682,28 +1674,106 @@ MODEL[, there was a little girl named Lily. She loved to play outside in the p]E
  & Pi 3 & Pi 5 \\
 \midrule
 実行方式 & \texttt{.avm} をカーネル内 VM が解釈 & AIPL$\to$C$\to$機内 \texttt{cc} が JIT \\
+前段 & Mac 側の \texttt{compile\_avm} & \textbf{機内}の \texttt{abcl2c} \\
 投入 & \texttt{POST /actor/loadvm?ask=0}（8080 番） & \texttt{POST /cc}（80 番） \\
 値の読み方 & \texttt{web\_expose} + \texttt{/api/x/} & \texttt{/cc} の応答にそのまま出る \\
 同時に持てるモジュール & \textbf{1 本だけ}（\S\ref{sec:pi3-onemodule}） & 実行のたびに JIT \\
 値の種類 & 整数と文字列 & 整数・文字列・浮動小数・リスト \\
-\texttt{ai\_call} & \eff{} 命令 \texttt{0x52} & ランタイム \texttt{v\_ai\_call} \\
+\texttt{ai\_call} & 命令 \texttt{0x52} & ランタイム \texttt{v\_ai\_call} \\
 カーネル & 1.09\,MB $\to$ 2.16\,MB & 0.94\,MB $\to$ 2.02\,MB \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\textbf{同じモデル・同じ生成文である。}
-\texttt{ai\_call("Once upon a time")} は Pi 3・Pi 5・Mac の参照実装のいずれでも
-72 バイト一致した。違うのは速さだけで、Pi 5 は 1 回 0.42--0.64 秒である。
-Pi 3 は起動直後で 2--6 秒、モジュールを 13 本投入してアクターが積み上がった
-状態では 16.6 秒だった
-（生成はトークンごとにスケジューラへ譲るので、常駐アクターが増えるほど遅くなる。
-ただしこの因果関係は\textbf{まだ切り分けていない}）。
+\subsubsection*{動かし方}
 
-Pi 5 側の \texttt{abcl2c} は、\textbf{受け付ける組込みだけを受け付ける}。
-\texttt{print} / \texttt{puts} / \texttt{ai\_call} 以外の関数呼び出しは
-\texttt{unknown function: <名前>} で失敗する。
-綴りを間違えた \texttt{ai\_cal("hi")} も実機でその場で止まる。
+前段が\textbf{機内にある}ので、AIPL のソースをそのまま送れる。
+本文の先頭が \texttt{class} なら \texttt{abcl2c} を通り、
+そうでなければ C として扱われる。
+
+\begin{term}
+curl --data-binary @prog.abcl "http://192.168.3.101/cc"
+MODEL[, there was a little girl named Lily. She loved to play outside in the p]END
+=> 0
+\end{term}
+
+末尾の \texttt{=> 0} は \texttt{main} の戻り値である。
+シェルからは \texttt{cc <file>} / \texttt{make <file>} が
+\texttt{.abcl} / \texttt{.aipl} を透過的に扱う。
+機内モデルは \texttt{llm <prompt>} でも直接叩ける（出力はシリアルへ）。
+
+\subsubsection*{プログラムが何になるか}
+
+利用者から見える形は AIPL のままだが、生成される C は読める。
+クラスは\textbf{番号}になり、オブジェクトは配列 \texttt{g\_obj[]} の要素、
+メソッドは \texttt{m\_<クラス>\_<メソッド>} という関数、
+メソッド呼び出しは番号で引く \texttt{dispatch} になる。
+
+\begin{term}
+struct Obj { int cls; int f[1]; };   /* f[] がフィールド */
+struct Obj g_obj[2048];
+int m_Sage_ask(int self, int a0, int a1, int a2, int a3) { ... }
+int dispatch(int self, int meth, int a0, int a1, int a2, int a3);
+int main() { int v_s = v_int(g_spawn(0)); dispatch(v_int_of(v_s), 0, ...); }
+\end{term}
+
+\textbf{この \texttt{cc} では \texttt{int} が 8 バイトである}
+（\texttt{cc/ccpriv.h} に明記）。AIPL のタグ付き 64 ビット値と幅が一致するので、
+文字列（ヒープへのポインタ）を \texttt{int} の変数に入れても切り詰められない。
+
+値はランタイム関数を通して扱う ---
+\texttt{v\_int} \texttt{v\_str} \texttt{v\_floatlit} \texttt{v\_add} \texttt{v\_sub}
+\texttt{v\_mul} \texttt{v\_div} \texttt{v\_lt} \texttt{v\_le} \texttt{v\_eq} \texttt{v\_ne}
+\texttt{v\_and} \texttt{v\_or} \texttt{v\_not} \texttt{v\_truthy} \texttt{v\_int\_of}
+\texttt{v\_print} \texttt{v\_ai\_call} \texttt{v\_list\_*}。
+\texttt{v\_add} は片方が文字列なら\textbf{連結}になるので、
+Pi 5 では \texttt{+} が数値加算と文字列連結を兼ねる（\texttt{++} は無い）。
+
+\subsubsection*{機内の小型モデル}
+
+\texttt{ai\_call} は \texttt{v\_ai\_call} に落ち、プロンプトを文字列に直して
+\texttt{llm\_run} を呼び、結果を値ヒープに複写して文字列値で返す。
+モデルは Pi 3 と\textbf{同じもの}（\S\ref{sec:xinu-ai}）で、
+\texttt{ai\_call("Once upon a time")} は Pi 3・Pi 5・Mac の参照実装のいずれでも
+72 バイト一致した。違うのは速さだけで、\textbf{Pi 5 は 1 回 0.42--0.64 秒}である。
+Pi 3 は起動直後で 2--6 秒、モジュールを 13 本投入してアクターが積み上がった
+状態では 16.6 秒だった（生成はトークンごとにスケジューラへ譲るので、
+常駐アクターが増えるほど遅くなる。ただしこの因果関係は\textbf{まだ切り分けていない}）。
+
+\subsubsection*{機内前段（\texttt{abcl2c}）が受け付ける範囲}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+通る & クラス、フィールド、メソッド、\texttt{var}、代入、\texttt{if}/\texttt{else}、 \\
+     & \texttt{while}（\texttt{do} は付けても付けなくてもよい）、\texttt{return}、 \\
+     & \texttt{new}（\texttt{init} があれば引数を渡せる）、\texttt{now}（値を返す）、 \\
+     & \texttt{send}、整数・文字列・浮動小数、\texttt{+ - * /}、比較、 \\
+     & \texttt{print} / \texttt{puts}、\texttt{ai\_call} \\
+\midrule
+通らない & \textbf{型・レベル・効果の注釈}（\texttt{: string} で \texttt{method: expected '\{'}） \\
+     & \texttt{reply} / \texttt{replyto} / \texttt{future} / \texttt{await} \\
+     & \texttt{select} / \texttt{case} / \texttt{timeout} \\
+     & \texttt{++}（\texttt{+} を使う）、配列 \texttt{array\_*}、\texttt{spawn}、\texttt{remote} \\
+     & \texttt{print} / \texttt{puts} / \texttt{ai\_call} 以外の関数呼び出し \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+断り方は名前つきで出る ---
+\texttt{not supported on this device: future}、
+\texttt{unknown function: sqrt}、
+\texttt{new: class has no init to take arguments}。
+\textbf{黙って別の意味にはならない}。
+
+\textbf{この範囲は正典よりだいぶ狭い。}
+\S\ref{part:sample} の g1--g10 は\textbf{どれもこの前段を通らない}
+（すべて戻り値注釈を持つため）。
+Pi 5 で動かすときは、注釈を落とし、\texttt{reply} の代わりに \texttt{return} と
+\texttt{now} を使い、\texttt{++} を \texttt{+} に直す必要がある。
+Pi 3 側の \texttt{.avm} 経路（\S\ref{sec:xinu}）は注釈を\textbf{受理して捨てる}ので、
+そちらは正典のソースがそのまま通る --- 同じ「実機」でも前段の性格が違う。
 
 \part{付録}
 \label{part:appendix}
