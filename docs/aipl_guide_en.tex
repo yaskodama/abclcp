@@ -1839,10 +1839,30 @@ swapped when a \textbf{new VM instruction} has been added.
 \end{itemize}
 
 \subsection{Reading values back from the board}
+\label{sec:pi3-console}
 
-\texttt{print} on the Pi 3 goes to \textbf{the serial line}, so it cannot be
-read over the network. At present the only way to read a value back from the
-hardware is \textbf{external exposure} (\S\ref{sec:expose}).
+\texttt{print} on the Pi 3 goes to the serial line and the screen.
+\textbf{Since 2026-09-04 the recent output can also be read with
+\texttt{GET /api/console}}, in the same shape the host VM uses,
+\texttt{\{"total":N,"lines":[...]\}}; add \texttt{?clear=1} to empty it after reading.
+
+\begin{term}
+curl --data-binary @g1_hello.avm "http://192.168.3.50:8080/actor/loadvm?ask=0"
+loadvm: body=168 accepted=1 spawned actor id=1
+
+curl "http://192.168.3.50:8080/api/console"
+{"total":3,"lines":["a2: hello, AIPL","a2: tick 1","a2: tick 2"]}
+\end{term}
+
+\textbf{Until this went in, g5 was the only sample whose output had been checked
+on the Pi 3 itself.} The Pi 5 returns the output in the \texttt{POST /cc} reply,
+so the two boards could not be compared by running the same program on both.
+On the first day it was readable, two defects surfaced that had been invisible
+until then (a double \texttt{init} call, and actors from the previous program
+staying alive --- \S\ref{sec:pi3-onemodule}).
+\textbf{What you cannot observe, you cannot call correct.}
+
+To read a return value only, external exposure still works (\S\ref{sec:expose}).
 
 \lstinputlisting{samples/guide/g5_web.aipl}
 
@@ -1944,32 +1964,80 @@ The Pi 3 VM has \textbf{a single module slot}
 \textbf{overwrites it}, so \textbf{only the most recently loaded module is
 live}.
 
-This bites silently. Routes registered earlier \textbf{stay in the table};
-only the actors behind them stop working --- calling one gets no reply, and
-\texttt{vm\_web\_call} sits out its full 90 seconds and returns empty. After
+This bit silently for a long time. Routes registered earlier stayed in the
+table; only the actors behind them stopped working --- calling one got no reply,
+and \texttt{vm\_web\_call} sat out its full 90 seconds and returned empty. After
 loading thirteen modules back to back, the \texttt{/sage} and \texttt{/echo}
 exposed first had both gone quiet, while an actor loaded at that moment
 answered instantly.
 
+\textbf{On 2026-09-04 this was brought in line with the Pi 5.} A \texttt{POST /cc}
+replaces the Pi 5's whole actor world; \texttt{/actor/loadvm} now likewise
+\textbf{folds away the previous module's actors} and empties the route table
+first (resident C actors are left alone). Without that, the old actors stayed
+alive as Xinu threads and \textbf{ate the process table} --- running the ten
+guide samples in order, the ninth (g9) stopped starting its actors and HTTP
+wedged shortly after (measured). It also removes the stale method-name pointers
+that the mailboxes still held into the replaced \texttt{vm\_mod}.
+
 \begin{itemize}
+\item \textbf{Do not use \texttt{kill()} to fold them.} An actor thread calls
+  \texttt{alloc\_obj} inside the \texttt{spawn} opcode and holds
+  \texttt{objects\_mu} there; killing it mid-way stops every later spawn, taking
+  \texttt{webactor} and HTTP down with it (also measured). \textbf{Mark them and
+  wake them} instead, and let each leave its own loop.
+\item Exposed routes \textbf{live and die with the program}: after a load,
+  \texttt{/api/routes} lists only the new one.
 \item \textbf{Try one module at a time} on the hardware; check it before
   loading the next.
-\item A stale entry in \texttt{/api/routes} is not evidence that it is alive,
-  and the same path can appear twice --- the lookup \textbf{stops at the first
-  match}, so the earlier registration wins.
 \end{itemize}
 
 \subsection{The ten canonical guide samples on hardware}
 
 Every one of g1--g10 from Part \ref{part:sample} lowers to \texttt{.avm}, loads
-onto the Pi 3, and starts as an actor (all ten report \texttt{accepted=1}).
-That claim holds \textbf{for one module loaded at a time}; it does \textbf{not}
-mean the ten run side by side (\S\ref{sec:pi3-onemodule}).
-And \texttt{accepted=1} says ``loaded and started'', \textbf{not} that the
-output is correct. Values can only be compared for externally exposed paths, so
-the samples whose output has been checked on the hardware itself are g5
-(\texttt{/echo}) and the \texttt{ai\_call} example (\texttt{/sage}). Output for
-the rest is compared on the host VM.
+onto the Pi 3, and starts as an actor.
+\textbf{On 2026-09-04 all ten were checked on the hardware down to their output}
+(\S\ref{sec:pi3-console}). Before that only \texttt{accepted=1} --- ``loaded and
+started'' --- had been observed, plus the output of the exposed samples g5 and
+\texttt{/sage}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & Canonical & Pi 3 hardware \\
+\midrule
+g1  & \texttt{hello, AIPL / tick 1 / tick 2} & matches \\
+g2  & \texttt{twice = 43 / awaited = 20 / v=7} & matches \\
+g3  & \texttt{ok, left=7 / sold out} & matches \\
+g4  & \texttt{waiting / got 1 / via select:1} & matches \\
+g5  & \texttt{/api/x/echo} $\to$ \texttt{echo: hi} & matches \\
+g6  & \texttt{1 / 1 / n = 1} & matches \\
+g7  & \texttt{fast = 42 / slow(timed out) = 0 / await = 10} & matches \\
+g8  & \texttt{... / b = true / not-eq: true} & \textbf{\texttt{b = 1}} (below) \\
+g9  & \texttt{got actor / after send / pong} & \textbf{order differs} (below) \\
+g10 & \texttt{fork = 1 / latch = 2} & matches \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Neither mismatch is a gap in the front end; both come from the shape of the
+execution vehicle.
+
+\begin{itemize}
+\item \textbf{g8's \texttt{b = 1}} --- this VM holds booleans as integers, and the
+  value carries nothing that would print them back as \texttt{true} / \texttt{false}.
+  \textbf{The Pi 5 prints \texttt{b = 1} too}, so this is not a difference between
+  the boards.
+\item \textbf{g9's ordering} --- Pi 3 actors are \textbf{real processes}, so the
+  target of \texttt{send x.ping()} can run before \texttt{print("after send")}
+  (the board printed \texttt{got actor / pong / after send}).
+  The Pi 5 is a cooperative pump, so it always produces the canonical order.
+  \textbf{Both are correct AIPL}: \texttt{send} promises no ordering.
+\end{itemize}
+
+That comparison holds \textbf{for one module loaded at a time}; it does
+\textbf{not} mean the ten run side by side (\S\ref{sec:pi3-onemodule}).
 
 \subsection{The Pi 5 --- the other board}
 \label{sec:xinu-pi5}
@@ -1985,109 +2053,367 @@ compiler \texttt{cc} \textbf{JITs that to AArch64 machine code}.
  & Pi 3 & Pi 5 \\
 \midrule
 Execution & in-kernel VM interprets \texttt{.avm} & AIPL$\to$C$\to$in-kernel \texttt{cc} JIT \\
-Front end & \texttt{compile\_avm} on the Mac & \texttt{abcl2c} \textbf{on the board} \\
-Loading & \texttt{POST /actor/loadvm?ask=0} (port 8080) & \texttt{POST /cc} (port 80) \\
-Reading values & \texttt{web\_expose} + \texttt{/api/x/} & straight out of the \texttt{/cc} reply \\
-Modules resident & \textbf{exactly one} (\S\ref{sec:pi3-onemodule}) & JITed per run \\
-Value kinds & integers and strings & integers, strings, floats, lists \\
-\texttt{ai\_call} & instruction \texttt{0x52} & runtime \texttt{v\_ai\_call} \\
-Kernel & 1.09\,MB $\to$ 2.16\,MB & 0.94\,MB $\to$ 2.02\,MB \\
+Front end & \texttt{compile\_avm} on the Mac & \textbf{on the board}: \texttt{abcl2c} \\
+Submission & \texttt{POST /actor/loadvm?ask=0} (8080) & \texttt{POST /cc} (80) \\
+Reading output & \texttt{/api/console} (\S\ref{sec:pi3-console}) & in the reply \\
+Reading return values & \texttt{web\_expose} + \texttt{/api/x/} & same, or in the reply \\
+Modules resident & one (\textbf{a new one replaces it}) & one (a new one replaces it) \\
+Actor vehicle & \textbf{real Xinu processes} (truly concurrent) & cooperative pump (one thread) \\
+\texttt{select} & continuation split + interception & \textbf{same} \\
+\texttt{future} / \texttt{await} & continuation split (not concurrent) & runs at once (not concurrent) \\
+\texttt{wait(ms)} & a VM opcode; works on every path & \textbf{shell path only} \\
+Ten guide samples & \textbf{8 match exactly} & \textbf{8 match exactly} (9 on the shell path) \\
+Value kinds & integers and strings & int, string, float, list \\
+\texttt{ai\_call} & opcode \texttt{0x52} & runtime \texttt{v\_ai\_call} \\
+\texttt{ai\_call} measured & 2--6 s & \textbf{0.42 s} \\
+Kernel & 1.09\,MB $\to$ 2.16\,MB & 0.94\,MB $\to$ 2.03\,MB \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\subsubsection*{Running something}
+\subsubsection*{Running a program}
 
-Because the front end lives \textbf{on the board}, AIPL source can be sent as
-is. A body beginning with \texttt{class} goes through \texttt{abcl2c};
-anything else is treated as C.
+Because the front end \textbf{lives on the board}, you can post AIPL source
+directly. If the first word is \texttt{class} it goes through \texttt{abcl2c};
+otherwise it is treated as C. \textbf{Whitespace and comments are skipped
+before that test}, so canonical sources that open with \texttt{//} pass through
+unchanged.
 
 \begin{term}
-curl --data-binary @prog.abcl "http://192.168.3.101/cc"
-MODEL[, there was a little girl named Lily. She loved to play outside in the p]END
+curl --data-binary @g1_hello.aipl "http://192.168.3.101/cc"
+hello, AIPL
+tick 1
+tick 2
 => 0
 \end{term}
 
-The trailing \texttt{=> 0} is what \texttt{main} returned. From the shell,
-\texttt{cc <file>} and \texttt{make <file>} handle \texttt{.abcl} /
-\texttt{.aipl} transparently, and \texttt{llm <prompt>} drives the on-board
-model directly (its output goes to the serial line).
+The trailing \texttt{=> 0} is \texttt{main}'s return value. From the shell,
+\texttt{cc <file>} / \texttt{make <file>} handle \texttt{.abcl} / \texttt{.aipl}
+transparently. The in-kernel model can also be poked directly with
+\texttt{llm <prompt>} (output goes to the serial line).
 
-\subsubsection*{What a program becomes}
+\subsubsection*{What the program becomes}
 
 What you write stays AIPL, but the generated C is readable. Classes become
-\textbf{numbers}, objects are entries in a \texttt{g\_obj[]} array, methods are
+\textbf{numbers}, objects are elements of \texttt{g\_obj[]}, methods become
 functions named \texttt{m\_<Class>\_<method>}, and a method call becomes a
-\texttt{dispatch} indexed by those numbers.
+numeric \texttt{dispatch}.
 
 \begin{term}
 struct Obj { int cls; int f[1]; };   /* f[] holds the fields */
 struct Obj g_obj[2048];
-int m_Sage_ask(int self, int a0, int a1, int a2, int a3) { ... }
+int v_stock;                          /* top-level vars become globals */
+int m_Stock_take(int self, int a0, int a1, int a2, int a3) { ... }
+int __new_init(int id, int meth, int a0, int a1, int a2, int a3);
+int __dl_call(int to, int meth, int a0, int a1, int a2, int a3, int ms, int elsev);
 int dispatch(int self, int meth, int a0, int a1, int a2, int a3);
-int main() { int v_s = v_int(g_spawn(0)); dispatch(v_int_of(v_s), 0, ...); }
+int main() { v_stock = v_int(g_spawn(0)); ... }
 \end{term}
 
 \textbf{In this \texttt{cc}, \texttt{int} is 8 bytes} (stated in
-\texttt{cc/ccpriv.h}). That matches AIPL's tagged 64-bit value, so a string
-(a pointer into the heap) held in an \texttt{int} variable is not truncated.
+\texttt{cc/ccpriv.h}). That matches the width of AIPL's tagged 64-bit values,
+so a string (a pointer into the heap) survives being held in an \texttt{int}.
+Note that \textbf{a function takes at most 8 parameters}; a ninth gives
+\texttt{cc: too many parameters (max 8)}.
 
-Values are handled through runtime functions: \texttt{v\_int} \texttt{v\_str}
+Values go through runtime helpers --- \texttt{v\_int} \texttt{v\_str}
 \texttt{v\_floatlit} \texttt{v\_add} \texttt{v\_sub} \texttt{v\_mul}
 \texttt{v\_div} \texttt{v\_lt} \texttt{v\_le} \texttt{v\_eq} \texttt{v\_ne}
 \texttt{v\_and} \texttt{v\_or} \texttt{v\_not} \texttt{v\_truthy}
 \texttt{v\_int\_of} \texttt{v\_print} \texttt{v\_ai\_call} \texttt{v\_list\_*}.
-\texttt{v\_add} \textbf{concatenates} when either side is a string, so on the
-Pi 5 a single \texttt{+} covers both numeric addition and concatenation
-(there is no \texttt{++}).
+\texttt{v\_add} concatenates when either side is a string, so \texttt{++} is
+mapped onto it.
 
-\subsubsection*{The on-board model}
+\subsubsection*{The in-kernel model}
 
 \texttt{ai\_call} lowers to \texttt{v\_ai\_call}, which renders the prompt to a
-string, calls \texttt{llm\_run}, and copies the result into the value heap as a
-string. The model is \textbf{the same one} as on the Pi 3
-(\S\ref{sec:xinu-ai}), and \texttt{ai\_call("Once upon a time")} agreed to the
-byte (72 of them) across the Pi 3, the Pi 5 and the reference build on the Mac.
-Only the speed differs: \textbf{the Pi 5 takes 0.42--0.64 seconds per call}.
-The Pi 3 took 2--6 seconds freshly booted, and 16.6 seconds once thirteen
-modules had been loaded and their actors had piled up (generation yields to the
-scheduler once per token, so more resident actors cost more --- though that
-causal link has \textbf{not been isolated}).
+string, calls \texttt{llm\_run}, copies the result into the value heap and
+returns it as a string. The model is \textbf{the same one as the Pi 3}
+(\S\ref{sec:xinu-ai}): \texttt{ai\_call("Once upon a time")} agrees to the byte
+(72 of them) across the Pi 3, the Pi 5 and the reference build on the Mac.
+Only the speed differs: \textbf{the Pi 5 takes 0.42 seconds per call}. The
+Pi 3 takes 2--6 seconds when freshly booted, and took 16.6 seconds once
+thirteen modules had been loaded and actors had piled up (generation yields to
+the scheduler per token, so more resident actors means slower --- though
+\textbf{that causal link has not been isolated}).
 
-\subsubsection*{What the on-board front end accepts}
+\subsubsection*{What the on-board front end (\texttt{abcl2c}) accepts}
 
 \begin{center}
 \small
-\begin{tabular}{@{}ll@{}}
+\begin{tabular}{@{}p{20mm}p{102mm}@{}}
 \toprule
-Accepted & classes, fields, methods, \texttt{var}, assignment, \texttt{if}/\texttt{else}, \\
-     & \texttt{while} (with or without \texttt{do}), \texttt{return}, \\
-     & \texttt{new} (arguments allowed when the class has \texttt{init}), \\
-     & \texttt{now} (returns a value), \texttt{send}, integers, strings, floats, \\
-     & \texttt{+ - * /}, comparisons, \texttt{print} / \texttt{puts}, \texttt{ai\_call} \\
+Accepted & classes, fields, methods, \texttt{var}, assignment,
+       \texttt{if}/\texttt{else}, \texttt{while} (\texttt{do} optional),
+       \texttt{return} \\
+     & \texttt{new} (arguments are passed to \texttt{init} when there is one),
+       \texttt{send}, \texttt{now} (returns a value) \\
+     & \textbf{\texttt{reply(e)}} --- the same as \texttt{return e} here, since
+       \texttt{now o.m()} takes \texttt{dispatch}'s return value. It must be
+       \textbf{the last statement of its block}; otherwise it is refused,
+       because a \texttt{return} would change the meaning \\
+     & \textbf{annotations} \texttt{: T} / legacy \texttt{-> T} /
+       \texttt{!\{log, mut\}} / \texttt{@ 2} / \texttt{x: D} /
+       \texttt{var n: int} --- \textbf{accepted and discarded} (checking is the
+       canonical side's job) \\
+     & \textbf{\texttt{++}}, \textbf{\texttt{true} / \texttt{false}}
+       (\ty{bool} is an \ty{int} here, so 1 / 0), unary minus \\
+     & \textbf{postfix deadlines}:
+       \texttt{now t.m(a) timeout <ms> else <expr>} (see below) \\
+     & \textbf{\texttt{web\_listen} / \texttt{web\_expose}} (see below) \\
+     & \textbf{\texttt{wait(ms)}} --- \textbf{only on the shell
+       \texttt{cc}/\texttt{make} path} (see below) \\
+     & \texttt{print} / \texttt{puts}, \texttt{ai\_call} \\
+     & \textbf{\texttt{future} / \texttt{await}} --- but \textbf{not
+       concurrent}; they run on the spot (\S\ref{sec:pi5-future}) \\
+     & \textbf{\texttt{select} / \texttt{case} / \texttt{timeout}} --- but they
+       \textbf{wait, on the Pi 3's continuation scheme} (\S\ref{sec:pi5-select}) \\
 \midrule
-Rejected & \textbf{type, level and effect annotations} (\texttt{: string} gives \texttt{method: expected '\{'}) \\
-     & \texttt{reply} / \texttt{replyto} / \texttt{future} / \texttt{await} \\
-     & \texttt{select} / \texttt{case} / \texttt{timeout} \\
-     & \texttt{++} (use \texttt{+}), arrays \texttt{array\_*}, \texttt{spawn}, \texttt{remote} \\
-     & any call other than \texttt{print} / \texttt{puts} / \texttt{ai\_call} \\
+Refused & \texttt{replyto}, \texttt{spawn}, \texttt{remote}, arrays
+       (\texttt{array\_*}), the maths builtins (\texttt{sqrt} and friends) \\
+     & field initialisers must be \textbf{integer or boolean literals}
+       (they used to become a silent 0 when they were anything else) \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Refusals name the thing: \texttt{not supported on this device: future},
-\texttt{unknown function: sqrt},
-\texttt{new: class has no init to take arguments}.
-\textbf{Nothing quietly turns into something else.}
+Refusals name what was refused:
 
-\textbf{This is a good deal narrower than the canonical language.} None of
-g1--g10 from \S\ref{part:sample} passes this front end, because every one of
-them carries a return-type annotation. To run them on the Pi 5, drop the
-annotations, replace \texttt{reply} with \texttt{return} plus \texttt{now}, and
-turn \texttt{++} into \texttt{+}. The Pi 3's \texttt{.avm} path
-(\S\ref{sec:xinu}) \textbf{accepts and discards} annotations, so canonical
-sources pass there unchanged --- the two boards' front ends have different
-temperaments.
+\begin{term}
+not supported on this device: select
+unknown function: sqrt
+new: unknown class: Zzz
+reply must be the last statement of its block on this device
+\end{term}
+
+\noindent\textbf{Nothing quietly turns into something else.}
+
+\subsubsection*{The ten canonical samples on the board}
+
+\textbf{All ten of g1--g10 now run unchanged} when posted to \texttt{POST /cc}.
+Previously none of them did --- every one died on its return-type annotation.
+But \textbf{``runs'' and ``matches the canonical semantics'' are not the same
+thing}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Sample & Output (\texttt{POST /cc}) & Canonical? \\
+\midrule
+g1 & \texttt{hello, AIPL} / \texttt{tick 1} / \texttt{tick 2} & yes \\
+g2 & \texttt{twice = 43} / \texttt{awaited = 20} / \texttt{v=7} & yes \\
+g3 & \texttt{ok, left=7} / \texttt{sold out} & yes \\
+g5 & exposed, then \texttt{echo: hi} from \texttt{/api/x/echo} & yes \\
+g6 & \texttt{1} / \texttt{1} / \texttt{n = 1} & yes \\
+g8 & \texttt{literal true ok} / \texttt{literal false ok} / \texttt{b = 1} & yes \\
+g9 & \texttt{got actor} / \texttt{after send} / \texttt{pong} & yes \\
+g10 & \texttt{fork  = 1} / \texttt{latch = 2} & yes \\
+\midrule
+g7 & \texttt{slow(timed out) = 42} & \textbf{no} (canonical: 0) \\
+g4 & \texttt{waiting} / \texttt{timed out} & \textbf{no} (canonical: \texttt{via select:1}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{g7 does match on the other path.} Under \texttt{/cc}, \texttt{wait(300)}
+is unavailable (\S\ref{sec:pi5-budget}), so the call takes nowhere near 300\,ms
+and never exceeds the 50\,ms deadline. On the shell path \texttt{wait} is a real
+sleep, and the measured result is \texttt{slow(timed out) = 0}.
+
+\begin{term}
+curl "http://192.168.3.101/run?cmd=cc%20/home/g7.abcl"
+  fast = 42
+  slow(timed out) = 0        <- matches the canonical answer
+  await = 10
+\end{term}
+
+\textbf{g4 started matching on 2026-09-03--04} (\S\ref{sec:pi5-select}), once
+\texttt{select} was rebuilt on the Pi 3's continuation scheme.
+\textbf{The two boards now cover the same ground.}
+
+g8 prints \texttt{b = 1} where the canonical answer is \texttt{b = true}: this
+board holds \ty{bool} as an \ty{int}. \textbf{The Pi 3 prints \texttt{b = 1} too},
+so it is not a difference between the boards.
+
+\subsubsection*{Deadlines are checked afterwards}
+\label{sec:pi5-deadline}
+
+\texttt{now t.m(a) timeout <ms> else <expr>} is accepted, but it
+\textbf{does not interrupt the call}. Execution here is a cooperative pump and
+\texttt{dispatch} runs to completion, so the deadline can only be used as an
+\textbf{after-the-fact test of whether the call overran}.
+
+\begin{term}
+now s.quick(7) timeout 1000 else -99   ->   7     (within the deadline)
+now s.heavy(7) timeout    1 else -99   -> -99     (overran -> the else branch)
+\end{term}
+
+\textbf{The value agrees with the canonical semantics}, but the call itself
+still runs to the end. A program that relies on a deadline to \emph{stay
+responsive} does not get that here.
+
+\subsubsection*{Exposing actors --- \texttt{/api/x/}}
+
+\texttt{web\_expose("/echo", "echo")} makes an actor reachable at\\
+\texttt{GET /api/x/<path>?method=<name>\&args=<text>}.
+
+\begin{term}
+curl --data-binary @g5_web.aipl "http://192.168.3.101/cc"
+curl "http://192.168.3.101/api/x/"
+  exposed routes (web_expose):
+    /api/x/echo  -> actor #0
+curl "http://192.168.3.101/api/x/echo?method=say&args=hi"
+  => echo: hi
+\end{term}
+
+\begin{itemize}
+\item \textbf{The port argument is ignored.} The board's HTTP server already
+  listens on 80, which satisfies what \texttt{web\_listen} is for (opening the
+  boundary). The board records the number and serves the exposed routes on 80.
+\item \textbf{Exposure lives and dies with the program.} Loading the next
+  program clears the routes. The Pi 3 failure mode --- \textbf{stale routes
+  that survive while their target dies} (\S\ref{sec:pi3-onemodule}) --- does
+  not happen here.
+\item The second argument is the name of a top-level \texttt{var}. The board
+  identifies actors by number, so the name is resolved at translation time.
+  An unknown name is refused by name.
+\end{itemize}
+
+\subsubsection*{The runaway budget, and \texttt{wait}}
+\label{sec:pi5-budget}
+
+JITed code is \textbf{cut off on a wall clock} in case it runs away, and
+\textbf{the budget depends on the path}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Path & Budget & \texttt{wait(ms)} \\
+\midrule
+\texttt{POST /cc}, \texttt{/actor/load} & \textbf{250 ms} & refused \\
+shell \texttt{cc} / \texttt{make} & \textbf{10 s} & \textbf{works} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The first runs \textbf{inside the interrupt-masked receive path}, so sleeping
+there freezes the board. \texttt{wait} is therefore refused, and anything over
+250 ms ends with
+\texttt{cc: aborted (ran past the runaway-loop deadline)}. The second runs in
+\textbf{its own process on its own stack}, so a runaway can only blow that
+stack; there, and only there, \texttt{wait} is a real sleep.
+
+\begin{term}
+# /home/w300.abcl:  method work(k) : int { wait(300); reply(k * 2); }
+curl "http://192.168.3.101/run?cmd=cc%20/home/w300.abcl"
+  cc: compiling + running /home/w300.abcl (abcl2c -> C) (separate process)
+  work(21) = 42            <- 0.35 s, not cut off
+\end{term}
+
+\subsubsection*{\texttt{future} / \texttt{await} are not concurrent}
+\label{sec:pi5-future}
+
+\texttt{future o.m(x)} \textbf{runs on the spot}: it calls \texttt{dispatch}
+immediately, stores the value in a slot and returns a handle. \texttt{await h}
+reads that slot. A deadline on \texttt{await} \textbf{can never fire}, because
+the value is already there. In other words, \textbf{there is no ``fire it off
+and collect it later''}.
+
+The Pi 3 is the same in this respect --- continuation splitting does not run
+anything concurrently either --- so \textbf{the two boards have the same
+temperament here}.
+
+\textbf{A genuinely concurrent implementation was written and then removed,
+because it froze the board.} It gave each call its own Xinu process and had
+\texttt{await} wait for it. The value heaps (\texttt{vheap\_alloc},
+\texttt{lheap\_alloc}) were protected by masking interrupts, and that was not
+enough: the runaway state \texttt{g\_deadline} / \texttt{g\_aborted}, the output
+capture \texttt{g\_cap} and the single FIFO behind \texttt{cc\_pump()} were all
+still shared. The safeguards in place (a wall-clock cap, a liveness check
+before reusing a slot) \textbf{never fired} --- something lower down stops
+first. \textbf{``Protect the allocator and you can go concurrent'' was wrong.}
+
+\subsubsection*{\texttt{select} --- rebuilt on the Pi 3's continuation scheme}
+\label{sec:pi5-select}
+
+\textbf{On 2026-09-03--04 this was rebuilt to match the Pi 3.}
+Until then the Pi 5's \texttt{select} \textbf{did not wait}: there is no way to
+wait in a cooperative pump, so it merely scanned the messages already queued for
+the actor. In g4, \texttt{job} has not arrived when \texttt{send w.serve()} runs
+\texttt{serve}, so it \textbf{always fell into the timeout branch} --- the gap
+this chapter used to call ``the one place where the Pi 3 is ahead''.
+
+The Pi 3's scheme \textbf{waits without waiting}. It touches neither the
+scheduler nor the execution vehicle.
+
+\begin{itemize}
+\item The method containing the \texttt{select} sets a hidden field
+  \texttt{\_\_sel} to that \texttt{select}'s number and \textbf{ends there}.
+\item \texttt{case job(k) -> \{ ... \}} is spliced in \textbf{at the top of method
+  \texttt{job}}: if \texttt{\_\_sel} holds its number, clear the mark and run the
+  \texttt{case} body followed by the rest of the \texttt{select}'s method;
+  otherwise run \texttt{job}'s own body.
+\item A \texttt{case}'s parameter maps \textbf{by position} onto the receiving
+  method's parameter.
+\end{itemize}
+
+The message a \texttt{select} waits for therefore \textbf{arrives as an ordinary
+method call}. No suspension, no mailbox scan.
+
+\textbf{The \texttt{timeout} branch is decided by ``nobody came'', not by time.}
+This device has no vehicle that can wait, so the branch runs once the FIFO has
+been drained and no one claimed the \texttt{select} (\texttt{\_\_sel\_sweep});
+the millisecond value is unusable. The Pi 3 has a separate \texttt{\_\_Timer}
+actor do \texttt{wait(ms)}, so \textbf{there it really is time} --- but the
+meaning, ``run the timeout branch if the awaited message never comes'', is the same.
+
+One more change: \textbf{the FIFO is now drained right after a top-level
+\texttt{send}}. Pi 3 actors are real processes, so the target runs first; the
+Pi 5 only queued the message, and a following \texttt{now} entered the target's
+method ahead of it, defeating the interception.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & Pi 3 & Pi 5 \\
+\midrule
+How & continuation split + interception & \textbf{same} \\
+Can it wait? & yes & \textbf{yes} \\
+\texttt{timeout} decided by & a \texttt{wait(ms)} in another actor & the FIFO draining with no claim \\
+g4's output & canonical & \textbf{canonical} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{term}
+curl --data-binary @g4_select.aipl "http://192.168.3.101/cc"
+waiting
+got 1
+via select:1            <- used to be "timed out"
+
+# when nobody sends the awaited message
+waiting
+timed out
+\end{term}
+
+\subsubsection*{Bad input does not stop the board}
+
+The front end has been swept with \textbf{mutation fuzzing} (ASan + UBSan,
+4{,}000 cases). On the board, the eight inputs that used to freeze the kernel
+(\texttt{future} / \texttt{select} / \texttt{replyto} / \texttt{ai\_cal} (a
+typo) / an argument-carrying \texttt{new} on a class with no \texttt{init} /
+\texttt{new} of an unknown class / a statement after \texttt{reply} / a
+deadline) were all replayed: \textbf{every one returns a named error at once,
+and the board survives every time}.
+
+\texttt{new <unknown class>} is worth singling out. \texttt{class\_idx()}
+returns $-1$ for a name it does not know, and that $-1$ used to go straight
+into the syntax tree, so the emitter read \texttt{CLS[-1]} --- \textbf{an
+out-of-bounds read on real hardware}. The fuzzer found it.
+
 
 \part{Appendix}
 \label{part:appendix}
@@ -2278,6 +2604,39 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \end{itemize}
 
 \section{Changes from the previous edition}
+\label{sec:migrate-en}
+
+\subsection*{2026-09-03 --- the Pi 5 accepts much more}
+
+The language did not change. What changed is \textbf{what the Pi 5's on-board
+front end (\texttt{abcl2c}) accepts}; see \S\ref{sec:xinu-pi5}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & Previous & This edition \\
+\midrule
+Canonical samples (unchanged, \texttt{POST /cc}) & \textbf{0 / 10} & \textbf{10 / 10 run} \\
+\quad of which canonical & 0 & \textbf{8} (9 on the shell path) \\
+Annotations \texttt{: T} / \texttt{!\{...\}} / \texttt{@N} & rejected & accepted, discarded \\
+\texttt{reply} & refused & same as \texttt{return} (block-final) \\
+\texttt{++} / \texttt{true} / \texttt{false} / unary minus & absent & accepted \\
+Postfix \texttt{timeout … else …} & refused & accepted (\textbf{checked after}) \\
+\texttt{web\_listen} / \texttt{web\_expose} & refused & accepted (\texttt{/api/x/}) \\
+\texttt{wait(ms)} & refused & shell path only \\
+\texttt{future} / \texttt{await} & refused & accepted (\textbf{not concurrent}) \\
+\texttt{select} / \texttt{case} & refused & accepted (\textbf{waits}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Several \textbf{silent breakages} were fixed along the way: \texttt{new} of an
+unknown class read \texttt{CLS[-1]} (an out-of-bounds read on hardware);
+top-level \texttt{var}s referenced from a method produced C that would not
+compile; field initialisers silently became 0 when they were not numeric; and
+string literals were truncated at 62 bytes, desynchronising the lexer.
+
 \label{sec:migrate}
 
 What changed since the previous edition (2026-07-30).

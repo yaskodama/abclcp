@@ -42,7 +42,7 @@
 \title{AIPL / ABCL$^{c}$+ ユーザーズガイド\\
 {\large ---\ 文法・使い方・サンプルプログラム ---}}
 \author{ABCL$^{c}$+ / AIOS 処理系（\texttt{yaskodama/abclcp}, branch \texttt{make-src-base}）}
-\date{2026年08月31日版\\{\small 対象: branch \texttt{make-src-base}（七つの規律を含む現行仕様）}}
+\date{2026年09月03日版\\{\small 対象: branch \texttt{make-src-base}（七つの規律を含む現行仕様）}}
 
 \begin{document}
 \maketitle
@@ -1531,10 +1531,29 @@ VM に\textbf{新しい命令}を足したときだけである。
 \end{itemize}
 
 \subsection{実機で値を読む}
+\label{sec:pi3-console}
 
-Pi 3 の \texttt{print} は\textbf{シリアルへ出る}ので、ネットワーク越しには読めない。
-実機で戻り値を読む方法は、いまのところ\textbf{外部公開だけ}である
-（\S\ref{sec:expose}）。
+Pi 3 の \texttt{print} はシリアルと画面へ出る。\textbf{2026年09月04日から、
+直近の出力を \texttt{GET /api/console} で読めるようにした。}
+形はホスト VM（\texttt{aice-avm}）と同じ \texttt{\{"total":N,"lines":[...]\}} で、
+\texttt{?clear=1} を付けると読んだあと空にする。
+
+\begin{term}
+curl --data-binary @g1_hello.avm "http://192.168.3.50:8080/actor/loadvm?ask=0"
+loadvm: body=168 accepted=1 spawned actor id=1
+
+curl "http://192.168.3.50:8080/api/console"
+{"total":3,"lines":["a2: hello, AIPL","a2: tick 1","a2: tick 2"]}
+\end{term}
+
+\textbf{これが入るまで、Pi 3 で出力まで確かめてあったのは g5 だけだった。}
+Pi 5 は \texttt{POST /cc} の応答に出力がそのまま返るので、
+ここが揃っていなかった ---- 同じプログラムを両機で走らせて突き合わせられなかった。
+読めるようにした初日に、それまで見えていなかった欠陥が二つ出ている
+（\texttt{init} の二重呼びと、前のプログラムのアクターが残る件。\S\ref{sec:pi3-onemodule}）。
+\textbf{観測できないものは、正しいかどうかを言えない。}
+
+戻り値だけを読むなら外部公開でもよい（\S\ref{sec:expose}）。
 
 \lstinputlisting{samples/guide/g5_web.aipl}
 
@@ -1632,12 +1651,32 @@ Pi 3 の VM は\textbf{モジュール置き場を一つしか持たない}
 \texttt{/actor/loadvm} は\textbf{そこを上書きする}ので、
 \textbf{生きているのは最後に読み込んだモジュールだけ}である。
 
-これは黙って効く。先に登録した公開ルートは\textbf{そのまま残り}、
+これは長く\textbf{黙って効いていた}。先に登録した公開ルートはそのまま残り、
 指し先のアクターだけが動かなくなる ---
 呼んでも返信が来ず、\texttt{vm\_web\_call} の 90 秒を待ち切って空が返る。
 実際、モジュールを 13 本続けて投入したあとでは、
 最初に公開した \texttt{/sage} と \texttt{/echo} がどちらも無応答になり、
 そのとき投入した新しいアクターだけが即座に応えた。
+
+\textbf{2026年09月04日に、ここを Pi 5 と同じ約束に揃えた。}
+Pi 5 は \texttt{/cc} を投げるたびに前のアクター世界が置き換わる。
+Pi 3 も \texttt{/actor/loadvm} の先頭で\textbf{前のモジュールのアクターを畳み}、
+公開ルート表も空にするようにした（常駐の C アクターには触らない）。
+そうしないと、古いアクターが Xinu スレッドのまま残って\textbf{プロセス表を食いつぶす} ---
+正典ガイド 10 本を順に流すと 9 本目の g9 で新しいアクターが走らなくなり、
+そのあと HTTP ごと詰まった（実測）。
+\texttt{mailbox} が持つメソッド名のポインタが、置き換えられた \texttt{vm\_mod} を
+指したまま残る問題も同時に消える。
+
+\begin{itemize}
+\item \textbf{畳むのに \texttt{kill()} を使ってはいけない。} アクター・スレッドは
+  \texttt{spawn} 命令の中で \texttt{alloc\_obj} を呼び、そこで \texttt{objects\_mu} を握る。
+  その最中に \texttt{kill} すると以後の生成が全部そこで止まり、
+  \texttt{webactor} まで巻き込んで HTTP が詰まる（これも実測した）。
+  \textbf{印をつけて起こすだけ}にして、自分でループを抜けさせる。
+\item 公開ルートは\textbf{プログラムと寿命を共にする}。
+  投入後の \texttt{/api/routes} には新しいものだけが並ぶ。
+\end{itemize}
 
 \begin{itemize}
 \item \textbf{実機で試すときは 1 本ずつ}。投入したら、次を投入する前に確かめる。
@@ -1649,16 +1688,47 @@ Pi 3 の VM は\textbf{モジュール置き場を一つしか持たない}
 \subsection{正典ガイド 10 本の実機確認}
 
 第 \ref{part:sample} 部の g1--g10 は、いずれも \texttt{.avm} に落ちて
-Pi 3 に読み込まれ、アクターとして起動する（10 本すべて \texttt{accepted=1}）。
-ただし、この主張が言えるのは\textbf{1 本ずつ順に投入した場合}であって、
-\textbf{10 本が同時に動くという意味ではない}
-（\S\ref{sec:pi3-onemodule}）。
-さらに \texttt{accepted=1} が言うのは「読み込んで走り出した」までで、
-\textbf{出力の正しさまでは見ていない}。
-値まで突き合わせられるのは外部公開した経路だけなので、
-実機で出力まで確かめてあるのは g5（\texttt{/echo}）と、
-\texttt{ai\_call} を公開した例（\texttt{/sage}）である。
-それ以外の出力照合はホスト VM 側で行う。
+Pi 3 に読み込まれ、アクターとして起動する。
+\textbf{2026年09月04日に、10 本すべてを実機で「出力まで」照合した}
+（\S\ref{sec:pi3-console} の \texttt{/api/console}）。
+それ以前は \texttt{accepted=1}（読み込んで走り出した）までしか見ておらず、
+出力を確かめてあったのは外部公開した g5 と \texttt{/sage} だけだった。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & 正典 & Pi 3 実機 \\
+\midrule
+g1  & \texttt{hello, AIPL / tick 1 / tick 2} & 一致 \\
+g2  & \texttt{twice = 43 / awaited = 20 / v=7} & 一致 \\
+g3  & \texttt{ok, left=7 / sold out} & 一致 \\
+g4  & \texttt{waiting / got 1 / via select:1} & 一致 \\
+g5  & \texttt{/api/x/echo} $\to$ \texttt{echo: hi} & 一致 \\
+g6  & \texttt{1 / 1 / n = 1} & 一致 \\
+g7  & \texttt{fast = 42 / slow(timed out) = 0 / await = 10} & 一致 \\
+g8  & \texttt{... / b = true / not-eq: true} & \textbf{\texttt{b = 1}}（下記） \\
+g9  & \texttt{got actor / after send / pong} & \textbf{順序が入れ替わる}（下記） \\
+g10 & \texttt{fork = 1 / latch = 2} & 一致 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+一致しない 2 本は、どちらも\textbf{実行の器の性質}であって前段の欠落ではない。
+
+\begin{itemize}
+\item \textbf{g8 の \texttt{b = 1}} --- この VM は真偽値を整数で持つ。
+  印字のときに \texttt{true} / \texttt{false} へ戻す情報が値に無い。
+  \textbf{Pi 5 も同じ \texttt{b = 1} を出す}ので、両機の差ではない。
+\item \textbf{g9 の順序} --- Pi 3 のアクターは\textbf{実プロセス}なので、
+  \texttt{send x.ping()} の相手が \texttt{print("after send")} より先に走ることがある
+  （実機では \texttt{got actor / pong / after send} が出た）。
+  Pi 5 は協調ポンプなので必ず正典の順になる。
+  \textbf{どちらも AIPL の意味としては正しい}（\texttt{send} は順序を約束しない）。
+\end{itemize}
+
+なお、この照合が言えるのは\textbf{1 本ずつ順に投入した場合}であって、
+\textbf{10 本が同時に動くという意味ではない}（\S\ref{sec:pi3-onemodule}）。
 
 \subsection{Pi 5 --- もう一つの実機}
 \label{sec:xinu-pi5}
@@ -1676,11 +1746,18 @@ Pi 5（\texttt{192.168.3.101}）は\textbf{実行方式が違う}。
 実行方式 & \texttt{.avm} をカーネル内 VM が解釈 & AIPL$\to$C$\to$機内 \texttt{cc} が JIT \\
 前段 & Mac 側の \texttt{compile\_avm} & \textbf{機内}の \texttt{abcl2c} \\
 投入 & \texttt{POST /actor/loadvm?ask=0}（8080 番） & \texttt{POST /cc}（80 番） \\
-値の読み方 & \texttt{web\_expose} + \texttt{/api/x/} & \texttt{/cc} の応答にそのまま出る \\
-同時に持てるモジュール & \textbf{1 本だけ}（\S\ref{sec:pi3-onemodule}） & 実行のたびに JIT \\
+出力の読み方 & \texttt{/api/console}（\S\ref{sec:pi3-console}） & 応答にそのまま出る \\
+戻り値の読み方 & \texttt{web\_expose} + \texttt{/api/x/} & 同じ／応答にも出る \\
+同時に持てるモジュール & 1 本（\textbf{新しいものが置き換える}） & 1 本（新しいものが置き換える） \\
+アクターの器 & \textbf{Xinu の実プロセス}（本物の並行） & 協調ポンプ（単一スレッド） \\
+\texttt{select} & 継続分割＋横取り & \textbf{同じ} \\
+\texttt{future} / \texttt{await} & 継続分割（並行ではない） & 即時実行（並行ではない） \\
+\texttt{wait(ms)} & VM の命令。どの経路でも効く & \textbf{シェル経路でのみ} \\
+正典ガイド 10 本 & \textbf{8 本が完全一致}（下記） & \textbf{8 本が完全一致}（シェル経路なら 9） \\
 値の種類 & 整数と文字列 & 整数・文字列・浮動小数・リスト \\
 \texttt{ai\_call} & 命令 \texttt{0x52} & ランタイム \texttt{v\_ai\_call} \\
-カーネル & 1.09\,MB $\to$ 2.16\,MB & 0.94\,MB $\to$ 2.02\,MB \\
+\texttt{ai\_call} の実測 & 2--6 秒 & \textbf{0.42 秒} \\
+カーネル & 1.09\,MB $\to$ 2.16\,MB & 0.94\,MB $\to$ 2.03\,MB \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1688,12 +1765,15 @@ Pi 5（\texttt{192.168.3.101}）は\textbf{実行方式が違う}。
 \subsubsection*{動かし方}
 
 前段が\textbf{機内にある}ので、AIPL のソースをそのまま送れる。
-本文の先頭が \texttt{class} なら \texttt{abcl2c} を通り、
-そうでなければ C として扱われる。
+最初の語が \texttt{class} なら \texttt{abcl2c} を通り、そうでなければ C として扱われる。
+\textbf{判定の前に空白とコメントを読み飛ばす}ので、
+正典のガイド標本のように \texttt{//} で始まるソースもそのまま通る。
 
 \begin{term}
-curl --data-binary @prog.abcl "http://192.168.3.101/cc"
-MODEL[, there was a little girl named Lily. She loved to play outside in the p]END
+curl --data-binary @g1_hello.aipl "http://192.168.3.101/cc"
+hello, AIPL
+tick 1
+tick 2
 => 0
 \end{term}
 
@@ -1712,14 +1792,19 @@ MODEL[, there was a little girl named Lily. She loved to play outside in the p]E
 \begin{term}
 struct Obj { int cls; int f[1]; };   /* f[] がフィールド */
 struct Obj g_obj[2048];
-int m_Sage_ask(int self, int a0, int a1, int a2, int a3) { ... }
+int v_stock;                          /* トップレベルの var は大域になる */
+int m_Stock_take(int self, int a0, int a1, int a2, int a3) { ... }
+int __new_init(int id, int meth, int a0, int a1, int a2, int a3);
+int __dl_call(int to, int meth, int a0, int a1, int a2, int a3, int ms, int elsev);
 int dispatch(int self, int meth, int a0, int a1, int a2, int a3);
-int main() { int v_s = v_int(g_spawn(0)); dispatch(v_int_of(v_s), 0, ...); }
+int main() { v_stock = v_int(g_spawn(0)); ... }
 \end{term}
 
 \textbf{この \texttt{cc} では \texttt{int} が 8 バイトである}
 （\texttt{cc/ccpriv.h} に明記）。AIPL のタグ付き 64 ビット値と幅が一致するので、
 文字列（ヒープへのポインタ）を \texttt{int} の変数に入れても切り詰められない。
+なお\textbf{仮引数は 8 個まで}で、9 個にすると
+\texttt{cc: too many parameters (max 8)} になる。
 
 値はランタイム関数を通して扱う ---
 \texttt{v\_int} \texttt{v\_str} \texttt{v\_floatlit} \texttt{v\_add} \texttt{v\_sub}
@@ -1727,7 +1812,7 @@ int main() { int v_s = v_int(g_spawn(0)); dispatch(v_int_of(v_s), 0, ...); }
 \texttt{v\_and} \texttt{v\_or} \texttt{v\_not} \texttt{v\_truthy} \texttt{v\_int\_of}
 \texttt{v\_print} \texttt{v\_ai\_call} \texttt{v\_list\_*}。
 \texttt{v\_add} は片方が文字列なら\textbf{連結}になるので、
-Pi 5 では \texttt{+} が数値加算と文字列連結を兼ねる（\texttt{++} は無い）。
+\texttt{++} はこの \texttt{v\_add} に写している。
 
 \subsubsection*{機内の小型モデル}
 
@@ -1735,7 +1820,7 @@ Pi 5 では \texttt{+} が数値加算と文字列連結を兼ねる（\texttt{+
 \texttt{llm\_run} を呼び、結果を値ヒープに複写して文字列値で返す。
 モデルは Pi 3 と\textbf{同じもの}（\S\ref{sec:xinu-ai}）で、
 \texttt{ai\_call("Once upon a time")} は Pi 3・Pi 5・Mac の参照実装のいずれでも
-72 バイト一致した。違うのは速さだけで、\textbf{Pi 5 は 1 回 0.42--0.64 秒}である。
+72 バイト一致した。違うのは速さだけで、\textbf{Pi 5 は 1 回 0.42 秒}である。
 Pi 3 は起動直後で 2--6 秒、モジュールを 13 本投入してアクターが積み上がった
 状態では 16.6 秒だった（生成はトークンごとにスケジューラへ譲るので、
 常駐アクターが増えるほど遅くなる。ただしこの因果関係は\textbf{まだ切り分けていない}）。
@@ -1744,36 +1829,257 @@ Pi 3 は起動直後で 2--6 秒、モジュールを 13 本投入してアク�
 
 \begin{center}
 \small
-\begin{tabular}{@{}ll@{}}
+\begin{tabular}{@{}p{22mm}p{100mm}@{}}
 \toprule
-通る & クラス、フィールド、メソッド、\texttt{var}、代入、\texttt{if}/\texttt{else}、 \\
-     & \texttt{while}（\texttt{do} は付けても付けなくてもよい）、\texttt{return}、 \\
-     & \texttt{new}（\texttt{init} があれば引数を渡せる）、\texttt{now}（値を返す）、 \\
-     & \texttt{send}、整数・文字列・浮動小数、\texttt{+ - * /}、比較、 \\
+通る & クラス、フィールド、メソッド、\texttt{var}、代入、\texttt{if}/\texttt{else}、
+       \texttt{while}（\texttt{do} は付けても付けなくてもよい）、\texttt{return} \\
+     & \texttt{new}（\texttt{init} があれば引数を渡せる）、\texttt{send}、
+       \texttt{now}（値を返す） \\
+     & \textbf{\texttt{reply(e)}} --- この装置では \texttt{return e} と同じ。
+       \texttt{now o.m()} が \texttt{dispatch} の返り値を受けるので等価。
+       ただし\textbf{ブロックの最後でなければ断る}（後ろに文が続くと意味がずれるため） \\
+     & \textbf{型・レベル・効果の注釈} \texttt{: T} / 旧 \texttt{-> T} /
+       \texttt{!\{log, mut\}} / \texttt{@ 2} / \texttt{x: D} / \texttt{var n: int}
+       --- 受理して\textbf{捨てる}（検査は正典側で） \\
+     & \textbf{\texttt{++}}（文字列連結）、\textbf{\texttt{true} / \texttt{false}}
+       （\texttt{bool} は \texttt{int} で持つので 1 / 0）、単項マイナス \\
+     & \textbf{後置の期限} \texttt{now t.m(a) timeout <ms> else <式>}（下記） \\
+     & \textbf{\texttt{web\_listen} / \texttt{web\_expose}}（下記） \\
+     & \textbf{\texttt{wait(ms)}} --- \textbf{シェルの \texttt{cc}/\texttt{make} 経路でだけ}（下記） \\
      & \texttt{print} / \texttt{puts}、\texttt{ai\_call} \\
+     & \textbf{\texttt{future} / \texttt{await}} --- ただし\textbf{並行ではない}。
+       その場で走る（\S\ref{sec:pi5-future}） \\
+     & \textbf{\texttt{select} / \texttt{case} / \texttt{timeout}} ---
+       \textbf{Pi 3 と同じ継続方式で待てる}（\S\ref{sec:pi5-select}） \\
 \midrule
-通らない & \textbf{型・レベル・効果の注釈}（\texttt{: string} で \texttt{method: expected '\{'}） \\
-     & \texttt{reply} / \texttt{replyto} / \texttt{future} / \texttt{await} \\
-     & \texttt{select} / \texttt{case} / \texttt{timeout} \\
-     & \texttt{++}（\texttt{+} を使う）、配列 \texttt{array\_*}、\texttt{spawn}、\texttt{remote} \\
-     & \texttt{print} / \texttt{puts} / \texttt{ai\_call} 以外の関数呼び出し \\
+通らない & \texttt{replyto}、\texttt{spawn}、\texttt{remote}、配列 \texttt{array\_*}、
+       数学組込み（\texttt{sqrt} 等） \\
+     & フィールドの初期値は\textbf{整数と真偽値のリテラルだけ}
+       （以前は「数値でなければ黙って 0」だった） \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 断り方は名前つきで出る ---
-\texttt{not supported on this device: future}、
+\texttt{not supported on this device: select}、
 \texttt{unknown function: sqrt}、
-\texttt{new: class has no init to take arguments}。
-\textbf{黙って別の意味にはならない}。
+\texttt{new: unknown class: Zzz}、
+\texttt{reply must be the last statement of its block on this device}。
+\textbf{黙って別の意味にはならない。}
 
-\textbf{この範囲は正典よりだいぶ狭い。}
-\S\ref{part:sample} の g1--g10 は\textbf{どれもこの前段を通らない}
-（すべて戻り値注釈を持つため）。
-Pi 5 で動かすときは、注釈を落とし、\texttt{reply} の代わりに \texttt{return} と
-\texttt{now} を使い、\texttt{++} を \texttt{+} に直す必要がある。
-Pi 3 側の \texttt{.avm} 経路（\S\ref{sec:xinu}）は注釈を\textbf{受理して捨てる}ので、
-そちらは正典のソースがそのまま通る --- 同じ「実機」でも前段の性格が違う。
+\subsubsection*{正典ガイド 10 本の実機確認}
+
+第 \ref{part:sample} 部の g1--g10 は、\textbf{10 本すべてが無加工のまま
+\texttt{POST /cc} を通って走る}。以前は 1 本も通らなかった（すべて戻り値注釈で
+落ちていた）。ただし\textbf{「走る」と「正典どおり」は別である}。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+標本 & 実機の出力（\texttt{POST /cc}） & 正典と一致するか \\
+\midrule
+g1 & \texttt{hello, AIPL} / \texttt{tick 1} / \texttt{tick 2} & ○ \\
+g2 & \texttt{twice = 43} / \texttt{awaited = 20} / \texttt{v=7} & ○ \\
+g3 & \texttt{ok, left=7} / \texttt{sold out} & ○ \\
+g5 & 公開して \texttt{/api/x/echo} から \texttt{echo: hi} & ○ \\
+g6 & \texttt{1} / \texttt{1} / \texttt{n = 1} & ○ \\
+g8 & \texttt{literal true ok} / \texttt{literal false ok} / \texttt{b = 1} & ○ \\
+g9 & \texttt{got actor} / \texttt{after send} / \texttt{pong} & ○ \\
+g10 & \texttt{fork  = 1} / \texttt{latch = 2} & ○ \\
+\midrule
+g7 & \texttt{slow(timed out) = 42} & \textbf{×}（正典は 0） \\
+g4 & \texttt{waiting} / \texttt{timed out} & \textbf{×}（正典は \texttt{via select:1}） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{g7 は経路を変えれば正典どおりになる。} \texttt{/cc} では \texttt{wait(300)} が
+使えず（\S\ref{sec:pi5-budget}）、300\,ms かからないので期限 50\,ms を超えない。
+シェル経路なら \texttt{wait} が本物の休眠になるので、実測で
+\texttt{slow(timed out) = 0} になった。
+
+\begin{term}
+curl "http://192.168.3.101/run?cmd=cc%20/home/g7.abcl"
+  fast = 42
+  slow(timed out) = 0        <- 正典と一致
+  await = 10
+\end{term}
+
+\textbf{g4 は 2026年09月03--04日に一致するようになった}（\S\ref{sec:pi5-select}）。
+\texttt{select} を Pi 3 と同じ継続方式に替えたためで、
+\textbf{これで両機の対応範囲は同じになった}。
+
+g8 の \texttt{b = 1} は正典なら \texttt{b = true} である。
+この装置は \ty{bool} を \ty{int} で持つので、そこだけ表示が違う。
+\textbf{Pi 3 も同じ \texttt{b = 1} を出す}ので、両機の差ではない。
+
+\subsubsection*{期限は事後判定である}
+\label{sec:pi5-deadline}
+
+\texttt{now t.m(a) timeout <ms> else <式>} は通るが、
+\textbf{呼び出しを中断しない}。この装置の実行は協調ポンプで、
+\texttt{dispatch} は同期的に走りきるので、期限は
+「\textbf{超えたかどうかの事後判定}」にしか使えない。
+
+\begin{term}
+now s.quick(7) timeout 1000 else -99   ->   7     （期限内）
+now s.heavy(7) timeout    1 else -99   -> -99     （超過 -> else 節）
+\end{term}
+
+\textbf{返る値は正典と一致する}が、期限を過ぎても呼び出し自体は最後まで走る。
+「待たされ続けない」ことを期限に期待するプログラムは、この装置では守られない。
+
+\subsubsection*{外部公開 --- \texttt{/api/x/}}
+
+\texttt{web\_expose("/echo", "echo")} で公開したアクターへ、
+\texttt{GET /api/x/<path>?method=<名前>\&args=<文字列>} で到達できる。
+
+\begin{term}
+curl --data-binary @g5_web.aipl "http://192.168.3.101/cc"
+curl "http://192.168.3.101/api/x/"
+  exposed routes (web_expose):
+    /api/x/echo  -> actor #0
+curl "http://192.168.3.101/api/x/echo?method=say&args=hi"
+  => echo: hi
+\end{term}
+
+\begin{itemize}
+\item \textbf{ポート指定は無視する。} 板の HTTP は 80 番で動いており、
+  \texttt{web\_listen(8080)} の意図（境界を開く）は既に満たされている。
+  板は番号を記録するだけで、公開ルートは 80 番に載る。
+\item \textbf{公開はプログラムと寿命を共にする。} 次のプログラムを載せると、
+  前の公開ルートは消える。Pi 3 のように\textbf{古いルートが残って指し先だけ死ぬ}
+  （\S\ref{sec:pi3-onemodule}）ということは起きない。
+\item 第 2 引数はトップレベルの \texttt{var} 名である。板はアクターを番号で持つので、
+  翻訳のときに名前を解決して番号を渡している。知らない名前は名前つきで断る。
+\end{itemize}
+
+\subsubsection*{打ち切りの予算と \texttt{wait}}
+\label{sec:pi5-budget}
+
+JIT した機械語は\textbf{暴走したときのために時間で打ち切られる}。
+予算は\textbf{経路ごとに違う}。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+経路 & 予算 & \texttt{wait(ms)} \\
+\midrule
+\texttt{POST /cc}・\texttt{/actor/load} & \textbf{250 ms} & 使えない（断る） \\
+シェルの \texttt{cc} / \texttt{make} & \textbf{10 秒} & \textbf{使える} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+前者は\textbf{割り込みを塞いだ受信処理の中で走る}ので、そこで寝ると板が固まる。
+だから \texttt{wait} は断り、250 ms を超えると
+\texttt{cc: aborted (ran past the runaway-loop deadline)} で打ち切る。
+後者は\textbf{専用のプロセス・専用のスタック}で走るので、暴走してもそのスタックを
+潰すだけで板は固まらない。そちらでだけ \texttt{wait} が本物の休眠になる。
+
+\begin{term}
+# /home/w300.abcl:  method work(k) : int { wait(300); reply(k * 2); }
+curl "http://192.168.3.101/run?cmd=cc%20/home/w300.abcl"
+  cc: compiling + running /home/w300.abcl (abcl2c -> C) (separate process)
+  work(21) = 42            <- 0.35 秒。打ち切られない
+\end{term}
+
+\subsubsection*{\texttt{future} / \texttt{await} は並行ではない}
+\label{sec:pi5-future}
+
+\texttt{future o.m(x)} は\textbf{その場で走る}。\texttt{dispatch} を直ちに呼び、
+値をスロットに置いてハンドルを返すだけである。\texttt{await h} はそのスロットを
+読む。期限つきの \texttt{await} は値が既にあるので\textbf{決して切れない}。
+つまり\textbf{「投げておいて後で受け取る」という意味は無い}。
+
+Pi 3 も継続分割で実現していて並行には走らないので、\textbf{両機の性格は揃っている}。
+
+\textbf{本当に並行にする実装も書いたが、実機で板が固まったので撤去した。}
+呼び出しごとに Xinu プロセスを立て、\texttt{await} が完了を待つ方式である。
+値ヒープ（\texttt{vheap\_alloc} / \texttt{lheap\_alloc}）は割り込み禁止で守ったが、
+それだけでは足りなかった ---
+打ち切り判定の \texttt{g\_deadline} / \texttt{g\_aborted}、
+出力捕捉の \texttt{g\_cap}、
+単一 FIFO の \texttt{cc\_pump()} が、いずれも共有のままだったからである。
+入れておいた歯止め（時間での打ち切り、スロット再利用前の生存確認）は
+\textbf{効かなかった} --- 時間切れに達する前に、より低い層で止まっている。
+\textbf{「確保器さえ守れば並行にできる」は誤りだった。}
+
+\subsubsection*{\texttt{select} --- Pi 3 と同じ継続方式に揃えた}
+\label{sec:pi5-select}
+
+\textbf{2026年09月03--04日に、ここを Pi 3 と同じ形にした。}
+それまで Pi 5 の \texttt{select} は\textbf{待たなかった} ---
+協調ポンプなので待つ手段が無く、いま FIFO に積まれている自分宛のメッセージを
+覗くだけだった。g4 は \texttt{send w.serve()} の時点で \texttt{job} がまだ
+届いていないので\textbf{必ず timeout 節に落ちて}おり、これが
+「ここだけ Pi 3 が上」と書いていた残差だった。
+
+Pi 3 の方式は\textbf{待たずに待つ}。スケジューラにも実行体にも触らない。
+
+\begin{itemize}
+\item \texttt{select} のあるメソッドは、隠しフィールド \texttt{\_\_sel} に
+  その \texttt{select} の番号を立てて\textbf{そこで終わる}。
+\item \texttt{case job(k) -> \{ ... \}} は、\textbf{メソッド \texttt{job} の先頭}へ
+  横取りとして差し込む ---
+  \texttt{\_\_sel} が自分の番号なら、印を落として \texttt{case} の本体と
+  \texttt{select} の残りを走らせ、そうでなければ \texttt{job} の元の本体を走らせる。
+\item \texttt{case} の仮引数は、受け側メソッドの仮引数に\textbf{位置で}対応づく。
+\end{itemize}
+
+こうすると、\texttt{select} が待っているメッセージは
+\textbf{通常のメソッド呼び出しとして届く}。サスペンドもメールボックス走査も要らない。
+
+\textbf{\texttt{timeout} 節は「時間」ではなく「もう来ない」で判定する。}
+この装置には待てる実行体が無いので、FIFO を配り切っても誰も名乗り出なかったときに
+走らせる（\texttt{\_\_sel\_sweep}）。期限の値（ミリ秒）は使えない。
+Pi 3 は別アクターの \texttt{\_\_Timer} に \texttt{wait(ms)} させるので\textbf{そこは時間で決まる}が、
+「対応するメッセージが来なければ \texttt{timeout} 節」という意味は同じである。
+
+もう一つ、\textbf{トップレベルの \texttt{send} の直後に FIFO を配る}ようにした。
+Pi 3 はアクターが実プロセスなので送った相手が先に走る。Pi 5 は FIFO に積むだけで、
+後続の \texttt{now} が先に相手のメソッドへ入ってしまい横取りが効かなかった。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & Pi 3 & Pi 5 \\
+\midrule
+実現方法 & 継続分割＋横取り & \textbf{同じ}（継続分割＋横取り） \\
+待てるか & 待てる & \textbf{待てる} \\
+\texttt{timeout} の判定 & 別アクターの \texttt{wait(ms)}＝時間 & FIFO を配り切って誰も来ない \\
+g4 の出力 & 正典どおり & \textbf{正典どおり} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{term}
+curl --data-binary @g4_select.aipl "http://192.168.3.101/cc"
+waiting
+got 1
+via select:1            <- 従来は timed out だった
+
+# 対応するメッセージを誰も送らない場合
+waiting
+timed out
+\end{term}
+
+\subsubsection*{壊れた入力で板が止まらないこと}
+
+前段は\textbf{変異入力のファズ}（ASan + UBSan、4{,}000 件）で掃いてある。
+実機でも、以前カーネルごと固めていた 8 種類の入力
+（\texttt{future} / \texttt{select} / \texttt{replyto} /
+\texttt{ai\_cal}（綴り誤り）/ \texttt{init} の無いクラスへ引数つき \texttt{new} /
+知らないクラスの \texttt{new} / \texttt{reply} の後ろに文 / 期限）を投げて、
+\textbf{すべて名前つきエラーで即座に返り、毎回 板が生存する}ことを確かめた。
+
+とくに \texttt{new <知らないクラス>} は、以前 \texttt{class\_idx()} の返す
+$-1$ をそのまま構文木に入れていたため \texttt{CLS[-1]} を読んでおり、
+\textbf{実機では領域外参照}になっていた。これはファズが見つけた。
+
 
 \part{付録}
 \label{part:appendix}
@@ -1956,6 +2262,37 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \label{sec:migrate}
 
 前版（2026年07月30日版）以降の変化を挙げる。
+
+\subsection{2026年09月03日 --- Pi 5 実機の対応範囲が広がった}
+
+言語仕様は変えていない。変わったのは\textbf{Pi 5 の機内前段（\texttt{abcl2c}）が
+受け付ける範囲}である。詳細は \S\ref{sec:xinu-pi5}。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & 前版 & 本版 \\
+\midrule
+正典ガイド（無加工で \texttt{POST /cc}） & \textbf{0 / 10} & \textbf{10 / 10 が走る}\\
+\quad うち正典と一致する本数 & 0 & \textbf{8}（シェル経路なら 9） \\
+注釈 \texttt{: T} / \texttt{!\{...\}} / \texttt{@N} & 落ちる & 受理して捨てる \\
+\texttt{reply} & 断る & \texttt{return} と同じ（ブロック末尾に限る） \\
+\texttt{++} / \texttt{true} / \texttt{false} / 単項マイナス & 無い & 通る \\
+後置の期限 \texttt{timeout … else …} & 断る & 通る（\textbf{事後判定}） \\
+\texttt{web\_listen} / \texttt{web\_expose} & 断る & 通る（\texttt{/api/x/}） \\
+\texttt{wait(ms)} & 断る & シェル経路でのみ通る \\
+\texttt{future} / \texttt{await} & 断る & 通る（\textbf{並行ではない}） \\
+\texttt{select} / \texttt{case} & 断る & 通る（\textbf{待てる}。\S\ref{sec:pi5-select}） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+あわせて、\textbf{黙って壊れていた箇所}をいくつか直した ---
+\texttt{new <知らないクラス>} が \texttt{CLS[-1]} を読んで実機で領域外参照になっていたもの、
+トップレベルの \texttt{var} をメソッドから参照すると生成 C が壊れていたもの、
+フィールド初期値が「数値でなければ黙って 0」だったもの、
+文字列リテラルが 62 バイトで打ち切られて字句解析が同期を失っていたもの。
 
 \subsection{言語から外したもの}
 
