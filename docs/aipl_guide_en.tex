@@ -2061,8 +2061,8 @@ Modules resident & one (\textbf{a new one replaces it}) & one (a new one replace
 Actor vehicle & \textbf{real Xinu processes} (truly concurrent) & cooperative pump (one thread) \\
 \texttt{select} & continuation split + interception & \textbf{same} \\
 \texttt{future} / \texttt{await} & continuation split (not concurrent) & runs at once (not concurrent) \\
-\texttt{wait(ms)} & a VM opcode; works on every path & \textbf{shell path only} \\
-Ten guide samples & \textbf{8 match exactly} & \textbf{8 match exactly} (9 on the shell path) \\
+\texttt{wait(ms)} & a VM opcode; works on every path & \textbf{works on every path} \\
+Ten guide samples & \textbf{8 match exactly} & \textbf{all ten match} \\
 Value kinds & integers and strings & int, string, float, list \\
 \texttt{ai\_call} & opcode \texttt{0x52} & runtime \texttt{v\_ai\_call} \\
 \texttt{ai\_call} measured & 2--6 s & \textbf{0.42 s} \\
@@ -2209,28 +2209,17 @@ g6 & \texttt{1} / \texttt{1} / \texttt{n = 1} & yes \\
 g8 & \texttt{literal true ok} / \texttt{literal false ok} / \texttt{b = 1} & yes \\
 g9 & \texttt{got actor} / \texttt{after send} / \texttt{pong} & yes \\
 g10 & \texttt{fork  = 1} / \texttt{latch = 2} & yes \\
-\midrule
-g7 & \texttt{slow(timed out) = 42} & \textbf{no} (canonical: 0) \\
-g4 & \texttt{waiting} / \texttt{timed out} & \textbf{no} (canonical: \texttt{via select:1}) \\
+g7 & \texttt{fast = 42} / \texttt{slow(timed out) = 0} / \texttt{await = 10} & yes \\
+g4 & \texttt{waiting} / \texttt{got 1} / \texttt{via select:1} & yes \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\textbf{g7 does match on the other path.} Under \texttt{/cc}, \texttt{wait(300)}
-is unavailable (\S\ref{sec:pi5-budget}), so the call takes nowhere near 300\,ms
-and never exceeds the 50\,ms deadline. On the shell path \texttt{wait} is a real
-sleep, and the measured result is \texttt{slow(timed out) = 0}.
-
-\begin{term}
-curl "http://192.168.3.101/run?cmd=cc%20/home/g7.abcl"
-  fast = 42
-  slow(timed out) = 0        <- matches the canonical answer
-  await = 10
-\end{term}
-
-\textbf{g4 started matching on 2026-09-03--04} (\S\ref{sec:pi5-select}), once
-\texttt{select} was rebuilt on the Pi 3's continuation scheme.
-\textbf{The two boards now cover the same ground.}
+\textbf{On 2026-09-04 all ten came to match over \texttt{POST /cc} alone.} The last
+two holdouts were g4 (\texttt{select} did not wait, \S\ref{sec:pi5-select}) and g7
+(\texttt{wait} was unavailable under \texttt{/cc}, \S\ref{sec:pi5-budget}); both were
+\textbf{properties of the path}, not gaps in the front end.
+\textbf{There is no longer any need to pick a path.}
 
 g8 prints \texttt{b = 1} where the canonical answer is \texttt{b = true}: this
 board holds \ty{bool} as an \ty{int}. \textbf{The Pi 3 prints \texttt{b = 1} too},
@@ -2290,27 +2279,43 @@ JITed code is \textbf{cut off on a wall clock} in case it runs away, and
 \small
 \begin{tabular}{@{}lll@{}}
 \toprule
-Path & Budget & \texttt{wait(ms)} \\
+Path & Compute budget & \texttt{wait(ms)} \\
 \midrule
-\texttt{POST /cc}, \texttt{/actor/load} & \textbf{250 ms} & refused \\
-shell \texttt{cc} / \texttt{make} & \textbf{10 s} & \textbf{works} \\
+\texttt{POST /cc} & \textbf{5 s} & \textbf{works} (10 s total) \\
+shell \texttt{cc} / \texttt{make} & \textbf{10 s} & \textbf{works} (same) \\
+\texttt{/actor/load} & 250 ms & refused \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The first runs \textbf{inside the interrupt-masked receive path}, so sleeping
-there freezes the board. \texttt{wait} is therefore refused, and anything over
-250 ms ends with
-\texttt{cc: aborted (ran past the runaway-loop deadline)}. The second runs in
-\textbf{its own process on its own stack}, so a runaway can only blow that
-stack; there, and only there, \texttt{wait} is a real sleep.
+\textbf{Since 2026-09-04, \texttt{wait} works under \texttt{/cc} too}, because both
+now run in \textbf{their own process on their own stack}: a runaway can only blow
+that stack and get cut off, never freeze the board.
+
+\textbf{This was not done by sleeping in place.} HTTP handling can be entered from
+the network process \emph{or} from the window-manager loop (\texttt{NULLPROC}), and
+\texttt{proc\_sleep\_us} on \texttt{NULLPROC} context-switches \textbf{to itself} when
+nothing else is runnable --- so it does not sleep at all. Instead \texttt{/cc} adopts
+the shell's shape: spawn a runner and spin \texttt{proc\_resched()} until it is gone.
+
+\textbf{Sleeping is not charged to the budget.} The budget is there to catch
+\textbf{runaway computation}, and letting \texttt{wait(300)} eat it would defeat that.
+The \textbf{total sleep} per run is capped at 10 s instead.
 
 \begin{term}
-# /home/w300.abcl:  method work(k) : int { wait(300); reply(k * 2); }
-curl "http://192.168.3.101/run?cmd=cc%20/home/w300.abcl"
-  cc: compiling + running /home/w300.abcl (abcl2c -> C) (separate process)
-  work(21) = 42            <- 0.35 s, not cut off
+curl --data-binary @g7_deadline.aipl "http://192.168.3.101/cc"
+  fast = 42
+  slow(timed out) = 0        <- wait(300) took effect. 0.40 s
+  await = 10
 \end{term}
+
+\textbf{There is a trap here that half-kills the board.} The only thing advancing
+the runner is \textbf{the caller spinning \texttt{proc\_resched()}}, and
+\texttt{proc\_preempt()} never switches away from \texttt{NULLPROC}. So a runner that
+is given up on \textbf{never runs again}: it keeps the static stack, and every later
+\texttt{cc} answers ``the previous run has not finished'' (measured on hardware).
+Three guards close it: cap the total sleep below the 15 s give-up, mark an
+abandoned runner ``return at once'', and let the next call spin for 3 s to clear it.
 
 \subsubsection*{\texttt{future} / \texttt{await} are not concurrent}
 \label{sec:pi5-future}
@@ -2618,13 +2623,13 @@ front end (\texttt{abcl2c}) accepts}; see \S\ref{sec:xinu-pi5}.
  & Previous & This edition \\
 \midrule
 Canonical samples (unchanged, \texttt{POST /cc}) & \textbf{0 / 10} & \textbf{10 / 10 run} \\
-\quad of which canonical & 0 & \textbf{8} (9 on the shell path) \\
+\quad of which canonical & 0 & \textbf{10} \\
 Annotations \texttt{: T} / \texttt{!\{...\}} / \texttt{@N} & rejected & accepted, discarded \\
 \texttt{reply} & refused & same as \texttt{return} (block-final) \\
 \texttt{++} / \texttt{true} / \texttt{false} / unary minus & absent & accepted \\
 Postfix \texttt{timeout … else …} & refused & accepted (\textbf{checked after}) \\
 \texttt{web\_listen} / \texttt{web\_expose} & refused & accepted (\texttt{/api/x/}) \\
-\texttt{wait(ms)} & refused & shell path only \\
+\texttt{wait(ms)} & refused & accepted (\texttt{/cc} too, \S\ref{sec:pi5-budget}) \\
 \texttt{future} / \texttt{await} & refused & accepted (\textbf{not concurrent}) \\
 \texttt{select} / \texttt{case} & refused & accepted (\textbf{waits}) \\
 \bottomrule
