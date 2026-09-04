@@ -2014,21 +2014,18 @@ g4  & \texttt{waiting / got 1 / via select:1} & matches \\
 g5  & \texttt{/api/x/echo} $\to$ \texttt{echo: hi} & matches \\
 g6  & \texttt{1 / 1 / n = 1} & matches \\
 g7  & \texttt{fast = 42 / slow(timed out) = 0 / await = 10} & matches \\
-g8  & \texttt{... / b = true / not-eq: true} & \textbf{\texttt{b = 1}} (below) \\
+g8  & \texttt{... / b = true / not-eq: true} & matches \\
 g9  & \texttt{got actor / after send / pong} & \textbf{order differs} (below) \\
 g10 & \texttt{fork = 1 / latch = 2} & matches \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Neither mismatch is a gap in the front end; both come from the shape of the
-execution vehicle.
+The one mismatch is not a gap in the front end; it comes from the shape of the
+execution vehicle. (g8's \texttt{b = true} was brought into line on both boards on
+2026-09-04, \S\ref{sec:bool-tag}.)
 
 \begin{itemize}
-\item \textbf{g8's \texttt{b = 1}} --- this VM holds booleans as integers, and the
-  value carries nothing that would print them back as \texttt{true} / \texttt{false}.
-  \textbf{The Pi 5 prints \texttt{b = 1} too}, so this is not a difference between
-  the boards.
 \item \textbf{g9's ordering} --- Pi 3 actors are \textbf{real processes}, so the
   target of \texttt{send x.ping()} can run before \texttt{print("after send")}
   (the board printed \texttt{got actor / pong / after send}).
@@ -2062,7 +2059,7 @@ Actor vehicle & \textbf{real Xinu processes} (truly concurrent) & cooperative pu
 \texttt{select} & continuation split + interception & \textbf{same} \\
 \texttt{future} / \texttt{await} & continuation split (not concurrent) & runs at once (not concurrent) \\
 \texttt{wait(ms)} & a VM opcode; works on every path & \textbf{works on every path} \\
-Ten guide samples & \textbf{8 match exactly} & \textbf{all ten match} \\
+Ten guide samples & \textbf{9 match exactly} & \textbf{all ten match} \\
 Value kinds & integers and strings & int, string, float, list \\
 \texttt{ai\_call} & opcode \texttt{0x52} & runtime \texttt{v\_ai\_call} \\
 \texttt{ai\_call} measured & 2--6 s & \textbf{0.42 s} \\
@@ -2206,7 +2203,7 @@ g2 & \texttt{twice = 43} / \texttt{awaited = 20} / \texttt{v=7} & yes \\
 g3 & \texttt{ok, left=7} / \texttt{sold out} & yes \\
 g5 & exposed, then \texttt{echo: hi} from \texttt{/api/x/echo} & yes \\
 g6 & \texttt{1} / \texttt{1} / \texttt{n = 1} & yes \\
-g8 & \texttt{literal true ok} / \texttt{literal false ok} / \texttt{b = 1} & yes \\
+g8 & \texttt{literal true ok} / \texttt{literal false ok} / \texttt{b = true} & yes \\
 g9 & \texttt{got actor} / \texttt{after send} / \texttt{pong} & yes \\
 g10 & \texttt{fork  = 1} / \texttt{latch = 2} & yes \\
 g7 & \texttt{fast = 42} / \texttt{slow(timed out) = 0} / \texttt{await = 10} & yes \\
@@ -2221,9 +2218,9 @@ two holdouts were g4 (\texttt{select} did not wait, \S\ref{sec:pi5-select}) and 
 \textbf{properties of the path}, not gaps in the front end.
 \textbf{There is no longer any need to pick a path.}
 
-g8 prints \texttt{b = 1} where the canonical answer is \texttt{b = true}: this
-board holds \ty{bool} as an \ty{int}. \textbf{The Pi 3 prints \texttt{b = 1} too},
-so it is not a difference between the boards.
+\textbf{g8's \texttt{b = true} was brought into line on 2026-09-04}
+(\S\ref{sec:bool-tag}). Until then both boards held \ty{bool} as an \ty{int} and
+printed \texttt{b = 1}.
 
 \subsubsection*{Deadlines are checked afterwards}
 \label{sec:pi5-deadline}
@@ -2339,6 +2336,55 @@ capture \texttt{g\_cap} and the single FIFO behind \texttt{cc\_pump()} were all
 still shared. The safeguards in place (a wall-clock cap, a liveness check
 before reusing a slot) \textbf{never fired} --- something lower down stops
 first. \textbf{``Protect the allocator and you can go concurrent'' was wrong.}
+
+\subsubsection*{Booleans are a tagged value}
+\label{sec:bool-tag}
+
+The canonical implementation prints \texttt{print("b = " ++ b)} as
+\texttt{b = true}. Both boards printed \textbf{\texttt{b = 1}} for a long time:
+booleans were plain 0/1, and the value carried nothing that would print them back
+as \texttt{true} / \texttt{false}. \textbf{Both were fixed together on 2026-09-04}
+--- fixing one alone would have re-opened a difference we had just closed.
+
+The scheme is the same tagged-value trick used for strings; only where the tag
+lives differs.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & Pi 3 (\texttt{.avm} VM, 32-bit) & Pi 5 (JIT, 64-bit) \\
+\midrule
+Tag & \texttt{0x20000000} (bit 29) & bit 62 (low bit 0) \\
+Value & the low bit & bit 1 \\
+Strings & \texttt{0x40000000} (bit 30) & a real address ($< 2^{48}$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{On the Pi 5 the tag cannot live on the integer side.} \texttt{v\_int(-1)}
+has every high bit set, so a high-bit tag would \textbf{turn negative numbers into
+booleans}. It goes in the ``low bit 0, i.e. not an integer'' space instead
+(floats use bit 60, lists bit 61).
+
+\textbf{Unlike strings, a boolean's tag must also be read when testing a
+condition.} \texttt{false} carries the tag, so it is \textbf{not zero}, and a plain
+branch-if-zero would not see it as false. The Pi 3 routes \texttt{JZ}
+(\texttt{0x31}) through \texttt{vm\_falsy}; on the Pi 5 \texttt{v\_truthy} checks for
+a boolean first. Comparisons and logical operators
+(\texttt{< <= > >= == != \&\& || !}) now return booleans.
+
+In arithmetic and comparison they still behave as 0 / 1. Measured on both boards:
+
+\begin{term}
+neg = -7        cmp = true      sum = -4      fld = true
+branch ok       field-bool branch ok
+\end{term}
+
+\textbf{One path still prints \texttt{1}}: the Mac-side \texttt{--xinu-jit}
+(\texttt{POST /actor/load}) collapses \texttt{true} / \texttt{false} to
+\texttt{Int 1} / \texttt{Int 0} in its front end. Fixing that means adding a boolean
+to the AST, which reaches into type inference.
 
 \subsubsection*{\texttt{select} --- rebuilt on the Pi 3's continuation scheme}
 \label{sec:pi5-select}
