@@ -1965,7 +1965,7 @@ Deadline without \texttt{else} (\ty{result}) & yes & failure is a reserved value
 \texttt{replyto} / \texttt{answer} / parameter \texttt{reply} & yes & a reply destination is an actor id (\texttt{\_\_snd}) \\
 \texttt{acquire} / \texttt{release} & yes & new instructions \texttt{0x53}/\texttt{0x54}; named locks \\
 \texttt{spawn} & no & likewise \\
-\texttt{remote(...)} sends & no & \texttt{parse: unexpected token} \\
+\texttt{remote(...)} sends & yes & instructions \texttt{0x55}/\texttt{0x56}; carried over UDP/9010 \\
 \texttt{await} in expression position & no & only \texttt{var x = await f;} (continuation splitting) \\
 \bottomrule
 \end{tabular}
@@ -2206,11 +2206,19 @@ Accepted & classes, fields, methods, \texttt{var}, assignment,
        concurrent}; they run on the spot (\S\ref{sec:pi5-future}) \\
      & \textbf{\texttt{select} / \texttt{case} / \texttt{timeout}} --- but they
        \textbf{wait, on the Pi 3's continuation scheme} (\S\ref{sec:pi5-select}) \\
+     & \textbf{\texttt{replyto} / \texttt{answer} / parameter \texttt{reply}}
+       --- since \texttt{reply(v)} is the return value here, one reply slot is
+       taken per \texttt{now} to carry a destination as a value \\
+     & \textbf{\texttt{acquire} / \texttt{release}} --- pairing and order are
+       checked canonically; what is kept here is a runtime watch only \\
+     & \textbf{\texttt{remote("host:port","actor")}} --- send to, or call, an
+       actor another node published. UDP/9010; the datagram is shared by all
+       three boards and the Mac host VM \\
+     & a field initialiser may be \texttt{new K()} (the canonical way to hold
+       an actor is in a field, so without this you get
+       \texttt{send target is not actor}) \\
 \midrule
-Refused & \texttt{replyto} / \texttt{answer} / parameter \texttt{reply},
-       \texttt{acquire} / \texttt{release}, \texttt{spawn}, \texttt{remote} \\
-     & field initialisers must be \textbf{integer, boolean or float literals}
-       (they used to become a silent 0 when they were anything else) \\
+Refused & \texttt{spawn} \\
 \bottomrule
 \end{tabular}
 \end{center}

@@ -1654,7 +1654,7 @@ Pi 3 では\textbf{機外に出ない}。効果検査は保守的に見積もる
 \texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply} & ○ & 返信先＝アクター番号（\texttt{\_\_snd}） \\
 \texttt{acquire} / \texttt{release} & ○ & 新命令 \texttt{0x53}/\texttt{0x54}。名前つき錠 \\
 \texttt{spawn} & × & 同上 \\
-\texttt{remote(...)} 送信 & × & \texttt{parse: unexpected token} \\
+\texttt{remote(...)} 送信 & ○ & 命令 \texttt{0x55}/\texttt{0x56}。UDP/9010 で運ぶ \\
 \texttt{await} を式の位置に書く & × & \texttt{var x = await f;} の形だけ（継続分割のため） \\
 \bottomrule
 \end{tabular}
@@ -1890,11 +1890,18 @@ Pi 3 は起動直後で 2--6 秒、モジュールを 13 本投入してアク�
        その場で走る（\S\ref{sec:pi5-future}） \\
      & \textbf{\texttt{select} / \texttt{case} / \texttt{timeout}} ---
        \textbf{Pi 3 と同じ継続方式で待てる}（\S\ref{sec:pi5-select}） \\
+     & \textbf{\texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply}} ---
+       \texttt{reply(v)} が戻り値そのものなので、\texttt{now} ごとに
+       返信スロットを取って実現している \\
+     & \textbf{\texttt{acquire} / \texttt{release}} --- 対と順序の検査は正典側。
+       ここが持つのは実行時の見張りだけ \\
+     & \textbf{\texttt{remote("host:port","actor")}} --- 他ノードの公開アクターへ
+       送る／呼ぶ。UDP/9010、電文は 3 台と Mac のホスト VM で共通 \\
+     & フィールドの初期値に \texttt{new K()} を書ける
+       （正典ではアクターはフィールドに持つため、これが無いと
+       \texttt{send target is not actor} になる） \\
 \midrule
-通らない & \texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply}、
-       \texttt{acquire} / \texttt{release}、\texttt{spawn}、\texttt{remote} \\
-     & フィールドの初期値は\textbf{整数と真偽値のリテラルだけ}
-       （以前は「数値でなければ黙って 0」だった） \\
+通らない & \texttt{spawn} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -2526,8 +2533,10 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 
 \begin{itemize}
 \item \textbf{実機（Xinu / Pi 3・Pi 4・Pi 5）で動く範囲は正典の部分集合である。}
-  \ty{float}・配列・数学組込み・\texttt{spawn}・\texttt{remote}・\texttt{replyto} が無く、
-  型・効果・レベルの注釈は受理して捨てる（検査は正典側で行う）。詳細は \S\ref{sec:xinu}。
+  Pi 4・Pi 5 は \texttt{spawn} を除く全機能が動く。Pi 3 は \ty{float}・配列・
+  数学組込み・自メソッド呼び出しが無い（\texttt{.avm} の値表現が 32 ビットの
+  タグ付き整数のため）。型・効果・レベルの注釈はどの板も受理して捨てる
+  （検査は正典側で行う）。詳細は \S\ref{sec:xinu}。
 \item \texttt{future} + \texttt{await} に分けて書くと効果伝播を逃れる
   （\S\ref{sec:effects} の「既知の穴」）。修正には
   \ty{future} の型に効果を載せる必要がある。
