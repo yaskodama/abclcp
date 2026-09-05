@@ -1,4 +1,4 @@
-This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  5 SEP 2026 12:56
+This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  5 SEP 2026 13:32
  restricted system commands enabled.
 **aipl_guide_en.tex
 (./aipl_guide_en.tex
@@ -978,42 +978,42 @@ Underfull \hbox (badness 2460) in paragraph at lines 2186--2188
 ) timeout <ms> else <expr>
  []
 
-[33] [34] [35] [36] [37] [38] [39]
-Underfull \hbox (badness 3701) in paragraph at lines 2776--2778
+[33] [34] [35] [36] [37] [38] [39] [40]
+Underfull \hbox (badness 3701) in paragraph at lines 2827--2829
 []|\TU/lmr/m/n/10 do not dis-tin-guish ac-tor types (unify \TU/lmtt/m/n/10 actor
 (A) \TU/lmr/m/n/10 with
  []
 
-[40]
-Overfull \hbox (41.45665pt too wide) in paragraph at lines 2808--2810
+
+Overfull \hbox (41.45665pt too wide) in paragraph at lines 2859--2861
 []\TU/lmr/bx/n/10.95 Write a dead-line on ev-ery wait. \TU/lmr/m/n/10.95 Oth-er-
 wise you get a warn-ing, and un-der \TU/lmtt/m/n/10.95 AIOS_STRICT_DEADLINE=1
  []
 
-[41] [42]
-Underfull \hbox (badness 10000) in paragraph at lines 2972--2974
+[41] [42] [43]
+Underfull \hbox (badness 10000) in paragraph at lines 3023--3025
 []|\TU/lmtt/m/n/10 actor(A) \TU/lmr/m/n/10 and \TU/lmtt/m/n/10 actor(B) \TU/lmr
 /m/n/10 are now dis-tin-guished
  []
 
 
-Underfull \hbox (badness 2671) in paragraph at lines 2996--2997
+Underfull \hbox (badness 2671) in paragraph at lines 3047--3048
 []|\TU/lmr/m/n/10 the spec-i-fi-ca-tion this guide de-
  []
 
 
-Underfull \hbox (badness 2662) in paragraph at lines 2997--3001
+Underfull \hbox (badness 2662) in paragraph at lines 3048--3052
 \TU/lmr/m/n/10 chan-nels, own-er-ship (\TU/lmtt/m/n/10 pub\TU/lmr/m/n/10 /\TU/l
 mtt/m/n/10 move\TU/lmr/m/n/10 ),
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 2997--3001
+Underfull \hbox (badness 10000) in paragraph at lines 3048--3052
 \TU/lmr/m/n/10 tu-ples, \TU/lmtt/m/n/10 match\TU/lmr/m/n/10 , saga, \TU/lmtt/m/
 n/10 scope {
  []
 
-[43] [44] (./aipl_guide_en.aux)
+[44] [45] (./aipl_guide_en.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
@@ -1023,14 +1023,14 @@ Package rerunfilecheck Info: File `aipl_guide_en.out' has not changed.
 )
 
 Here is how much of LuaTeX's memory you used:
- 13443 strings out of 476076
- 931579,662416 words of node,token memory allocated
+ 13451 strings out of 476076
+ 1164484,662416 words of node,token memory allocated
  508 words of node memory still in use:
    6 hlist, 2 vlist, 2 rule, 2 glue, 4 kern, 1 glyph, 7 attribute, 56 glue_spec,
  7 attribute_list, 1 write nodes
-   avail lists: 1:2,2:8172,3:367,4:21512,5:16570,6:119,7:23794,8:9,9:41999,10:55
-,11:1676
- 34854 multiletter control sequences out of 65536+600000
+   avail lists: 1:3,2:10221,3:367,4:29339,5:24348,6:119,7:23874,8:10,9:61409,10:
+55,11:2364
+ 34855 multiletter control sequences out of 65536+600000
  97 fonts using 7224039 bytes
  72i,10n,75p,446b,868s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/opentype/public/lm
@@ -1055,15 +1055,16 @@ exmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></opt/homebrew/Cellar/texlive
 ew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10
 .pfb></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/
 amsfonts/cm/cmr7.pfb></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fon
-ts/type1/public/amsfonts/cm/cmsy10.pfb></opt/homebrew/Cellar/texlive/20260301/sh
-are/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></opt/homebrew/Cellar/te
-xlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></opt/h
-omebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/
-cmtt10.pfb>
-Output written on aipl_guide_en.pdf (44 pages, 367496 bytes).
+ts/type1/public/amsfonts/cm/cmr8.pfb></opt/homebrew/Cellar/texlive/20260301/shar
+e/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></opt/homebrew/Cellar/tex
+live/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></opt/ho
+mebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/c
+msy8.pfb></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/pub
+lic/amsfonts/cm/cmtt10.pfb>
+Output written on aipl_guide_en.pdf (45 pages, 380333 bytes).
 
-PDF statistics: 1610 PDF objects out of 1728 (max. 8388607)
- 1505 compressed objects within 16 object streams
- 857 named destinations out of 1000 (max. 1048576)
+PDF statistics: 1625 PDF objects out of 1728 (max. 8388607)
+ 1518 compressed objects within 16 object streams
+ 864 named destinations out of 1000 (max. 1048576)
  729 words of extra memory for PDF output out of 10000 (max. 100000000)
 

@@ -1,4 +1,4 @@
-This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  5 SEP 2026 12:55
+This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  5 SEP 2026 13:31
  restricted system commands enabled.
 **aipl_guide_ja.tex
 (./aipl_guide_ja.tex
@@ -1700,6 +1700,10 @@ Removing  `ltj.listings_unicode' from `process_input_buffer'. [40]
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
+Removing  `ltj.listings_unicode' from `process_input_buffer'.
+Removing  `ltj.process_input_buffer' from `process_input_buffer'.
+Inserting `ltj.listings_unicode' in `process_input_buffer'.
+Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'. [41]
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
@@ -1712,12 +1716,12 @@ Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
-Inserting `ltj.process_input_buffer' in `process_input_buffer'.
-Removing  `ltj.listings_unicode' from `process_input_buffer'. [43]
+Inserting `ltj.process_input_buffer' in `process_input_buffer'. [43]
+Removing  `ltj.listings_unicode' from `process_input_buffer'. [44]
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
-Inserting `ltj.process_input_buffer' in `process_input_buffer'. [44]
-Removing  `ltj.listings_unicode' from `process_input_buffer'. [45]
+Inserting `ltj.process_input_buffer' in `process_input_buffer'. [45]
+Removing  `ltj.listings_unicode' from `process_input_buffer'.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
@@ -1737,16 +1741,16 @@ Package rerunfilecheck Info: File `aipl_guide_ja.out' has not changed.
 )
 
 Here is how much of LuaTeX's memory you used:
- 15878 strings out of 476076
- 1822844,662416 words of node,token memory allocated
+ 15885 strings out of 476076
+ 1166613,662416 words of node,token memory allocated
  1066 words of node memory still in use:
    10 hlist, 2 vlist, 5 rule, 2 glue, 4 kern, 1 glyph, 203 attribute, 57 glue_sp
 ec, 30 attribute_list, 1 write, 13 user_defined nodes
-   avail lists: 1:27,2:199020,3:1338,4:64048,5:21271,6:115,7:21457,8:9,9:58553,1
-0:53,11:2046
- 37099 multiletter control sequences out of 65536+600000
+   avail lists: 1:26,2:147812,3:1338,4:48136,5:15872,6:108,7:21532,8:10,9:43665,
+10:53,11:1526
+ 37100 multiletter control sequences out of 65536+600000
  142 fonts using 99621495 bytes
- 119i,10n,112p,2065b,987s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 119i,10n,112p,2065b,989s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/opentype/public/lm
 /lmmono8-regular.otf></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fon
 ts/opentype/public/lm/lmroman10-bold.otf></opt/homebrew/Cellar/texlive/20260301/
@@ -1777,18 +1781,19 @@ t/fonts/type1/public/amsfonts/cm/cmmi8.pfb></opt/homebrew/Cellar/texlive/2026030
 r/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></o
 pt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts
 /cm/cmr6.pfb></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1
-/public/amsfonts/cm/cmr9.pfb></opt/homebrew/Cellar/texlive/20260301/share/texmf-
-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></opt/homebrew/Cellar/texlive/202
-60301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></opt/homebrew/C
-ellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb
-></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsf
-onts/cm/cmsy9.pfb></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/
-type1/public/amsfonts/cm/cmtt10.pfb></opt/homebrew/Cellar/texlive/20260301/share
-/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt9.pfb>
-Output written on aipl_guide_ja.pdf (50 pages, 698202 bytes).
+/public/amsfonts/cm/cmr7.pfb></opt/homebrew/Cellar/texlive/20260301/share/texmf-
+dist/fonts/type1/public/amsfonts/cm/cmr9.pfb></opt/homebrew/Cellar/texlive/20260
+301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></opt/homebrew/Ce
+llar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb>
+</opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfo
+nts/cm/cmsy7.pfb></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/t
+ype1/public/amsfonts/cm/cmsy9.pfb></opt/homebrew/Cellar/texlive/20260301/share/t
+exmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb></opt/homebrew/Cellar/texliv
+e/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt9.pfb>
+Output written on aipl_guide_ja.pdf (50 pages, 713813 bytes).
 
-PDF statistics: 1705 PDF objects out of 1728 (max. 8388607)
- 1575 compressed objects within 16 object streams
- 869 named destinations out of 1000 (max. 1048576)
+PDF statistics: 1717 PDF objects out of 1728 (max. 8388607)
+ 1586 compressed objects within 16 object streams
+ 875 named destinations out of 1000 (max. 1048576)
  745 words of extra memory for PDF output out of 10000 (max. 100000000)
 

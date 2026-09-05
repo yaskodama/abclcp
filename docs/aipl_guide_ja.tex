@@ -1879,16 +1879,20 @@ Pi 3 は起動直後で 2--6 秒、モジュールを 13 本投入してアク�
        値ランタイムの \texttt{v\_floatlit} へ IEEE-754 のビット列で渡す \\
      & \textbf{配列} \texttt{array\_empty} / \texttt{push} / \texttt{get} /
        \texttt{set} / \texttt{len} / \texttt{zeros} --- 値ランタイムのリストへ写す \\
+     & \textbf{数学組込み} \texttt{sqrt exp log log10 sin cos tan asin acos atan
+       floor ceil round abs neg} --- \texttt{libm} が無いので自前
+       （\texttt{sqrt} は \texttt{fsqrt} 命令。ほかは範囲を縮めてから級数。
+       \S\ref{sec:hw-math}） \\
+     & \textbf{\ty{result} 型} --- \texttt{else} を書かない期限
+       \texttt{now o.m() timeout N} と \texttt{await f timeout N}、
+       および \texttt{is\_ok(r)} / \texttt{value(r, 既定)} \\
      & \textbf{\texttt{future} / \texttt{await}} --- ただし\textbf{並行ではない}。
        その場で走る（\S\ref{sec:pi5-future}） \\
      & \textbf{\texttt{select} / \texttt{case} / \texttt{timeout}} ---
        \textbf{Pi 3 と同じ継続方式で待てる}（\S\ref{sec:pi5-select}） \\
 \midrule
 通らない & \texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply}、
-       \texttt{acquire} / \texttt{release}、\texttt{spawn}、\texttt{remote}、
-       数学組込み（\texttt{sqrt} 等） \\
-     & \texttt{now} / \texttt{await} の \texttt{else} 無しの期限（\ty{result}）と
-       \texttt{is\_ok} / \texttt{value} --- \texttt{else} が必須 \\
+       \texttt{acquire} / \texttt{release}、\texttt{spawn}、\texttt{remote} \\
      & フィールドの初期値は\textbf{整数と真偽値のリテラルだけ}
        （以前は「数値でなければ黙って 0」だった） \\
 \bottomrule
@@ -2049,6 +2053,53 @@ Pi 3 も継続分割で実現していて並行には走らないので、\textb
 入れておいた歯止め（時間での打ち切り、スロット再利用前の生存確認）は
 \textbf{効かなかった} --- 時間切れに達する前に、より低い層で止まっている。
 \textbf{「確保器さえ守れば並行にできる」は誤りだった。}
+
+\subsubsection*{数学組込みは自前である}
+\label{sec:hw-math}
+
+ベアメタルなので \texttt{libm} が無い。正典の \texttt{Core.Math} 15 個は
+値ランタイムの中に書いてある。\texttt{sqrt} だけは AArch64 の \texttt{fsqrt}
+命令そのもので、残りは範囲を縮めてから級数で求める。
+
+\textbf{精度は Mac 上で \texttt{libm} と突き合わせて確かめてある。}
+最初に書いたものは \texttt{sin} が $2.4\times10^{-4}$、
+\texttt{atan}/\texttt{asin}/\texttt{acos} が $10^{-2}$ も外れていた ---
+範囲の縮め方が甘く、級数が収束していなかった。
+\texttt{sin}/\texttt{cos} は $\pi/2$ 単位に畳んで象限で選び、
+\texttt{atan} は $\tan(\pi/12)$ 以下まで縮めるようにして直した。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+組込み & 最大相対誤差（\texttt{libm} 比） \\
+\midrule
+\texttt{sqrt} / \texttt{floor} / \texttt{ceil} / \texttt{round} & \textbf{0}（厳密） \\
+\texttt{log} / \texttt{log10} / \texttt{atan} / \texttt{asin} & $\sim 10^{-16}$ \\
+\texttt{exp} / \texttt{tan} / \texttt{acos} & $\sim 10^{-15}$ \\
+\texttt{sin} / \texttt{cos} & $\sim 10^{-11}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{abs} と \texttt{neg} は整数で来たら整数で返す
+（正典は \ty{float} だけを受けるので、実機のほうが緩い）。
+
+\subsubsection*{\ty{result} --- \texttt{else} を書かない期限}
+
+\texttt{now o.m() timeout N} や \texttt{await f timeout N} を
+\texttt{else} 無しで書くと \ty{result}$\langle\tau\rangle$ になる。
+実機では\textbf{成功なら値そのもの}、\textbf{失敗なら予約された一つの値}で表す ---
+\texttt{ok} で包まないので割り付けが要らない。
+観測するのは \texttt{is\_ok(r)} と \texttt{value(r, 既定)} だけなので、これで足りる。
+
+\begin{term}
+var r = now a.f(21) timeout 1000;
+print("is_ok = " ++ is_ok(r));      -- is_ok = true
+print("value = " ++ value(r, 0));   -- value = 42
+\end{term}
+
+失敗の値は印字すると \texttt{err} になり、条件としては偽である。
 
 \subsubsection*{真偽値はタグ付きの値である}
 \label{sec:bool-tag}

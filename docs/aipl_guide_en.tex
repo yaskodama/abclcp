@@ -2195,16 +2195,20 @@ Accepted & classes, fields, methods, \texttt{var}, assignment,
        runtime's \texttt{v\_floatlit} as an IEEE-754 bit pattern \\
      & \textbf{Arrays} \texttt{array\_empty} / \texttt{push} / \texttt{get} /
        \texttt{set} / \texttt{len} / \texttt{zeros} --- mapped onto the runtime's lists \\
+     & \textbf{Maths builtins} \texttt{sqrt exp log log10 sin cos tan asin acos
+       atan floor ceil round abs neg} --- written by hand, since there is no
+       \texttt{libm} (\texttt{sqrt} is the \texttt{fsqrt} instruction; the rest
+       reduce the range and then use a series, \S\ref{sec:hw-math}) \\
+     & \textbf{\ty{result}} --- a deadline written without \texttt{else}
+       (\texttt{now o.m() timeout N}, \texttt{await f timeout N}) plus
+       \texttt{is\_ok(r)} / \texttt{value(r, default)} \\
      & \textbf{\texttt{future} / \texttt{await}} --- but \textbf{not
        concurrent}; they run on the spot (\S\ref{sec:pi5-future}) \\
      & \textbf{\texttt{select} / \texttt{case} / \texttt{timeout}} --- but they
        \textbf{wait, on the Pi 3's continuation scheme} (\S\ref{sec:pi5-select}) \\
 \midrule
 Refused & \texttt{replyto} / \texttt{answer} / parameter \texttt{reply},
-       \texttt{acquire} / \texttt{release}, \texttt{spawn}, \texttt{remote},
-       the maths builtins (\texttt{sqrt} and friends) \\
-     & a deadline without \texttt{else} (\ty{result}) and \texttt{is\_ok} /
-       \texttt{value} --- \texttt{else} is required \\
+       \texttt{acquire} / \texttt{release}, \texttt{spawn}, \texttt{remote} \\
      & field initialisers must be \textbf{integer, boolean or float literals}
        (they used to become a silent 0 when they were anything else) \\
 \bottomrule
@@ -2373,6 +2377,53 @@ capture \texttt{g\_cap} and the single FIFO behind \texttt{cc\_pump()} were all
 still shared. The safeguards in place (a wall-clock cap, a liveness check
 before reusing a slot) \textbf{never fired} --- something lower down stops
 first. \textbf{``Protect the allocator and you can go concurrent'' was wrong.}
+
+\subsubsection*{The maths builtins are written by hand}
+\label{sec:hw-math}
+
+There is no \texttt{libm} on bare metal, so the canonical \texttt{Core.Math}
+fifteen live inside the value runtime. \texttt{sqrt} is AArch64's \texttt{fsqrt}
+instruction; the rest reduce the range and then evaluate a series.
+
+\textbf{Accuracy was checked against \texttt{libm} on the Mac before shipping.}
+The first version was off by $2.4\times10^{-4}$ for \texttt{sin} and by
+$10^{-2}$ for \texttt{atan}/\texttt{asin}/\texttt{acos}: the range reduction was
+too weak and the series had not converged. Folding \texttt{sin}/\texttt{cos} to
+multiples of $\pi/2$ and picking by quadrant, and shrinking \texttt{atan} below
+$\tan(\pi/12)$, fixed it.
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Builtin & Worst relative error vs.\ \texttt{libm} \\
+\midrule
+\texttt{sqrt} / \texttt{floor} / \texttt{ceil} / \texttt{round} & \textbf{0} (exact) \\
+\texttt{log} / \texttt{log10} / \texttt{atan} / \texttt{asin} & $\sim 10^{-16}$ \\
+\texttt{exp} / \texttt{tan} / \texttt{acos} & $\sim 10^{-15}$ \\
+\texttt{sin} / \texttt{cos} & $\sim 10^{-11}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{abs} and \texttt{neg} return an integer when given one (the canonical
+implementation only accepts \ty{float}, so the hardware is the laxer of the two).
+
+\subsubsection*{\ty{result} --- a deadline without \texttt{else}}
+
+Writing \texttt{now o.m() timeout N} or \texttt{await f timeout N} without an
+\texttt{else} yields \ty{result}$\langle\tau\rangle$. On the hardware this is
+\textbf{the value itself on success} and \textbf{one reserved value on failure} ---
+success is not wrapped, so nothing is allocated. \texttt{is\_ok(r)} and
+\texttt{value(r, default)} are the only observers, which is all that is needed.
+
+\begin{term}
+var r = now a.f(21) timeout 1000;
+print("is_ok = " ++ is_ok(r));      -- is_ok = true
+print("value = " ++ value(r, 0));   -- value = 42
+\end{term}
+
+The failure value prints as \texttt{err} and is false as a condition.
 
 \subsubsection*{Booleans are a tagged value}
 \label{sec:bool-tag}

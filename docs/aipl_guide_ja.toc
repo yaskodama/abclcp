@@ -76,18 +76,18 @@
 \contentsline {subsection}{\numberline {39.7}正典ガイド 10 本の実機確認}{35}{subsection.39.7}%
 \contentsline {subsection}{\numberline {39.8}Pi 5 --- もう一つの実機}{36}{subsection.39.8}%
 \contentsline {subsection}{\numberline {39.9}三台に共通する落とし穴（実装側）}{42}{subsection.39.9}%
-\contentsline {subsection}{\numberline {39.10}Pi 4 --- 三台目の実機}{42}{subsection.39.10}%
-\contentsline {part}{第VII部\hspace {1\zw }付録}{44}{part.7}%
-\contentsline {section}{\numberline {40}文法の要約}{44}{section.40}%
-\contentsline {section}{\numberline {41}処理系の環境変数}{45}{section.41}%
-\contentsline {section}{\numberline {42}よくある落とし穴}{46}{section.42}%
+\contentsline {subsection}{\numberline {39.10}Pi 4 --- 三台目の実機}{43}{subsection.39.10}%
+\contentsline {part}{第VII部\hspace {1\zw }付録}{45}{part.7}%
+\contentsline {section}{\numberline {40}文法の要約}{45}{section.40}%
+\contentsline {section}{\numberline {41}処理系の環境変数}{46}{section.41}%
+\contentsline {section}{\numberline {42}よくある落とし穴}{47}{section.42}%
 \contentsline {section}{\numberline {43}現状の限界}{47}{section.43}%
-\contentsline {section}{\numberline {44}前版からの変更点}{47}{section.44}%
-\contentsline {subsection}{\numberline {44.1}2026年09月05日 --- 三台の実機が同じ AIPL を受け取るようになった}{47}{subsection.44.1}%
+\contentsline {section}{\numberline {44}前版からの変更点}{48}{section.44}%
+\contentsline {subsection}{\numberline {44.1}2026年09月05日 --- 三台の実機が同じ AIPL を受け取るようになった}{48}{subsection.44.1}%
 \contentsline {subsection}{\numberline {44.2}2026年09月03日 --- Pi 5 実機の対応範囲が広がった}{48}{subsection.44.2}%
-\contentsline {subsection}{\numberline {44.3}言語から外したもの}{48}{subsection.44.3}%
-\contentsline {subsection}{\numberline {44.4}足したもの}{48}{subsection.44.4}%
+\contentsline {subsection}{\numberline {44.3}言語から外したもの}{49}{subsection.44.3}%
+\contentsline {subsection}{\numberline {44.4}足したもの}{49}{subsection.44.4}%
 \contentsline {subsection}{\numberline {44.5}厳しくなったもの}{49}{subsection.44.5}%
 \contentsline {subsection}{\numberline {44.6}拡張子}{49}{subsection.44.6}%
 \contentsline {subsection}{\numberline {44.7}核と拡張 --- 言語は二層である}{49}{subsection.44.7}%
-\contentsline {section}{\numberline {45}関連文書}{49}{section.45}%
+\contentsline {section}{\numberline {45}関連文書}{50}{section.45}%
