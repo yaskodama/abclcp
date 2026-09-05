@@ -1635,9 +1635,9 @@ Pi 3 では\textbf{機外に出ない}。効果検査は保守的に見積もる
 \toprule
 機能 & \texttt{.avm} 経路 & 備考 \\
 \midrule
-クラス・フィールド・\texttt{send} / \texttt{send!} & ○ & \\
+クラス・フィールド・\texttt{send} / \texttt{send!} & ○ & \texttt{send!} は \texttt{send} と同じ扱い \\
 メソッド局所の \texttt{var}・\texttt{reply} & ○ & 局所変数は隠しフィールドになる \\
-\texttt{if} / \texttt{while} & ○ & \textbf{\texttt{while (c) do} と括弧が要る} \\
+\texttt{if} / \texttt{while} & ○ & 括弧はあってもなくてもよい \\
 \texttt{now} / \texttt{future} / \texttt{await} / 期限 & ○ & \textbf{継続分割}で実現（下記） \\
 \texttt{select} / \texttt{case} / \texttt{timeout} & ○ & \texttt{case} 名は実在のメソッドに限る \\
 文字列（値・\texttt{++}・引数） & ○ & \\
@@ -1648,9 +1648,14 @@ Pi 3 では\textbf{機外に出ない}。効果検査は保守的に見積もる
 \ty{float}・浮動小数リテラル & × & 値は整数と文字列のみ \\
 配列（\texttt{array\_*}） & × & \texttt{avm: unsupported expression} \\
 数学組込み（\texttt{sqrt} 等） & × & 同上 \\
+\texttt{call} / 自メソッド呼び出し & × & VM に呼び出し命令が無い \\
+\texttt{now}/\texttt{await} の \texttt{else} 無し期限（\ty{result}） & × & \texttt{else} は必須 \\
+\texttt{is\_ok} / \texttt{value} & × & 上に同じ \\
+\texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply} & × & 返信先の一級性は未対応 \\
+\texttt{acquire} / \texttt{release} & × & \texttt{unsupported call} \\
 \texttt{spawn} & × & 同上 \\
 \texttt{remote(...)} 送信 & × & \texttt{parse: unexpected token} \\
-\texttt{replyto} & × & \texttt{avm: unknown variable} \\
+\texttt{await} を式の位置に書く & × & \texttt{var x = await f;} の形だけ（継続分割のため） \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1868,13 +1873,22 @@ Pi 3 は起動直後で 2--6 秒、モジュールを 13 本投入してアク�
      & \textbf{\texttt{web\_listen} / \texttt{web\_expose}}（下記） \\
      & \textbf{\texttt{wait(ms)}} --- \textbf{どの経路でも}（下記） \\
      & \texttt{print} / \texttt{puts}、\texttt{ai\_call} \\
+     & \textbf{\texttt{send!}}（\texttt{send} と同じ扱い）、
+       \textbf{\texttt{call g(args);}} と裸の \texttt{g(args);}（自メソッド呼び出し） \\
+     & \textbf{浮動小数} --- リテラルと \texttt{float} フィールド。
+       値ランタイムの \texttt{v\_floatlit} へ IEEE-754 のビット列で渡す \\
+     & \textbf{配列} \texttt{array\_empty} / \texttt{push} / \texttt{get} /
+       \texttt{set} / \texttt{len} / \texttt{zeros} --- 値ランタイムのリストへ写す \\
      & \textbf{\texttt{future} / \texttt{await}} --- ただし\textbf{並行ではない}。
        その場で走る（\S\ref{sec:pi5-future}） \\
      & \textbf{\texttt{select} / \texttt{case} / \texttt{timeout}} ---
        \textbf{Pi 3 と同じ継続方式で待てる}（\S\ref{sec:pi5-select}） \\
 \midrule
-通らない & \texttt{replyto}、\texttt{spawn}、\texttt{remote}、配列 \texttt{array\_*}、
+通らない & \texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply}、
+       \texttt{acquire} / \texttt{release}、\texttt{spawn}、\texttt{remote}、
        数学組込み（\texttt{sqrt} 等） \\
+     & \texttt{now} / \texttt{await} の \texttt{else} 無しの期限（\ty{result}）と
+       \texttt{is\_ok} / \texttt{value} --- \texttt{else} が必須 \\
      & フィールドの初期値は\textbf{整数と真偽値のリテラルだけ}
        （以前は「数値でなければ黙って 0」だった） \\
 \bottomrule
@@ -1882,7 +1896,7 @@ Pi 3 は起動直後で 2--6 秒、モジュールを 13 本投入してアク�
 \end{center}
 
 断り方は名前つきで出る ---
-\texttt{not supported on this device: select}、
+\texttt{not supported on this device: replyto}、
 \texttt{unknown function: sqrt}、
 \texttt{new: unknown class: Zzz}、
 \texttt{reply must be the last statement of its block on this device}。

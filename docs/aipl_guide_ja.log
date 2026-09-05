@@ -1,4 +1,4 @@
-This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  5 SEP 2026 12:38
+This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  5 SEP 2026 12:55
  restricted system commands enabled.
 **aipl_guide_ja.tex
 (./aipl_guide_ja.tex
@@ -1667,16 +1667,24 @@ Removing  `ltj.listings_unicode' from `process_input_buffer'. [33]
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
+Removing  `ltj.listings_unicode' from `process_input_buffer'. [34] [35] [36]
+Removing  `ltj.process_input_buffer' from `process_input_buffer'.
+Inserting `ltj.listings_unicode' in `process_input_buffer'.
+Inserting `ltj.process_input_buffer' in `process_input_buffer'.
+Removing  `ltj.listings_unicode' from `process_input_buffer'.
+Removing  `ltj.process_input_buffer' from `process_input_buffer'.
+Inserting `ltj.listings_unicode' in `process_input_buffer'.
+Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'.
 LaTeX Font Info:    Font shape `JT3/gt/bx/n' in size <9> not available
-(Font)              Font shape `JT3/gt/m/n' tried instead on input line 1640.
+(Font)              Font shape `JT3/gt/m/n' tried instead on input line 1864.
 LaTeX Font Info:    Font shape `JT3/gt/m/n' will be
-(Font)              scaled to size 7.60036pt on input line 1640.
+(Font)              scaled to size 7.60036pt on input line 1864.
 LaTeX Font Info:    Font shape `JY3/gt/bx/n' in size <9> not available
-(Font)              Font shape `JY3/gt/m/n' tried instead on input line 1640.
+(Font)              Font shape `JY3/gt/m/n' tried instead on input line 1864.
 LaTeX Font Info:    Font shape `JY3/gt/m/n' will be
-(Font)              scaled to size 7.60036pt on input line 1640.
- [34] [35] [36]
+(Font)              scaled to size 7.60036pt on input line 1864.
+ [37] [38]
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
@@ -1684,19 +1692,7 @@ Removing  `ltj.listings_unicode' from `process_input_buffer'.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
-Removing  `ltj.listings_unicode' from `process_input_buffer'. [37] [38]
-Removing  `ltj.process_input_buffer' from `process_input_buffer'.
-Inserting `ltj.listings_unicode' in `process_input_buffer'.
-Inserting `ltj.process_input_buffer' in `process_input_buffer'.
-Removing  `ltj.listings_unicode' from `process_input_buffer'.
-Removing  `ltj.process_input_buffer' from `process_input_buffer'.
-Inserting `ltj.listings_unicode' in `process_input_buffer'.
-Inserting `ltj.process_input_buffer' in `process_input_buffer'.
-Removing  `ltj.listings_unicode' from `process_input_buffer'.
-Removing  `ltj.process_input_buffer' from `process_input_buffer'.
-Inserting `ltj.listings_unicode' in `process_input_buffer'.
-Inserting `ltj.process_input_buffer' in `process_input_buffer'. [39]
-Removing  `ltj.listings_unicode' from `process_input_buffer'.
+Removing  `ltj.listings_unicode' from `process_input_buffer'. [39]
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
@@ -1710,6 +1706,10 @@ Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
 Removing  `ltj.listings_unicode' from `process_input_buffer'.
 [42]
+Removing  `ltj.process_input_buffer' from `process_input_buffer'.
+Inserting `ltj.listings_unicode' in `process_input_buffer'.
+Inserting `ltj.process_input_buffer' in `process_input_buffer'.
+Removing  `ltj.listings_unicode' from `process_input_buffer'.
 Removing  `ltj.process_input_buffer' from `process_input_buffer'.
 Inserting `ltj.listings_unicode' in `process_input_buffer'.
 Inserting `ltj.process_input_buffer' in `process_input_buffer'.
@@ -1738,12 +1738,12 @@ Package rerunfilecheck Info: File `aipl_guide_ja.out' has not changed.
 
 Here is how much of LuaTeX's memory you used:
  15878 strings out of 476076
- 1458275,662416 words of node,token memory allocated
+ 1822844,662416 words of node,token memory allocated
  1066 words of node memory still in use:
    10 hlist, 2 vlist, 5 rule, 2 glue, 4 kern, 1 glyph, 203 attribute, 57 glue_sp
 ec, 30 attribute_list, 1 write, 13 user_defined nodes
-   avail lists: 1:26,2:169170,3:1338,4:52606,5:17485,6:108,7:21458,8:9,9:48239,1
-0:53,11:1682
+   avail lists: 1:27,2:199020,3:1338,4:64048,5:21271,6:115,7:21457,8:9,9:58553,1
+0:53,11:2046
  37099 multiletter control sequences out of 65536+600000
  142 fonts using 99621495 bytes
  119i,10n,112p,2065b,987s stack positions out of 10000i,1000n,20000p,200000b,200000s
@@ -1785,7 +1785,7 @@ ellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb
 onts/cm/cmsy9.pfb></opt/homebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/
 type1/public/amsfonts/cm/cmtt10.pfb></opt/homebrew/Cellar/texlive/20260301/share
 /texmf-dist/fonts/type1/public/amsfonts/cm/cmtt9.pfb>
-Output written on aipl_guide_ja.pdf (50 pages, 696534 bytes).
+Output written on aipl_guide_ja.pdf (50 pages, 698202 bytes).
 
 PDF statistics: 1705 PDF objects out of 1728 (max. 8388607)
  1575 compressed objects within 16 object streams

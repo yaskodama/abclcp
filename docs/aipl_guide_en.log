@@ -1,4 +1,4 @@
-This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  5 SEP 2026 12:40
+This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)  (format=lualatex 2026.3.1)  5 SEP 2026 12:56
  restricted system commands enabled.
 **aipl_guide_en.tex
 (./aipl_guide_en.tex
@@ -962,48 +962,53 @@ Missing character: There is no く (U+304F) in font [lmmono10-regular]:!
 Missing character: There is no だ (U+3060) in font [lmmono10-regular]:!
 Missing character: There is no さ (U+3055) in font [lmmono10-regular]:!
 Missing character: There is no い (U+3044) in font [lmmono10-regular]:!
-] [30]
-Overfull \hbox (1.73428pt too wide) in paragraph at lines 2069--2092
+]
+Overfull \hbox (19.85428pt too wide) in paragraph at lines 1945--1972
  [] 
  []
 
-[31]
-Underfull \hbox (badness 2460) in paragraph at lines 2181--2183
+[30]
+Overfull \hbox (1.73428pt too wide) in paragraph at lines 2074--2097
+ [] 
+ []
+
+[31] [32]
+Underfull \hbox (badness 2460) in paragraph at lines 2186--2188
 []|\TU/lmr/bx/n/10 post-fix dead-lines\TU/lmr/m/n/10 : \TU/lmtt/m/n/10 now t.m(a
 ) timeout <ms> else <expr>
  []
 
-[32] [33] [34] [35] [36] [37] [38] [39]
-Underfull \hbox (badness 3701) in paragraph at lines 2762--2764
+[33] [34] [35] [36] [37] [38] [39]
+Underfull \hbox (badness 3701) in paragraph at lines 2776--2778
 []|\TU/lmr/m/n/10 do not dis-tin-guish ac-tor types (unify \TU/lmtt/m/n/10 actor
 (A) \TU/lmr/m/n/10 with
  []
 
-
-Overfull \hbox (41.45665pt too wide) in paragraph at lines 2794--2796
+[40]
+Overfull \hbox (41.45665pt too wide) in paragraph at lines 2808--2810
 []\TU/lmr/bx/n/10.95 Write a dead-line on ev-ery wait. \TU/lmr/m/n/10.95 Oth-er-
 wise you get a warn-ing, and un-der \TU/lmtt/m/n/10.95 AIOS_STRICT_DEADLINE=1
  []
 
-[40] [41] [42]
-Underfull \hbox (badness 10000) in paragraph at lines 2958--2960
+[41] [42]
+Underfull \hbox (badness 10000) in paragraph at lines 2972--2974
 []|\TU/lmtt/m/n/10 actor(A) \TU/lmr/m/n/10 and \TU/lmtt/m/n/10 actor(B) \TU/lmr
 /m/n/10 are now dis-tin-guished
  []
 
 
-Underfull \hbox (badness 2671) in paragraph at lines 2982--2983
+Underfull \hbox (badness 2671) in paragraph at lines 2996--2997
 []|\TU/lmr/m/n/10 the spec-i-fi-ca-tion this guide de-
  []
 
 
-Underfull \hbox (badness 2662) in paragraph at lines 2983--2987
+Underfull \hbox (badness 2662) in paragraph at lines 2997--3001
 \TU/lmr/m/n/10 chan-nels, own-er-ship (\TU/lmtt/m/n/10 pub\TU/lmr/m/n/10 /\TU/l
 mtt/m/n/10 move\TU/lmr/m/n/10 ),
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 2983--2987
+Underfull \hbox (badness 10000) in paragraph at lines 2997--3001
 \TU/lmr/m/n/10 tu-ples, \TU/lmtt/m/n/10 match\TU/lmr/m/n/10 , saga, \TU/lmtt/m/
 n/10 scope {
  []
@@ -1019,12 +1024,12 @@ Package rerunfilecheck Info: File `aipl_guide_en.out' has not changed.
 
 Here is how much of LuaTeX's memory you used:
  13443 strings out of 476076
- 1164482,662416 words of node,token memory allocated
+ 931579,662416 words of node,token memory allocated
  508 words of node memory still in use:
    6 hlist, 2 vlist, 2 rule, 2 glue, 4 kern, 1 glyph, 7 attribute, 56 glue_spec,
  7 attribute_list, 1 write nodes
-   avail lists: 1:2,2:10221,3:367,4:29339,5:24348,6:119,7:23794,8:9,9:61409,10:5
-5,11:2364
+   avail lists: 1:2,2:8172,3:367,4:21512,5:16570,6:119,7:23794,8:9,9:41999,10:55
+,11:1676
  34854 multiletter control sequences out of 65536+600000
  97 fonts using 7224039 bytes
  72i,10n,75p,446b,868s stack positions out of 10000i,1000n,20000p,200000b,200000s
@@ -1055,7 +1060,7 @@ are/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></opt/homebrew/Cellar/te
 xlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></opt/h
 omebrew/Cellar/texlive/20260301/share/texmf-dist/fonts/type1/public/amsfonts/cm/
 cmtt10.pfb>
-Output written on aipl_guide_en.pdf (44 pages, 366085 bytes).
+Output written on aipl_guide_en.pdf (44 pages, 367496 bytes).
 
 PDF statistics: 1610 PDF objects out of 1728 (max. 8388607)
  1505 compressed objects within 16 object streams

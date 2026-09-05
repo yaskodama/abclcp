@@ -1946,9 +1946,9 @@ What is missing \textbf{fails on the spot}; nothing is dropped silently.
 \toprule
 Feature & \texttt{.avm} path & Note \\
 \midrule
-Classes, fields, \texttt{send} / \texttt{send!} & yes & \\
+Classes, fields, \texttt{send} / \texttt{send!} & yes & \texttt{send!} is treated as \texttt{send} \\
 Method-local \texttt{var}, \texttt{reply} & yes & locals become hidden fields \\
-\texttt{if} / \texttt{while} & yes & \textbf{\texttt{while (c) do} --- parentheses required} \\
+\texttt{if} / \texttt{while} & yes & parentheses optional \\
 \texttt{now} / \texttt{future} / \texttt{await} / deadlines & yes & via \textbf{continuation splitting} (below) \\
 \texttt{select} / \texttt{case} / \texttt{timeout} & yes & a \texttt{case} name must be a real method \\
 Strings (values, \texttt{++}, arguments) & yes & \\
@@ -1959,9 +1959,14 @@ Type / effect / level annotations & accepted, \textbf{discarded} & checked on th
 \ty{float} and float literals & no & values are integers and strings only \\
 Arrays (\texttt{array\_*}) & no & \texttt{avm: unsupported expression} \\
 Math builtins (\texttt{sqrt} etc.) & no & likewise \\
+\texttt{call} / calling one's own method & no & the VM has no call instruction \\
+Deadline without \texttt{else} (\ty{result}) & no & \texttt{else} is required \\
+\texttt{is\_ok} / \texttt{value} & no & likewise \\
+\texttt{replyto} / \texttt{answer} / parameter \texttt{reply} & no & first-class replies unsupported \\
+\texttt{acquire} / \texttt{release} & no & \texttt{unsupported call} \\
 \texttt{spawn} & no & likewise \\
 \texttt{remote(...)} sends & no & \texttt{parse: unexpected token} \\
-\texttt{replyto} & no & \texttt{avm: unknown variable} \\
+\texttt{await} in expression position & no & only \texttt{var x = await f;} (continuation splitting) \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -2184,14 +2189,23 @@ Accepted & classes, fields, methods, \texttt{var}, assignment,
      & \textbf{\texttt{wait(ms)}} --- \textbf{only on the shell
        \texttt{cc}/\texttt{make} path} (see below) \\
      & \texttt{print} / \texttt{puts}, \texttt{ai\_call} \\
+     & \textbf{\texttt{send!}} (treated as \texttt{send}), \textbf{\texttt{call g(args);}}
+       and bare \texttt{g(args);} (calling one's own method) \\
+     & \textbf{Floats} --- literals and \texttt{float} fields, passed to the value
+       runtime's \texttt{v\_floatlit} as an IEEE-754 bit pattern \\
+     & \textbf{Arrays} \texttt{array\_empty} / \texttt{push} / \texttt{get} /
+       \texttt{set} / \texttt{len} / \texttt{zeros} --- mapped onto the runtime's lists \\
      & \textbf{\texttt{future} / \texttt{await}} --- but \textbf{not
        concurrent}; they run on the spot (\S\ref{sec:pi5-future}) \\
      & \textbf{\texttt{select} / \texttt{case} / \texttt{timeout}} --- but they
        \textbf{wait, on the Pi 3's continuation scheme} (\S\ref{sec:pi5-select}) \\
 \midrule
-Refused & \texttt{replyto}, \texttt{spawn}, \texttt{remote}, arrays
-       (\texttt{array\_*}), the maths builtins (\texttt{sqrt} and friends) \\
-     & field initialisers must be \textbf{integer or boolean literals}
+Refused & \texttt{replyto} / \texttt{answer} / parameter \texttt{reply},
+       \texttt{acquire} / \texttt{release}, \texttt{spawn}, \texttt{remote},
+       the maths builtins (\texttt{sqrt} and friends) \\
+     & a deadline without \texttt{else} (\ty{result}) and \texttt{is\_ok} /
+       \texttt{value} --- \texttt{else} is required \\
+     & field initialisers must be \textbf{integer, boolean or float literals}
        (they used to become a silent 0 when they were anything else) \\
 \bottomrule
 \end{tabular}

@@ -75,17 +75,17 @@
 \contentsline {subsection}{\numberline {39.6}The Pi 3 holds exactly one module at a time}{30}{subsection.39.6}%
 \contentsline {subsection}{\numberline {39.7}The ten canonical guide samples on hardware}{31}{subsection.39.7}%
 \contentsline {subsection}{\numberline {39.8}The Pi 5 --- the other board}{31}{subsection.39.8}%
-\contentsline {subsection}{\numberline {39.9}Traps common to all three boards (implementation side)}{36}{subsection.39.9}%
+\contentsline {subsection}{\numberline {39.9}Traps common to all three boards (implementation side)}{37}{subsection.39.9}%
 \contentsline {subsection}{\numberline {39.10}The Pi 4 --- the third board}{37}{subsection.39.10}%
 \contentsline {part}{VII\hspace {1em}Appendix}{39}{part.7}%
 \contentsline {section}{\numberline {40}Grammar summary}{39}{section.40}%
 \contentsline {section}{\numberline {41}Environment variables of the implementation}{40}{section.41}%
-\contentsline {section}{\numberline {42}Common pitfalls}{40}{section.42}%
+\contentsline {section}{\numberline {42}Common pitfalls}{41}{section.42}%
 \contentsline {section}{\numberline {43}Present limits}{41}{section.43}%
-\contentsline {section}{\numberline {44}Changes from the previous edition}{41}{section.44}%
-\contentsline {subsection}{\numberline {44.1}Removed from the language}{42}{subsection.44.1}%
-\contentsline {subsection}{\numberline {44.2}Added}{42}{subsection.44.2}%
+\contentsline {section}{\numberline {44}Changes from the previous edition}{42}{section.44}%
+\contentsline {subsection}{\numberline {44.1}Removed from the language}{43}{subsection.44.1}%
+\contentsline {subsection}{\numberline {44.2}Added}{43}{subsection.44.2}%
 \contentsline {subsection}{\numberline {44.3}Made stricter}{43}{subsection.44.3}%
 \contentsline {subsection}{\numberline {44.4}The file extension}{43}{subsection.44.4}%
 \contentsline {subsection}{\numberline {44.5}Core and extensions --- the language has two layers}{43}{subsection.44.5}%
-\contentsline {section}{\numberline {45}Related documents}{43}{section.45}%
+\contentsline {section}{\numberline {45}Related documents}{44}{section.45}%
