@@ -1964,7 +1964,7 @@ Deadline without \texttt{else} (\ty{result}) & yes & failure is a reserved value
 \texttt{is\_ok} / \texttt{value} & yes & lowered to a comparison and a branch \\
 \texttt{replyto} / \texttt{answer} / parameter \texttt{reply} & yes & a reply destination is an actor id (\texttt{\_\_snd}) \\
 \texttt{acquire} / \texttt{release} & yes & new instructions \texttt{0x53}/\texttt{0x54}; named locks \\
-\texttt{spawn} & no & likewise \\
+\texttt{spawn} & yes & the new actor id goes into the published table under that name \\
 \texttt{remote(...)} sends & yes & instructions \texttt{0x55}/\texttt{0x56}; carried over UDP/9010 \\
 \texttt{await} in expression position & no & only \texttt{var x = await f;} (continuation splitting) \\
 \bottomrule
@@ -2217,8 +2217,7 @@ Accepted & classes, fields, methods, \texttt{var}, assignment,
      & a field initialiser may be \texttt{new K()} (the canonical way to hold
        an actor is in a field, so without this you get
        \texttt{send target is not actor}) \\
-\midrule
-Refused & \texttt{spawn} \\
+
 \bottomrule
 \end{tabular}
 \end{center}
@@ -3076,9 +3075,15 @@ accept}.
 \item \textbf{\ty{result} with \texttt{is\_ok} / \texttt{value}}, \ty{float},
   arrays and the maths builtins (Pi 4 and Pi 5), and \texttt{new K()} in a field
   initialiser.
-\item \textbf{Only \texttt{spawn} is left.} The Pi 3 additionally lacks
-  \ty{float}, arrays, the maths builtins and calling one's own method --- all of
-  which follow from \texttt{.avm} values being 32-bit tagged integers.
+\item \textbf{\texttt{spawn("Class","name")}} --- create an actor under a name.
+  None of the three keeps a separate registry of named actors: the
+  \textbf{published table} (the one \texttt{web\_expose} fills) is that registry,
+  so the new actor id goes in under that name and
+  \texttt{remote("host","name")} and \texttt{/api/x/name} reach the same thing.
+\item \textbf{That completes the canonical 25 on hardware.} Only the Pi 3 still
+  lacks \ty{float}, arrays, the maths builtins and calling one's own method ---
+  all of which follow from \texttt{.avm} values being 32-bit tagged integers
+  (22 of 25).
 \end{itemize}
 
 \subsection*{2026-09-05 --- all three boards accept the same AIPL}

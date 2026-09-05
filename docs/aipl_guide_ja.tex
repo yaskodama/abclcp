@@ -1653,7 +1653,7 @@ Pi 3 では\textbf{機外に出ない}。効果検査は保守的に見積もる
 \texttt{is\_ok} / \texttt{value} & ○ & 比較と分岐に落とす \\
 \texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply} & ○ & 返信先＝アクター番号（\texttt{\_\_snd}） \\
 \texttt{acquire} / \texttt{release} & ○ & 新命令 \texttt{0x53}/\texttt{0x54}。名前つき錠 \\
-\texttt{spawn} & × & 同上 \\
+\texttt{spawn} & ○ & 作った番号を公開表にその名前で載せる \\
 \texttt{remote(...)} 送信 & ○ & 命令 \texttt{0x55}/\texttt{0x56}。UDP/9010 で運ぶ \\
 \texttt{await} を式の位置に書く & × & \texttt{var x = await f;} の形だけ（継続分割のため） \\
 \bottomrule
@@ -1900,8 +1900,7 @@ Pi 3 は起動直後で 2--6 秒、モジュールを 13 本投入してアク�
      & フィールドの初期値に \texttt{new K()} を書ける
        （正典ではアクターはフィールドに持つため、これが無いと
        \texttt{send target is not actor} になる） \\
-\midrule
-通らない & \texttt{spawn} \\
+
 \bottomrule
 \end{tabular}
 \end{center}
@@ -2663,7 +2662,7 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 
 \begin{itemize}
 \item \textbf{実機（Xinu / Pi 3・Pi 4・Pi 5）で動く範囲は正典の部分集合である。}
-  Pi 4・Pi 5 は \texttt{spawn} を除く全機能が動く。Pi 3 は \ty{float}・配列・
+  Pi 4・Pi 5 は\textbf{全機能}が動く。Pi 3 は \ty{float}・配列・
   数学組込み・自メソッド呼び出しが無い（\texttt{.avm} の値表現が 32 ビットの
   タグ付き整数のため）。型・効果・レベルの注釈はどの板も受理して捨てる
   （検査は正典側で行う）。詳細は \S\ref{sec:xinu}。
@@ -2715,9 +2714,14 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
   \textbf{本物の名前つき錠}である（アクターが実プロセスなので実際に競合しうる）。
 \item \textbf{\ty{result} と \texttt{is\_ok} / \texttt{value}}、
   \ty{float}・配列・数学組込み（Pi 4・Pi 5）、フィールド初期化子の \texttt{new K()}。
-\item これで\textbf{残るは \texttt{spawn} だけ}になった。Pi 3 は加えて
+\item \textbf{\texttt{spawn("クラス名","名前")}}。名前を付けてアクターを作る。
+  三台とも「名前つきアクタ表」を別に持つのではなく、\textbf{公開表}
+  （\texttt{web\_expose} のもの）がそれである ---- 作った番号をその名前で載せるので、
+  \texttt{remote("host","名前")} からも \texttt{/api/x/名前} からも同じものに届く。
+\item これで\textbf{正典 25 機能が実機で全部そろった}。Pi 3 だけは
   \ty{float}・配列・数学組込み・自メソッド呼び出しが無い ----
-  いずれも \texttt{.avm} の値表現が 32 ビットのタグ付き整数であることに由来する。
+  いずれも \texttt{.avm} の値表現が 32 ビットのタグ付き整数であることに由来する
+  （21/25 から \texttt{spawn} を足して 22/25）。
 \end{itemize}
 
 \subsection{2026年09月05日 --- 三台の実機が同じ AIPL を受け取るようになった}
