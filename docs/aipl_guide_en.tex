@@ -1960,10 +1960,10 @@ Type / effect / level annotations & accepted, \textbf{discarded} & checked on th
 Arrays (\texttt{array\_*}) & no & \texttt{avm: unsupported expression} \\
 Math builtins (\texttt{sqrt} etc.) & no & likewise \\
 \texttt{call} / calling one's own method & no & the VM has no call instruction \\
-Deadline without \texttt{else} (\ty{result}) & no & \texttt{else} is required \\
-\texttt{is\_ok} / \texttt{value} & no & likewise \\
-\texttt{replyto} / \texttt{answer} / parameter \texttt{reply} & no & first-class replies unsupported \\
-\texttt{acquire} / \texttt{release} & no & \texttt{unsupported call} \\
+Deadline without \texttt{else} (\ty{result}) & yes & failure is a reserved value; no new instruction \\
+\texttt{is\_ok} / \texttt{value} & yes & lowered to a comparison and a branch \\
+\texttt{replyto} / \texttt{answer} / parameter \texttt{reply} & yes & a reply destination is an actor id (\texttt{\_\_snd}) \\
+\texttt{acquire} / \texttt{release} & yes & new instructions \texttt{0x53}/\texttt{0x54}; named locks \\
 \texttt{spawn} & no & likewise \\
 \texttt{remote(...)} sends & no & \texttt{parse: unexpected token} \\
 \texttt{await} in expression position & no & only \texttt{var x = await f;} (continuation splitting) \\

@@ -1649,10 +1649,10 @@ Pi 3 では\textbf{機外に出ない}。効果検査は保守的に見積もる
 配列（\texttt{array\_*}） & × & \texttt{avm: unsupported expression} \\
 数学組込み（\texttt{sqrt} 等） & × & 同上 \\
 \texttt{call} / 自メソッド呼び出し & × & VM に呼び出し命令が無い \\
-\texttt{now}/\texttt{await} の \texttt{else} 無し期限（\ty{result}） & × & \texttt{else} は必須 \\
-\texttt{is\_ok} / \texttt{value} & × & 上に同じ \\
-\texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply} & × & 返信先の一級性は未対応 \\
-\texttt{acquire} / \texttt{release} & × & \texttt{unsupported call} \\
+\texttt{now}/\texttt{await} の \texttt{else} 無し期限（\ty{result}） & ○ & 失敗は予約値。命令は増えていない \\
+\texttt{is\_ok} / \texttt{value} & ○ & 比較と分岐に落とす \\
+\texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply} & ○ & 返信先＝アクター番号（\texttt{\_\_snd}） \\
+\texttt{acquire} / \texttt{release} & ○ & 新命令 \texttt{0x53}/\texttt{0x54}。名前つき錠 \\
 \texttt{spawn} & × & 同上 \\
 \texttt{remote(...)} 送信 & × & \texttt{parse: unexpected token} \\
 \texttt{await} を式の位置に書く & × & \texttt{var x = await f;} の形だけ（継続分割のため） \\
