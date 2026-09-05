@@ -2546,6 +2546,123 @@ waiting
 timed out
 \end{term}
 
+\subsection{\texttt{remote} --- calling an actor on another board}
+\label{sec:xinu-remote}
+
+Canonically a send target is either a variable holding an actor reference or
+\texttt{remote("host:port", "actorName")} (see the table in
+\S\ref{sec:reply1st}). The second form now works on all three boards and on the
+Mac host VM. What it names is an actor published with \texttt{web\_expose}.
+
+\begin{lstlisting}
+class Echo { method say(x) : int !{} { reply(x * 2); } }
+var e = new Echo();
+web_expose("/echo", "e");
+
+var d = now remote("192.168.3.101", "echo").say(21) timeout 2000 else -1;
+send remote("192.168.3.50", "echo").say(5);
+\end{lstlisting}
+
+\subsubsection*{The datagram}
+
+All four implementations speak the same language: UDP port 9010, one line of
+readable ASCII (so \texttt{tcpdump} and \texttt{nc} show it as it is).
+
+\begin{term}
+Q <reqid> <actor> <method> <arg...>
+R <reqid> <value>
+\end{term}
+
+\begin{itemize}
+\item What travels is the method \textbf{name}, not its number: numbers differ
+  per board, so the receiving board resolves the name with its own
+  \texttt{\_\_method\_id}.
+\item One argument. \texttt{<arg...>} runs to the end of the line, so it may
+  contain spaces. A string of digits arrives \textbf{as an integer} on the other
+  side (the canonical \texttt{now remote(...).step(3)} takes one).
+\item What comes back is the value re-read from the text the other side
+  rendered. \textbf{No type is carried} --- the promise holds because the
+  canonical type checker has already matched the types on both sides.
+\item A deadline, an unknown host and an unknown method are \textbf{all}
+  failures. With \texttt{else} you get that value; without it you get
+  \texttt{err} (\ty{result}). The timeout case stays in one place.
+\end{itemize}
+
+\subsubsection*{Retransmission, and at-most-once}
+
+\textbf{UDP drops packets, so the request is re-sent every 200\,ms.} While it
+was sent once and then waited for, a board whose wait loop turns only a few
+times a second would \textbf{always} time out.
+
+Retransmitting naively runs the remote method twice, so the receiver keeps the
+last answer per \texttt{(sender IP, reqid)} and, for a repeat of the same
+request, \textbf{returns the stored answer without running anything}. That makes
+it \textbf{at most once}, which is safe even for a method with side effects.
+
+\subsubsection*{How each board carries it}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.4cm}@{}}
+\toprule
+Board & Carriage \\
+\midrule
+Pi 3 & the Xinu UDP device layer (\texttt{udpAlloc} / \texttt{open} /
+       \texttt{read} / \texttt{write}); the receiving end is a resident process.
+       VM instructions \texttt{0x55} / \texttt{0x56} \\
+Pi 4 / Pi 5 & their TCP is listen-only (passive open), so the frames are built
+       by hand \\
+Mac & OCaml Unix sockets. It is a \textbf{fourth peer}, which is what lets you
+       flash one board at a time and still have something to talk to \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The Pi 4 and the Pi 5 \textbf{never resolve the destination MAC with ARP}. The
+first request goes out with a broadcast destination MAC and a unicast
+destination IP, and \textbf{the decision to take it is made by the receiver}.
+The reply goes back to the requesting frame's sender, so no ARP is needed, and
+the MAC learned there is remembered --- later requests are unicast. That breaks
+less than another ARP state machine, and is enough for a handful of boards.
+
+\subsubsection*{Registering the callee (this differs per board)}
+
+The actor a call names must be \textbf{resident} on the board.
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Pi 4 & post it with \texttt{POST /cc?resident=1} \\
+Pi 5 & a plain \texttt{POST /cc} is enough \\
+Pi 3 & whatever was sent to \texttt{/actor/loadvm?ask=0} stays \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A plain \texttt{POST /cc} on the Pi 4 runs the program and is done, so
+\textbf{nothing is left for an outside caller to reach} and the caller gets
+\texttt{err}.
+
+\subsubsection*{Measured}
+
+That \texttt{say(21)} answers \texttt{42} was checked for \textbf{every pair} of
+the four implementations.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Caller $\rightarrow$ & Pi 3 & Pi 4 & Pi 5 & Mac & unreachable \\
+\midrule
+Pi 3 & --- & 42 & 42 & 42 & \texttt{else} \\
+Pi 4 & 42 & --- & 42 & 42 & \texttt{else} \\
+Pi 5 & 42 & 42 & --- & 42 & \texttt{else} \\
+Mac  & 42 & 42 & 42 & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
 \subsection{Traps common to all three boards (implementation side)}
 \label{sec:three-boards-traps}
 
@@ -2576,6 +2693,29 @@ in the same places every time.
   actor takes the same lock before its handler, so whatever you yielded to
   spins. \textbf{If the lock spins and ``steals'' after a limit, small examples
   happen to work} --- the nastiest shape a bug can take.
+\item \textbf{If you put request/response on UDP, retransmission is part of the
+  design.} Sent once and waited for, a request will always time out as soon as
+  the receive side lags even slightly. On bare metal this looks like a broken
+  receive path, and I rebuilt that path \textbf{twice}, each time only thinning
+  the symptom. \textbf{The test that settles it is to have the peer answer
+  repeatedly} --- if that works, what is broken is not the receive path but the
+  missing retransmission. And once you retransmit, keep a
+  \texttt{(sender, reqid)} record on the receiving side so it stays
+  \textbf{at most once}.
+\item \textbf{``I poked it while it was waiting and got an answer'' does not
+  prove the receive path is live.} It can be a late answer that your own wait
+  window happened to catch. \textbf{Look at the time, not at whether it came.}
+  Make the peer log when it sends, and keep two separate counts on the board:
+  how many answers arrived, and how many were still being waited for. Misreading
+  this cost a round trip before the real cause (the receive window in
+  \S\ref{sec:xinu-remote}) came out.
+\item \textbf{After flashing, an HTTP answer is not proof that the board
+  rebooted.} Until the power is cycled the board keeps answering from the old
+  kernel, and polling cannot tell the difference. The symptom is ``the thing I
+  just fixed is not there'', which sends you back to doubt the code. All three
+  boards now report their build from \texttt{GET /version} (\texttt{kversion.c}
+  is rebuilt every time through a \texttt{FORCE} dependency --- without that
+  \verb|__DATE__| freezes and the version lies).
 \item \textbf{Do not guess at a cause after the board dies; make the failure
   observable first.} A dead board yields no information and every experiment
   costs a power cycle. \textbf{One flash spent on instruments beats five spent
@@ -2913,6 +3053,33 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 
 \section{Changes from the previous edition}
 \label{sec:migrate-en}
+
+\subsection*{2026-09-06 --- the canonical 25 features now run on hardware}
+
+The language did not change. What changed is \textbf{how much of it the boards
+accept}.
+
+\begin{itemize}
+\item \textbf{\texttt{remote("host:port","actor")}} (\S\ref{sec:xinu-remote}).
+  The three boards and the Mac host VM can call each other's published actors.
+  \textbf{Checked for every pair.} Carried over UDP port 9010; the datagram is
+  shared by all four implementations.
+\item \textbf{First-class replies} (\texttt{replyto} / \texttt{answer} /
+  parameter type \texttt{reply}). On the Pi 3 a reply destination \emph{is} an
+  actor id, so the front end alone was enough; on the Pi 4 and Pi 5
+  \texttt{reply(v)} is the return value, so a reply slot is taken per
+  \texttt{now}.
+\item \textbf{Resource order} (\texttt{acquire} / \texttt{release}). Pairing and
+  order stay canonical; the boards keep a runtime watch. On the Pi 3 it is a
+  \textbf{real named semaphore} --- actors there are real processes, so two of
+  them can genuinely contend.
+\item \textbf{\ty{result} with \texttt{is\_ok} / \texttt{value}}, \ty{float},
+  arrays and the maths builtins (Pi 4 and Pi 5), and \texttt{new K()} in a field
+  initialiser.
+\item \textbf{Only \texttt{spawn} is left.} The Pi 3 additionally lacks
+  \ty{float}, arrays, the maths builtins and calling one's own method --- all of
+  which follow from \texttt{.avm} values being 32-bit tagged integers.
+\end{itemize}
 
 \subsection*{2026-09-05 --- all three boards accept the same AIPL}
 

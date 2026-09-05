@@ -2216,6 +2216,119 @@ waiting
 timed out
 \end{term}
 
+\subsection{\texttt{remote} --- 板をまたいでアクターを呼ぶ}
+\label{sec:xinu-remote}
+
+正典では送信先は「アクター参照の入った変数」か
+\texttt{remote("host:port", "actorName")} である（\S\ref{sec:reply1st} の表を見よ）。
+後者を三台の実機と Mac のホスト VM に実装した。呼ばれる側は
+\texttt{web\_expose} で公開したアクターである。
+
+\begin{lstlisting}
+class Echo { method say(x) : int !{} { reply(x * 2); } }
+var e = new Echo();
+web_expose("/echo", "e");
+
+var d = now remote("192.168.3.101", "echo").say(21) timeout 2000 else -1;
+send remote("192.168.3.50", "echo").say(5);
+\end{lstlisting}
+
+\subsubsection*{電文}
+
+四つの実装が同じ言葉を話す。UDP の 9010 番、人が読める ASCII 一行である
+（\texttt{tcpdump} や \texttt{nc} でそのまま覗ける）。
+
+\begin{term}
+Q <reqid> <actor> <method> <arg...>
+R <reqid> <値>
+\end{term}
+
+\begin{itemize}
+\item 運ぶのはメソッド\textbf{番号ではなく名前}である。番号は板ごとに違うので、
+  受けた板が自分の \texttt{\_\_method\_id} で解く。
+\item 引数は 1 個。\texttt{<arg...>} は行末までなので空白を含んでよい。
+  数字だけの文字列は相手側で\textbf{整数として}渡る
+  （正典の \texttt{now remote(...).step(3)} が整数を取るため）。
+\item 返るのは、相手が描いた文字列を読み直した値である。
+  \textbf{型は運んでいない} ---- 正典の型検査器が両側の型を合わせている、
+  という前提の上で成り立つ約束である。
+\item 期限切れ・宛先不明・メソッド不明は\textbf{すべて失敗}になる。
+  \texttt{else} を書けばその値、書かなければ \texttt{err}（\ty{result}）。
+  期限切れの扱いが一箇所に閉じる。
+\end{itemize}
+
+\subsubsection*{再送と「高々一度」}
+
+\textbf{UDP なので落ちる。要求は 200 ミリ秒ごとに出し直す。}
+一発だけ出して待つ作りにしていたときは、待ちの輪が一秒に数回しか回らない板で
+\textbf{必ず期限切れ}になった。
+
+素朴に再送すると相手のメソッドが二度走るので、受け側は
+\texttt{(送り主 IP, reqid)} で最後の答えを控え、同じ要求の再送には
+\textbf{実行せずに控えを返す}。これで\textbf{高々一度}になり、
+副作用のあるメソッドでも安全である。
+
+\subsubsection*{板ごとの運びかた}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{8.4cm}@{}}
+\toprule
+板 & 運びかた \\
+\midrule
+Pi 3 & Xinu の UDP デバイス層（\texttt{udpAlloc} / \texttt{open} /
+       \texttt{read} / \texttt{write}）。受け口は常駐プロセス。
+       VM 命令 \texttt{0x55} / \texttt{0x56} \\
+Pi 4 / Pi 5 & TCP が受け側だけ（passive open のみ）なので、
+       フレームを自分で組んで送る \\
+Mac & OCaml の Unix ソケット。\textbf{四台目の相手役}になるので、
+       板を一台ずつ焼きながら確かめられる \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Pi 4 と Pi 5 は\textbf{宛先 MAC を ARP で引かない}。最初の要求は
+「宛先 MAC＝ブロードキャスト、宛先 IP＝ユニキャスト」で出し、
+\textbf{拾う判断は受信側で行う}。応答は要求フレームの送り主へ返すので ARP が要らず、
+そこで学んだ MAC を覚えて二回目からはユニキャストになる。
+ARP の状態機械をもう一つ増やすより壊れにくい ---- 実験室の数台にはこれで足りる。
+
+\subsubsection*{呼ばれる側の登録（板で違う）}
+
+呼ばれる側のアクターは板に\textbf{常駐}していなければならない。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Pi 4 & \texttt{POST /cc?resident=1} で投げること \\
+Pi 5 & 素の \texttt{POST /cc} でよい \\
+Pi 3 & \texttt{/actor/loadvm?ask=0} で投げたものがそのまま残る \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Pi 4 で素の \texttt{POST /cc} を使うと、走らせて終わりなので\textbf{外から呼ぶ先が
+残らず}、呼んだ側には \texttt{err} が返る。
+
+\subsubsection*{実測}
+
+\texttt{say(21)} が \texttt{42} を返すことを、四つの実装の\textbf{全ての組}で確かめた。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+呼ぶ側 $\rightarrow$ & Pi 3 & Pi 4 & Pi 5 & Mac & 届かぬ宛先 \\
+\midrule
+Pi 3 & --- & 42 & 42 & 42 & \texttt{else} \\
+Pi 4 & 42 & --- & 42 & 42 & \texttt{else} \\
+Pi 5 & 42 & 42 & --- & 42 & \texttt{else} \\
+Mac  & 42 & 42 & 42 & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
 \subsection{三台に共通する落とし穴（実装側）}
 \label{sec:three-boards-traps}
 
@@ -2243,6 +2356,23 @@ AIPL を書く側には見えないが、\textbf{同じ形の穴を二台以上�
   アクターは自分のハンドラの前に同じ錠を取るので、譲った先が回り続ける。
   \textbf{錠がスピンして「限界を超えたら横取りする」作りだと、
   小さな例だけたまたま動いてしまう} ---- いちばん質の悪い形である。
+\item \textbf{UDP に要求応答を載せるなら、再送は仕様の一部である。}
+  一発だけ出して待つ作りだと、受信の取り出しが少し遅れるだけで必ず期限切れになる。
+  ベアメタルでは「受信路が壊れている」ように見えるので、そちらを二度直して
+  症状を薄くしただけで終わった。\textbf{切り分けの決め手は「相手に繰り返し返させる」}
+  ---- それで通るなら、壊れているのは受信路ではなく再送の不在である。
+  再送するなら受け側に \texttt{(送り主, reqid)} の控えを置いて\textbf{高々一度}にすること。
+\item \textbf{「待っている最中に叩いたら応答があった」は、受信路が生きている
+  証拠にならない。} 遅れて届いた応答を、こちらの待ち窓がたまたま拾っただけの
+  ことがある。\textbf{有無ではなく時刻を見る}。相手側に送受の時刻を出させ、
+  板の中には「届いた数」と「待っていた数」を\textbf{別々に}持たせる。
+  この誤読で真因（\S\ref{sec:xinu-remote} の受信の窓）に辿り着くのが一往復遅れた。
+\item \textbf{焼いたあと、HTTP が応答することを「再起動した」の証拠にしない。}
+  電源を入れ直すまで板は前のカーネルで応答し続けるので、ポーリングでは区別がつかない。
+  症状は「直したはずの機能が無い」で、実装を疑って時間を溶かす。
+  三台とも \texttt{GET /version} が版を名乗るようにした
+  （\texttt{kversion.c} は Makefile の \texttt{FORCE} 依存で毎回コンパイルし直す
+  ---- これが無いと \verb|__DATE__| が古いまま固まって嘘をつく）。
 \item \textbf{落ちてから原因を当てにいかない。まず観測できるようにする。}
   板が死ぬと情報はゼロで、1 回の実験に電源の入れ直しが要る。
   \textbf{計器を作る焼き直し 1 回は、当てずっぽう 5 回より安い。}
@@ -2567,6 +2697,28 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \label{sec:migrate}
 
 前版（2026年07月30日版）以降の変化を挙げる。
+
+\subsection{2026年09月06日 --- 正典 25 機能が実機で揃った}
+
+言語仕様は変えていない。変わったのは\textbf{実機側の対応範囲}である。
+
+\begin{itemize}
+\item \textbf{\texttt{remote("host:port","actor")}}（\S\ref{sec:xinu-remote}）。
+  三台の実機と Mac のホスト VM が、互いの公開アクターを呼べるようになった。
+  \textbf{全ての組で実測済み}。運搬は UDP の 9010 番、電文は四実装で共通。
+\item \textbf{返信先の一級性}（\texttt{replyto} / \texttt{answer} / 引数型
+  \texttt{reply}）。Pi 3 は返信先がアクター番号そのものなので前段だけで済み、
+  Pi 4・Pi 5 は \texttt{reply(v)} が戻り値なので \texttt{now} ごとに
+  返信スロットを取る形で実現した。
+\item \textbf{資源の順序}（\texttt{acquire} / \texttt{release}）。対と取得順序の
+  検査は正典側のままで、実機は実行時の見張りを持つ。Pi 3 だけは
+  \textbf{本物の名前つき錠}である（アクターが実プロセスなので実際に競合しうる）。
+\item \textbf{\ty{result} と \texttt{is\_ok} / \texttt{value}}、
+  \ty{float}・配列・数学組込み（Pi 4・Pi 5）、フィールド初期化子の \texttt{new K()}。
+\item これで\textbf{残るは \texttt{spawn} だけ}になった。Pi 3 は加えて
+  \ty{float}・配列・数学組込み・自メソッド呼び出しが無い ----
+  いずれも \texttt{.avm} の値表現が 32 ビットのタグ付き整数であることに由来する。
+\end{itemize}
 
 \subsection{2026年09月05日 --- 三台の実機が同じ AIPL を受け取るようになった}
 
