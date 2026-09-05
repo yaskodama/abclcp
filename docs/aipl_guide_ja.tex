@@ -1470,11 +1470,31 @@ $e \Downarrow$ \texttt{VFloat}）が実際に見つかった。
 \end{tabular}
 \end{center}
 
-\section{実機で動かす --- Xinu / Raspberry Pi 3 と Pi 5}
+\section{実機で動かす --- Xinu / Raspberry Pi 3・Pi 4・Pi 5}
 \label{sec:xinu}
 
-AIPL のプログラムは、\textbf{ベアメタルの Raspberry Pi 3}（Embedded Xinu）の上でも動く。
+AIPL のプログラムは、\textbf{ベアメタルの Raspberry Pi}（Embedded Xinu）の上でも動く。
 OS も libc も無く、カーネル自身がアクターの実行機構を持っている環境である。
+実機は\textbf{三台}あり、\textbf{どれも同じ正典 AIPL を受け取る}が、
+中の作りは三者三様である ---- そこが本節の見どころでもある。
+
+\begin{center}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+ & Pi 3 & Pi 4 & Pi 5 \\
+\midrule
+宛先 & \texttt{192.168.3.50:8080} & \texttt{192.168.3.100:80} & \texttt{192.168.3.101:80} \\
+実行方式 & \texttt{.avm} を VM が解釈 & \multicolumn{2}{c}{AIPL$\to$C$\to$機内 \texttt{cc} が JIT} \\
+前段の居場所 & Mac 側 & \multicolumn{2}{c}{\textbf{機内}（\texttt{abcl2c}）} \\
+アクターの器 & \multicolumn{2}{c}{\textbf{Xinu の実プロセス}} & 協調ポンプ（単一スレッド） \\
+正典ガイド 10 本 & 9 本一致 & \textbf{10 本一致} & \textbf{10 本一致} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Pi 4 は\textbf{両者の中間}である ---- 実行は Pi 5 と同じ JIT、
+アクターは Pi 3 と同じ実プロセス。
 
 \subsection{三つの実行系と、その役割分担}
 
@@ -1482,11 +1502,12 @@ OS も libc も無く、カーネル自身がアクターの実行機構を持�
 \small
 \begin{tabular}{@{}lll@{}}
 \toprule
-実行系 & 何をするか & 検査 \\
+実行系 & 何をするか & 型検査 \\
 \midrule
 OCaml 版 REPL（正典） & 型・効果・期限・七つの規律を検査する & \textbf{する} \\
 ホスト VM（Mac） & \texttt{.avm} を実行し、値まで読める & しない \\
 Xinu 実機（Pi 3） & カーネル内の VM が \texttt{.avm} を実行する & しない \\
+Xinu 実機（Pi 4） & AIPL を C に直し、機内 \texttt{cc} が JIT する（アクタは実プロセス） & しない \\
 Xinu 実機（Pi 5） & AIPL を C に直し、機内 \texttt{cc} が AArch64 に JIT する & しない \\
 \bottomrule
 \end{tabular}
@@ -1737,25 +1758,27 @@ Pi 5（\texttt{192.168.3.101}）は\textbf{実行方式が違う}。
 
 \begin{center}
 \small
-\begin{tabular}{@{}lll@{}}
+\begin{tabular}{@{}llll@{}}
 \toprule
- & Pi 3 & Pi 5 \\
+ & Pi 3 & Pi 4 & Pi 5 \\
 \midrule
-実行方式 & \texttt{.avm} をカーネル内 VM が解釈 & AIPL$\to$C$\to$機内 \texttt{cc} が JIT \\
-前段 & Mac 側の \texttt{compile\_avm} & \textbf{機内}の \texttt{abcl2c} \\
-投入 & \texttt{POST /actor/loadvm?ask=0}（8080 番） & \texttt{POST /cc}（80 番） \\
-出力の読み方 & \texttt{/api/console}（\S\ref{sec:pi3-console}） & 応答にそのまま出る \\
-戻り値の読み方 & \texttt{web\_expose} + \texttt{/api/x/} & 同じ／応答にも出る \\
-同時に持てるモジュール & 1 本（\textbf{新しいものが置き換える}） & 1 本（新しいものが置き換える） \\
-アクターの器 & \textbf{Xinu の実プロセス}（本物の並行） & 協調ポンプ（単一スレッド） \\
-\texttt{select} & 継続分割＋横取り & \textbf{同じ} \\
-\texttt{future} / \texttt{await} & 継続分割（並行ではない） & 即時実行（並行ではない） \\
-\texttt{wait(ms)} & VM の命令。どの経路でも効く & \textbf{どの経路でも効く} \\
-正典ガイド 10 本 & \textbf{9 本が完全一致}（下記） & \textbf{10 本すべて一致} \\
-値の種類 & 整数と文字列 & 整数・文字列・浮動小数・リスト \\
-\texttt{ai\_call} & 命令 \texttt{0x52} & ランタイム \texttt{v\_ai\_call} \\
-\texttt{ai\_call} の実測 & 2--6 秒 & \textbf{0.42 秒} \\
-カーネル & 1.09\,MB $\to$ 2.16\,MB & 0.94\,MB $\to$ 2.03\,MB \\
+実行方式 & \texttt{.avm} を VM が解釈 & \multicolumn{2}{c}{AIPL$\to$C$\to$機内 \texttt{cc} が JIT} \\
+前段 & Mac の \texttt{compile\_avm} & \multicolumn{2}{c}{機内の \texttt{abcl2c}（同一ソース）} \\
+投入 & \texttt{POST /actor/loadvm?ask=0} & \multicolumn{2}{c}{\texttt{POST /cc}} \\
+ポート & 8080 & 80 & 80 \\
+出力の読み方 & \texttt{/api/console} & \multicolumn{2}{c}{応答にそのまま出る} \\
+戻り値の読み方 & \multicolumn{3}{c}{\texttt{web\_expose} + \texttt{/api/x/}（三機とも）} \\
+同時に持てるプログラム & \multicolumn{3}{c}{1 本（新しいものが置き換える）} \\
+アクターの器 & \multicolumn{2}{c}{\textbf{Xinu の実プロセス}} & 協調ポンプ（単一スレッド） \\
+\texttt{select} & \multicolumn{3}{c}{継続分割＋横取り（三機とも同じ）} \\
+\texttt{future} / \texttt{await} & 継続分割 & \multicolumn{2}{c}{即時実行} \quad（いずれも並行ではない） \\
+\texttt{wait(ms)} & VM の命令 & 専用ワーカーで眠る & 専用プロセスで眠る \\
+真偽値 & \multicolumn{3}{c}{タグ付きの値。\texttt{true} / \texttt{false} と印字（\S\ref{sec:bool-tag}）} \\
+値の種類 & 整数と文字列 & \multicolumn{2}{c}{整数・文字列・浮動小数・リスト} \\
+\texttt{ai\_call} & 命令 \texttt{0x52} & \multicolumn{2}{c}{ランタイム \texttt{v\_ai\_call}} \\
+\quad の実測 & 2--6 秒 & 0.79 秒 & \textbf{0.42 秒} \\
+正典ガイド 10 本 & \textbf{9 本一致} & \textbf{10 本一致} & \textbf{10 本一致} \\
+カーネル & 1.09$\to$2.16\,MB & 2.02$\to$2.07\,MB & 0.94$\to$2.05\,MB \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -2121,6 +2144,160 @@ waiting
 timed out
 \end{term}
 
+\subsection{三台に共通する落とし穴（実装側）}
+\label{sec:three-boards-traps}
+
+AIPL を書く側には見えないが、\textbf{同じ形の穴を二台以上で踏んだ}ものを残す。
+ベアメタルでアクターを載せるときは、たいてい同じところで転ぶ。
+
+\begin{itemize}
+\item \textbf{アクターのスレッドを \texttt{kill()} で叩き落としてはいけない。}
+  アクターは\textbf{割り込みを止めた区間}（値ヒープの確保、メールボックスへの
+  積み込み）や\textbf{錠の中}に居ることがある。その最中に殺すと、
+  割り込みが止まったまま・錠を握ったままになり、板ごと死ぬか、
+  以後その錠を待つもの全部が回り続ける。
+  \textbf{印をつけて起こし、自分でループを抜けさせる}のが正しい。
+  \textbf{Pi 3 と Pi 4 で独立に同じ穴を踏んだ。}
+  ---- 待ちループの条件に「死ぬ印」を入れるのが先である。それが無いから
+  「殺すしかない」ように見えてしまう。
+\item \textbf{解放したコードを指すポインタを残さない。}
+  プログラムを載せ替えるとき、前の実行の JIT コードを指す関数ポインタを
+  落とし忘れると、次の確保がその領域を配り直すので\textbf{他人の領域へ書く}。
+  Pi 4 ではこれが\textbf{1 バイトの化け}として現れ、
+  次の翻訳結果の固定オフセットが \texttt{'i'} から \texttt{'j'} になり、
+  \texttt{cc: undefined variable} になったり板が即死したりした。
+  \textbf{落ちる場所で症状が変わるので、毎回違う不具合に見える。}
+\item \textbf{値ヒープの錠を握ったままアクターへ譲ってはいけない。}
+  アクターは自分のハンドラの前に同じ錠を取るので、譲った先が回り続ける。
+  \textbf{錠がスピンして「限界を超えたら横取りする」作りだと、
+  小さな例だけたまたま動いてしまう} ---- いちばん質の悪い形である。
+\item \textbf{落ちてから原因を当てにいかない。まず観測できるようにする。}
+  板が死ぬと情報はゼロで、1 回の実験に電源の入れ直しが要る。
+  \textbf{計器を作る焼き直し 1 回は、当てずっぽう 5 回より安い。}
+  Pi 4 では「翻訳だけして返す」段階（\texttt{?stage=xlat}）を作ったことが
+  決め手になった ---- 板を落とさずに健全性を判定できる。
+\end{itemize}
+
+\subsection{Pi 4 --- 三台目の実機}
+\label{sec:xinu-pi4}
+
+Pi 4（\texttt{192.168.3.100}）は\textbf{Pi 3 と Pi 5 の中間}である。
+実行は Pi 5 と同じ「AIPL を機内で C に直して JIT」だが、
+\textbf{アクターは Pi 3 と同じ Xinu の実プロセス}（\texttt{system/actorproc.c}）で走る。
+機内前段 \texttt{abcl2c} は Pi 5 と\textbf{同一のソース}で、
+翻訳結果は正典ガイド 10 本すべてでホスト側の翻訳と\textbf{バイト単位で一致}する。
+
+\subsubsection*{動かし方}
+
+Pi 5 と同じく、AIPL のソースをそのまま送れる。
+
+\begin{term}
+curl --data-binary @g1_hello.aipl "http://192.168.3.100/cc"
+hello, AIPL
+tick 1
+tick 2
+=> 0
+\end{term}
+
+\texttt{/cc} には\textbf{段階}がある。板を落とさずに前段だけ確かめられるので、
+実機を触るときはここから始めるとよい。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\texttt{POST /cc} & 翻訳して JIT する（既定） \\
+\texttt{POST /cc?stage=xlat} & \textbf{翻訳した C を返すだけ。実行しない} \\
+\texttt{POST /cc?resident=1} & 常駐ロード（\texttt{/api/x/} で後から到達できる） \\
+\texttt{POST /compile} & 本文を素の C として JIT する \\
+\texttt{POST /actor/load} & Mac 側 \texttt{--xinu-jit} の C を常駐ロード \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{健全性は \texttt{?stage=xlat} で測れる。} 機内の翻訳とホストの翻訳を
+バイト比較すればよい ---- 板を落とさずに済む唯一の窓である。
+
+\begin{term}
+cc -DABCL2C_HOST_TEST -w -o /tmp/a2c cc/abcl2c.c
+/tmp/a2c g1_hello.aipl > /tmp/host.c
+curl --data-binary @g1_hello.aipl "http://192.168.3.100/cc?stage=xlat" > /tmp/board.c
+diff /tmp/host.c /tmp/board.c        # 差が出たら板の状態が壊れている
+\end{term}
+
+\subsubsection*{正典ガイド 10 本の実機確認}
+
+\textbf{10 本すべてが正典どおりに動く}（生の AIPL のまま \texttt{POST /cc}、連続投入）。
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+標本 & 実機の出力（\texttt{POST /cc}） \\
+\midrule
+g1  & \texttt{hello, AIPL} / \texttt{tick 1} / \texttt{tick 2} \\
+g2  & \texttt{twice = 43} / \texttt{awaited = 20} / \texttt{v=7} \\
+g3  & \texttt{ok, left=7} / \texttt{sold out} \\
+g4  & \texttt{waiting} / \texttt{got 1} / \texttt{via select:1} \\
+g5  & 公開して \texttt{/api/x/echo} から \texttt{echo: hi} \\
+g6  & \texttt{1} / \texttt{1} / \texttt{n = 1} \\
+g7  & \texttt{fast = 42} / \texttt{slow(timed out) = 0} / \texttt{await = 10} \\
+g8  & \texttt{literal true ok} / \texttt{literal false ok} / \texttt{b = true} / \texttt{not-eq: true} \\
+g9  & \texttt{got actor} / \texttt{after send} / \texttt{pong} \\
+g10 & \texttt{fork = 1} / \texttt{latch = 2} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+通し終えても機内翻訳はホストとバイト一致のまま。
+回帰も通る ---- \texttt{/compile} に素の C、\texttt{/actor/load}、
+\texttt{ai\_call} は Pi 3・Pi 5 と同じ参照出力（\textbf{0.79 秒}）、
+\texttt{/smp-bench} は 4 コアで 3.00 倍。
+
+\subsubsection*{\texttt{wait} は素直に効く}
+
+Pi 5 では \texttt{/cc} を専用プロセスに載せ替える必要があったが、
+\textbf{Pi 4 では最初からその形になっている}。HTTP は
+\textbf{専用のアプリ・ワーカー}で処理され、その裏に
+\textbf{AIPL/LLM 専用のランタイム・プロセス}まである
+（\texttt{loader/main.c} の \texttt{net\_proc\_main} / \texttt{app\_proc\_main} /
+\texttt{aipl\_proc\_main}）。
+だから \texttt{wait(300)} はそのまま本物の休眠になり、g7 が
+\texttt{slow(timed out) = 0} で一致する ---- 経路を使い分ける必要が無い。
+
+\subsubsection*{止まったときに読むもの}
+
+Pi 4 には診断の口が揃っている。\textbf{板が生きているうちに読むこと。}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\texttt{GET /fault} & 直前の CPU 例外（ESR / FAR / ELR / SPSR / SP） \\
+\texttt{GET /api/aptab} & アクター表の生の姿（pid・プロセス状態・待ち行列・dead） \\
+\texttt{GET /api/aprun} & \texttt{ap\_run} の打ち切り、強制 kill、ワーカー立て直し \\
+\texttt{GET /api/mem} & 空きの合計・最大ブロック・断片の数 \\
+\texttt{GET /jitstats} & \texttt{spawn\_fails}、メッセージの取りこぼし \\
+\texttt{GET /ticks} & スタック番人（\texttt{stkbad}）、文脈交換の回数 \\
+\texttt{GET /wx} & W$^\wedge$X が効いているか（自分で書いて試す） \\
+\texttt{GET /reboot} & \textbf{ウォッチドッグで再起動}（電源に触らずに済む） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{\texttt{/reboot} は板が生きているときだけ効く。} 使い切る前に使うこと。
+
+\subsubsection*{実プロセスであることの違い}
+
+\begin{itemize}
+\item \textbf{g9 の出力順が回によって変わりうる。} \texttt{send x.ping()} の相手が
+  \texttt{print("after send")} より先に走ることがある。Pi 3 も同じ性質を持つ。
+  \textbf{どちらも AIPL としては正しい}（\texttt{send} は順序を約束しない）。
+\item トップレベルの \texttt{send} の直後は、\textbf{相手が走り切るまで待ってから}
+  次へ進む（Pi 5 の協調ポンプと順序を揃えるため）。
+  これが無いと \texttt{select} の横取りが効かない。
+\end{itemize}
+
 \subsubsection*{壊れた入力で板が止まらないこと}
 
 前段は\textbf{変異入力のファズ}（ASan + UBSan、4{,}000 件）で掃いてある。
@@ -2283,7 +2460,7 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \section{現状の限界}
 
 \begin{itemize}
-\item \textbf{実機（Xinu / Pi 3）で動く範囲は正典の部分集合である。}
+\item \textbf{実機（Xinu / Pi 3・Pi 4・Pi 5）で動く範囲は正典の部分集合である。}
   \ty{float}・配列・数学組込み・\texttt{spawn}・\texttt{remote}・\texttt{replyto} が無く、
   型・効果・レベルの注釈は受理して捨てる（検査は正典側で行う）。詳細は \S\ref{sec:xinu}。
 \item \texttt{future} + \texttt{await} に分けて書くと効果伝播を逃れる
@@ -2316,6 +2493,27 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \label{sec:migrate}
 
 前版（2026年07月30日版）以降の変化を挙げる。
+
+\subsection{2026年09月05日 --- 三台の実機が同じ AIPL を受け取るようになった}
+
+言語仕様は変えていない。変わったのは\textbf{実機側の対応範囲}である。
+
+\begin{itemize}
+\item \textbf{Pi 4 を最新 AIPL へ}（\S\ref{sec:xinu-pi4}）。機内前段
+  \texttt{abcl2c} を載せ、\texttt{POST /cc} に生の AIPL を投げられるようにした。
+  正典ガイド\textbf{10 本すべてが正典どおり}に動く。
+\item \textbf{\texttt{select} を三機で同じ形に}（\S\ref{sec:pi5-select}）。
+  Pi 5 は待たない実装だったが、Pi 3 と同じ継続分割＋横取りに替えた。
+\item \textbf{\texttt{wait} が Pi 5 の \texttt{/cc} でも効く}（\S\ref{sec:pi5-budget}）。
+  経路を使い分ける必要が無くなった。
+\item \textbf{真偽値をタグ付きの値に}（\S\ref{sec:bool-tag}）。三機とも
+  \texttt{b = true} と印字する。以前はどれも \texttt{b = 1} だった。
+\item \textbf{Pi 3 の出力が HTTP で読める}（\S\ref{sec:pi3-console}）。
+  \texttt{/api/console} を足したことで、初めて 10 本を実機で出力照合できた。
+\item \texttt{new C()} で \texttt{init()} が呼ばれない穴、
+  期限切れの返信を次の待ちが受け取る穴、\texttt{init} の二重呼び、
+  前のプログラムのアクターが残る件を直した（三機分）。
+\end{itemize}
 
 \subsection{2026年09月03日 --- Pi 5 実機の対応範囲が広がった}
 

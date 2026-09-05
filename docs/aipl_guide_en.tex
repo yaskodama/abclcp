@@ -1775,12 +1775,32 @@ Variable & Effect \\
 \end{tabular}
 \end{center}
 
-\section{Running on real hardware --- Xinu / Raspberry Pi 3 and Pi 5}
+\section{Running on real hardware --- Xinu / Raspberry Pi 3, Pi 4 and Pi 5}
 \label{sec:xinu}
 
-AIPL programs also run on a \textbf{bare-metal Raspberry Pi 3} (Embedded Xinu):
+AIPL programs also run on \textbf{bare-metal Raspberry Pis} (Embedded Xinu):
 no operating system underneath, no libc, and the kernel itself carries the
-actor machinery.
+actor machinery. There are \textbf{three boards}. All of them accept the same
+canonical AIPL, but the machinery inside differs on each --- which is much of
+what makes this section worth reading.
+
+\begin{center}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+ & Pi 3 & Pi 4 & Pi 5 \\
+\midrule
+Address & \texttt{192.168.3.50:8080} & \texttt{192.168.3.100:80} & \texttt{192.168.3.101:80} \\
+Execution & a VM interprets \texttt{.avm} & \multicolumn{2}{c}{AIPL$\to$C$\to$in-kernel \texttt{cc} JIT} \\
+Front end lives & on the Mac & \multicolumn{2}{c}{\textbf{on the board} (\texttt{abcl2c})} \\
+Actor vehicle & \multicolumn{2}{c}{\textbf{real Xinu processes}} & cooperative pump (one thread) \\
+Ten guide samples & 9 match & \textbf{all ten} & \textbf{all ten} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The Pi 4 sits \textbf{between the other two}: it executes like the Pi 5 (JIT)
+and schedules like the Pi 3 (real processes).
 
 \subsection{Three runtimes, and what each is for}
 
@@ -1793,6 +1813,7 @@ Runtime & What it does & Checks \\
 OCaml REPL (canonical) & checks types, effects, deadlines, the seven disciplines & \textbf{yes} \\
 Host VM (Mac) & runs \texttt{.avm}; values are readable & no \\
 Xinu hardware (Pi 3) & the in-kernel VM runs \texttt{.avm} & no \\
+Xinu hardware (Pi 4) & lowered to C and JITed; actors are real processes & no \\
 Xinu hardware (Pi 5) & AIPL is lowered to C and JITed to AArch64 in-kernel & no \\
 \bottomrule
 \end{tabular}
@@ -2045,25 +2066,27 @@ compiler \texttt{cc} \textbf{JITs that to AArch64 machine code}.
 
 \begin{center}
 \small
-\begin{tabular}{@{}lll@{}}
+\begin{tabular}{@{}llll@{}}
 \toprule
- & Pi 3 & Pi 5 \\
+ & Pi 3 & Pi 4 & Pi 5 \\
 \midrule
-Execution & in-kernel VM interprets \texttt{.avm} & AIPL$\to$C$\to$in-kernel \texttt{cc} JIT \\
-Front end & \texttt{compile\_avm} on the Mac & \textbf{on the board}: \texttt{abcl2c} \\
-Submission & \texttt{POST /actor/loadvm?ask=0} (8080) & \texttt{POST /cc} (80) \\
-Reading output & \texttt{/api/console} (\S\ref{sec:pi3-console}) & in the reply \\
-Reading return values & \texttt{web\_expose} + \texttt{/api/x/} & same, or in the reply \\
-Modules resident & one (\textbf{a new one replaces it}) & one (a new one replaces it) \\
-Actor vehicle & \textbf{real Xinu processes} (truly concurrent) & cooperative pump (one thread) \\
-\texttt{select} & continuation split + interception & \textbf{same} \\
-\texttt{future} / \texttt{await} & continuation split (not concurrent) & runs at once (not concurrent) \\
-\texttt{wait(ms)} & a VM opcode; works on every path & \textbf{works on every path} \\
-Ten guide samples & \textbf{9 match exactly} & \textbf{all ten match} \\
-Value kinds & integers and strings & int, string, float, list \\
-\texttt{ai\_call} & opcode \texttt{0x52} & runtime \texttt{v\_ai\_call} \\
-\texttt{ai\_call} measured & 2--6 s & \textbf{0.42 s} \\
-Kernel & 1.09\,MB $\to$ 2.16\,MB & 0.94\,MB $\to$ 2.03\,MB \\
+Execution & a VM interprets \texttt{.avm} & \multicolumn{2}{c}{AIPL$\to$C$\to$in-kernel \texttt{cc} JIT} \\
+Front end & \texttt{compile\_avm} (Mac) & \multicolumn{2}{c}{\texttt{abcl2c} on the board (same source)} \\
+Submission & \texttt{POST /actor/loadvm?ask=0} & \multicolumn{2}{c}{\texttt{POST /cc}} \\
+Port & 8080 & 80 & 80 \\
+Reading output & \texttt{/api/console} & \multicolumn{2}{c}{in the reply} \\
+Reading return values & \multicolumn{3}{c}{\texttt{web\_expose} + \texttt{/api/x/} (all three)} \\
+Programs resident & \multicolumn{3}{c}{one (a new one replaces it)} \\
+Actor vehicle & \multicolumn{2}{c}{\textbf{real Xinu processes}} & cooperative pump (one thread) \\
+\texttt{select} & \multicolumn{3}{c}{continuation split + interception (all three)} \\
+\texttt{future} / \texttt{await} & continuation split & \multicolumn{2}{c}{runs at once} \quad (none concurrent) \\
+\texttt{wait(ms)} & a VM opcode & on the app worker & on a dedicated process \\
+Booleans & \multicolumn{3}{c}{a tagged value; printed \texttt{true} / \texttt{false} (\S\ref{sec:bool-tag})} \\
+Value kinds & integers and strings & \multicolumn{2}{c}{int, string, float, list} \\
+\texttt{ai\_call} & opcode \texttt{0x52} & \multicolumn{2}{c}{runtime \texttt{v\_ai\_call}} \\
+\quad measured & 2--6 s & 0.79 s & \textbf{0.42 s} \\
+Ten guide samples & \textbf{9 match} & \textbf{all ten} & \textbf{all ten} \\
+Kernel & 1.09$\to$2.16\,MB & 2.02$\to$2.07\,MB & 0.94$\to$2.05\,MB \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -2450,6 +2473,167 @@ waiting
 timed out
 \end{term}
 
+\subsection{Traps common to all three boards (implementation side)}
+\label{sec:three-boards-traps}
+
+These are invisible to someone writing AIPL, but they are the holes we fell
+into \textbf{on two or more boards}. Putting actors on bare metal seems to trip
+in the same places every time.
+
+\begin{itemize}
+\item \textbf{Never take an actor thread down with \texttt{kill()}.}
+  An actor can be inside an \textbf{interrupt-masked region} (allocating from
+  the value heap, posting to a mailbox) or \textbf{holding a lock}. Killing it
+  there leaves interrupts masked or the lock held: the board dies outright, or
+  everything that waits on that lock spins forever. The right way is to
+  \textbf{mark it and wake it}, and let it leave its own loop.
+  \textbf{We hit this independently on the Pi 3 and the Pi 4.} The prerequisite
+  is putting the ``you are dead'' flag into the \emph{waiting} loop's condition
+  --- without that, killing looks like the only option.
+\item \textbf{Never leave a pointer into code you freed.} When one program
+  replaces another, a function pointer left over from the previous run points
+  into freed memory; the next allocation hands that memory out again, so the
+  stale pointer \textbf{writes into someone else's buffer}. On the Pi 4 this
+  surfaced as \textbf{a single corrupted byte}: a fixed offset of the next
+  translation turned \texttt{'i'} into \texttt{'j'}, giving either
+  \texttt{cc: undefined variable} or an instant board death.
+  \textbf{Because the symptom depends on where the byte lands, it looks like a
+  different bug every time.}
+\item \textbf{Never yield to actors while holding the value-heap lock.} An
+  actor takes the same lock before its handler, so whatever you yielded to
+  spins. \textbf{If the lock spins and ``steals'' after a limit, small examples
+  happen to work} --- the nastiest shape a bug can take.
+\item \textbf{Do not guess at a cause after the board dies; make the failure
+  observable first.} A dead board yields no information and every experiment
+  costs a power cycle. \textbf{One flash spent on instruments beats five spent
+  guessing.} On the Pi 4 the decisive step was adding a ``translate only''
+  stage (\texttt{?stage=xlat}), which tells you whether the board is healthy
+  without running anything.
+\end{itemize}
+
+\subsection{The Pi 4 --- the third board}
+\label{sec:xinu-pi4}
+
+The Pi 4 (\texttt{192.168.3.100}) sits \textbf{between the other two}: it
+executes like the Pi 5 (AIPL lowered to C on the board and JITed) but its
+\textbf{actors are real Xinu processes} like the Pi 3's
+(\texttt{system/actorproc.c}). The on-board front end \texttt{abcl2c} is
+\textbf{the same source} as the Pi 5's, and for all ten canonical guide samples
+its output is \textbf{byte-identical} to the host translation.
+
+\subsubsection*{Running a program}
+
+As on the Pi 5, you post AIPL source directly.
+
+\begin{term}
+curl --data-binary @g1_hello.aipl "http://192.168.3.100/cc"
+hello, AIPL
+tick 1
+tick 2
+=> 0
+\end{term}
+
+\texttt{/cc} has \textbf{stages}. They let you check the front end without
+running anything, which is where to start when touching the hardware.
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\texttt{POST /cc} & translate and JIT (default) \\
+\texttt{POST /cc?stage=xlat} & \textbf{return the translated C; run nothing} \\
+\texttt{POST /cc?resident=1} & resident load (reachable later via \texttt{/api/x/}) \\
+\texttt{POST /compile} & treat the body as plain C and JIT it \\
+\texttt{POST /actor/load} & resident load of Mac-side \texttt{--xinu-jit} C \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Health is measurable with \texttt{?stage=xlat}}: compare the board's
+translation with the host's, byte for byte. It is the one window that does not
+risk the board.
+
+\begin{term}
+cc -DABCL2C_HOST_TEST -w -o /tmp/a2c cc/abcl2c.c
+/tmp/a2c g1_hello.aipl > /tmp/host.c
+curl --data-binary @g1_hello.aipl "http://192.168.3.100/cc?stage=xlat" > /tmp/board.c
+diff /tmp/host.c /tmp/board.c        # any difference means the board is damaged
+\end{term}
+
+\subsubsection*{The ten canonical guide samples on hardware}
+
+\textbf{All ten behave canonically} (raw AIPL to \texttt{POST /cc}, run back to back).
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Sample & Output on the hardware (\texttt{POST /cc}) \\
+\midrule
+g1  & \texttt{hello, AIPL} / \texttt{tick 1} / \texttt{tick 2} \\
+g2  & \texttt{twice = 43} / \texttt{awaited = 20} / \texttt{v=7} \\
+g3  & \texttt{ok, left=7} / \texttt{sold out} \\
+g4  & \texttt{waiting} / \texttt{got 1} / \texttt{via select:1} \\
+g5  & exposed, then \texttt{echo: hi} from \texttt{/api/x/echo} \\
+g6  & \texttt{1} / \texttt{1} / \texttt{n = 1} \\
+g7  & \texttt{fast = 42} / \texttt{slow(timed out) = 0} / \texttt{await = 10} \\
+g8  & \texttt{literal true ok} / \texttt{literal false ok} / \texttt{b = true} / \texttt{not-eq: true} \\
+g9  & \texttt{got actor} / \texttt{after send} / \texttt{pong} \\
+g10 & \texttt{fork = 1} / \texttt{latch = 2} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The translation is still byte-identical to the host's after the whole run.
+Regressions pass too: plain C through \texttt{/compile}, \texttt{/actor/load},
+\texttt{ai\_call} producing the same reference text as the Pi 3 and Pi 5
+(\textbf{0.79 s}), and \texttt{/smp-bench} at 3.00$\times$ on four cores.
+
+\subsubsection*{\texttt{wait} simply works}
+
+On the Pi 5, \texttt{/cc} had to be moved onto a dedicated process before
+\texttt{wait} could sleep. \textbf{The Pi 4 was already built that way}: HTTP is
+served by a \textbf{dedicated app worker}, with an \textbf{AIPL/LLM runtime
+process} behind it (\texttt{net\_proc\_main} / \texttt{app\_proc\_main} /
+\texttt{aipl\_proc\_main} in \texttt{loader/main.c}). So \texttt{wait(300)} is a
+real sleep and g7 matches at \texttt{slow(timed out) = 0} --- no need to pick a path.
+
+\subsubsection*{What to read when it stalls}
+
+The Pi 4 carries a full set of instruments. \textbf{Read them while the board is
+still alive.}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\texttt{GET /fault} & the last CPU fault (ESR / FAR / ELR / SPSR / SP) \\
+\texttt{GET /api/aptab} & the raw actor table (pid, process state, queue, dead) \\
+\texttt{GET /api/aprun} & \texttt{ap\_run} give-ups, forced kills, worker replacements \\
+\texttt{GET /api/mem} & free total, largest block, fragment count \\
+\texttt{GET /jitstats} & \texttt{spawn\_fails}, dropped messages \\
+\texttt{GET /ticks} & stack canary (\texttt{stkbad}), context-switch count \\
+\texttt{GET /wx} & whether W$^\wedge$X is enforced (it probes by writing) \\
+\texttt{GET /reboot} & \textbf{watchdog reset} --- no need to touch the power \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{\texttt{/reboot} only works while the board is alive.} Use it before you
+run out of board.
+
+\subsubsection*{What being real processes changes}
+
+\begin{itemize}
+\item \textbf{g9's ordering can vary between runs.} The target of
+  \texttt{send x.ping()} may run before \texttt{print("after send")}. The Pi 3
+  shares this property. \textbf{Both are correct AIPL}: \texttt{send} promises
+  no ordering.
+\item After a top-level \texttt{send}, the board \textbf{lets the target run to
+  quiescence} before continuing, to match the Pi 5's cooperative ordering.
+  Without that, \texttt{select}'s interception does not fire.
+\end{itemize}
+
 \subsubsection*{Bad input does not stop the board}
 
 The front end has been swept with \textbf{mutation fuzzing} (ASan + UBSan,
@@ -2622,8 +2806,8 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \section{Present limits}
 
 \begin{itemize}
-\item \textbf{What runs on the hardware (Xinu / Pi 3) is a subset of the
-  canonical language.} No \ty{float}, arrays, math builtins, \texttt{spawn},
+\item \textbf{What runs on the hardware (Xinu / Pi 3, Pi 4, Pi 5) is a subset of
+  the canonical language.} No \ty{float}, arrays, math builtins, \texttt{spawn},
   \texttt{remote} or \texttt{replyto}; type, effect and level annotations are
   accepted and discarded (checking happens on the canonical side).
   See \S\ref{sec:xinu}.
@@ -2656,6 +2840,29 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 
 \section{Changes from the previous edition}
 \label{sec:migrate-en}
+
+\subsection*{2026-09-05 --- all three boards accept the same AIPL}
+
+The language did not change; the \textbf{hardware coverage} did.
+
+\begin{itemize}
+\item \textbf{The Pi 4 was brought up to current AIPL} (\S\ref{sec:xinu-pi4}):
+  the on-board front end \texttt{abcl2c} was ported, so raw AIPL can be posted
+  to \texttt{POST /cc}. \textbf{All ten canonical guide samples behave canonically.}
+\item \textbf{\texttt{select} now has the same shape on all three}
+  (\S\ref{sec:pi5-select}). The Pi 5's version did not wait; it was rebuilt on
+  the Pi 3's continuation-split scheme.
+\item \textbf{\texttt{wait} works under the Pi 5's \texttt{/cc}}
+  (\S\ref{sec:pi5-budget}); there is no longer a path to choose.
+\item \textbf{Booleans became a tagged value} (\S\ref{sec:bool-tag}): all three
+  print \texttt{b = true}. Every board used to print \texttt{b = 1}.
+\item \textbf{The Pi 3's output is readable over HTTP} (\S\ref{sec:pi3-console}).
+  Adding \texttt{/api/console} is what finally allowed comparing all ten
+  outputs on the hardware itself.
+\item Fixed across the boards: \texttt{init()} never called for \texttt{new C()},
+  a timed-out call's late reply being taken by the next wait, a double
+  \texttt{init}, and actors surviving a program swap.
+\end{itemize}
 
 \subsection*{2026-09-03 --- the Pi 5 accepts much more}
 
