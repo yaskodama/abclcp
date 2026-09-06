@@ -1,0 +1,22 @@
+// replyto / answer / 引数型 reply / acquire / release
+class Backend {
+  method handle(r: reply, x) : unit !{} { answer(r, x * 2); }
+}
+class Frontend {
+  var b = new Backend();
+  method ask(x) : int !{} { send b.handle(replyto, x); }
+}
+class Bus {
+  var n = 0;
+  method read(addr) : int !{mut} {
+    acquire("i2c");
+    n = n + 1;
+    var v = addr * 2;
+    release("i2c");
+    reply(v);
+  }
+}
+var f = new Frontend();
+print("answer = " ++ (now f.ask(21) timeout 2000 else 0));
+var bus = new Bus();
+print("bus = " ++ (now bus.read(50) timeout 2000 else 0));

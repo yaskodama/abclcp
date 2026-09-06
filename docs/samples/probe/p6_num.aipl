@@ -1,0 +1,19 @@
+// float / 配列 / 数学組込み
+class Box {
+  method run() : unit !{log, mem} {
+    var a = array_empty();
+    a = array_push(a, 10);
+    a = array_push(a, 20);
+    a = array_set(a, 0, 7);
+    print("len = " ++ array_len(a));
+    print("a0 = " ++ array_get(a, 0));
+    print("sqrt = " ++ sqrt(4.0));
+    print("exp = " ++ exp(1.0));
+    print("log10 = " ++ log10(1000.0));
+    print("atan = " ++ atan(1.0));
+    print("add = " ++ (1.5 + 2.25));
+    print("lt = " ++ (3.0 < 4.0));
+  }
+}
+var b = new Box();
+send b.run();

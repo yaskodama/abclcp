@@ -1,0 +1,12 @@
+// 基本: class/method/var/フィールド/new/init/send/send!/print/文字列/++
+class Greeter {
+  var n = 0;
+  method init(k) : unit !{mut} { n = k; }
+  method hello(who) : unit !{log, mut} {
+    n = n + 1;
+    print("hello, " ++ who ++ " #" ++ n);
+  }
+}
+var g = new Greeter(10);
+send g.hello("AIPL");
+send! g.hello("again");

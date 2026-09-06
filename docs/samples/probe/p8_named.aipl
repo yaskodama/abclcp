@@ -1,0 +1,6 @@
+// spawn / web_expose（名前つきアクター）
+class Echo { method say(x) : int !{} { reply(x * 3); } }
+var e = new Echo();
+web_expose("/echo", "e");
+spawn("Echo", "spawned");
+print("named ok");

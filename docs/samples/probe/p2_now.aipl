@@ -1,0 +1,15 @@
+// now / future / await / 期限 / result / is_ok / value
+// await は `var x = await f;` の位置だけ（.avm 経路の継続分割のため）
+class Slow {
+  method work(k) : int !{time} { wait(300); reply(k * 2); }
+  method fast(k) : int !{} { reply(k * 2); }
+}
+var s = new Slow();
+print("fast = " ++ (now s.fast(21) timeout 1000 else 0));
+print("slow = " ++ (now s.work(21) timeout 50 else 0));
+var f = future s.fast(5);
+var a = await f timeout 1000 else 0;
+print("await = " ++ a);
+var r = now s.work(1) timeout 50;
+print("is_ok = " ++ is_ok(r));
+print("value = " ++ value(r, 7));

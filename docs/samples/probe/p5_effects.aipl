@@ -1,0 +1,11 @@
+// 型・効果・レベルの注釈（板は受理して捨てる。検査は正典側）
+class Counter {
+  var n = 0;
+  method bump(k : int) : int !{mut, log} {
+    n = n + k;
+    print("n = " ++ n);
+    reply(n);
+  }
+}
+var c = new Counter();
+print("bumped = " ++ (now c.bump(3) timeout 1000 else 0));

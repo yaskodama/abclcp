@@ -1,0 +1,4 @@
+// wait
+class T { method go() : int !{time} { wait(200); reply(1); } }
+var t = new T();
+print("waited = " ++ (now t.go() timeout 3000 else 0));
