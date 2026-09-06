@@ -1,0 +1,12 @@
+// sender（いま処理しているメッセージの送り主）と float フィールド
+class A {
+  method ping() : unit !{} { send sender.pong(); }
+}
+class B {
+  float w = 1.5;
+  method start(a: A) : unit !{} { send a.ping(); }
+  method pong() : unit !{log, mut} { w = w + 0.5; print("pong w = " ++ w); }
+}
+var a = new A();
+var b = new B();
+send b.start(a);

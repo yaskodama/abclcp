@@ -1,0 +1,11 @@
+// result の第三の観測子（timed_out）と、実行時の型（typeof）と、neg の型
+class Slow { method work(k) : int !{time} { wait(300); reply(k * 2); } }
+var s = new Slow();
+var r = now s.work(1) timeout 50;
+print("timed_out = " ++ timed_out(r));
+print("typeof int = " ++ typeof(1));
+print("typeof str = " ++ typeof("x"));
+print("typeof bool = " ++ typeof(true));
+print("typeof flt = " ++ typeof(1.5));
+print("neg int = " ++ neg(5));
+print("neg flt = " ++ neg(2.5));
