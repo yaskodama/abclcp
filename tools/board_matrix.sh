@@ -51,13 +51,24 @@ run_mac() {
   pkill -f "server.exe $port" 2>/dev/null
 }
 
+# 版を読む。★ 一発で取れなくても諦めない ―― 直前の実行で板が忙しいと
+# 取りこぼし、版が空のまま「通過」を報告してしまう（実際にそうなった）。
+# 版が分からないまま合否だけ出すのは、この道具の趣旨に反する。
 version_of() {
+  local url=""
   case "$1" in
-    pi3) curl -s -m 8 "http://$PI3/version" 2>/dev/null | head -1 ;;
-    pi4) curl -s -m 8 "http://$PI4/version" 2>/dev/null | head -1 ;;
-    pi5) curl -s -m 8 "http://$PI5/version" 2>/dev/null | head -1 ;;
-    mac) echo "host VM" ;;
+    pi3) url="http://$PI3/version" ;;
+    pi4) url="http://$PI4/version" ;;
+    pi5) url="http://$PI5/version" ;;
+    mac) echo "host VM"; return ;;
   esac
+  local i v
+  for i in 1 2 3 4 5; do
+    v="$(curl -s -m 10 "$url" 2>/dev/null | head -1)"
+    case "$v" in build*) echo "$v"; return ;; esac
+    sleep 3
+  done
+  echo "版を読めません（/version が無い世代か、板が忙しい）"
 }
 
 check_board() {
