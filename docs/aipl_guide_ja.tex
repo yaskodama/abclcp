@@ -1645,10 +1645,10 @@ Pi 3 では\textbf{機外に出ない}。効果検査は保守的に見積もる
 \texttt{ai\_call} & ○ & 機内モデル（\S\ref{sec:xinu-ai}） \\
 \midrule
 型・効果・レベルの注釈 & 受理して\textbf{捨てる} & 検査は正典側で \\
-\ty{float}・浮動小数リテラル & × & 値は整数と文字列のみ \\
-配列（\texttt{array\_*}） & × & \texttt{avm: unsupported expression} \\
-数学組込み（\texttt{sqrt} 等） & × & 同上 \\
-\texttt{call} / 自メソッド呼び出し & × & VM に呼び出し命令が無い \\
+\ty{float}・浮動小数リテラル & ○ & 表に置いて添字を配る（タグは 3 ビット） \\
+配列（\texttt{array\_*}） & ○ & \texttt{push}/\texttt{set} は正典どおり新しい配列を返す \\
+数学組込み（\texttt{sqrt} 等） & ○ & Pi 4・Pi 5 と同じ級数（\texttt{sqrt} だけニュートン法） \\
+\texttt{call} 文（組込みを文として呼ぶ） & ○ & 実機で確認済み \\
 \texttt{now}/\texttt{await} の \texttt{else} 無し期限（\ty{result}） & ○ & 失敗は予約値。命令は増えていない \\
 \texttt{is\_ok} / \texttt{value} & ○ & 比較と分岐に落とす \\
 \texttt{replyto} / \texttt{answer} / 引数型 \texttt{reply} & ○ & 返信先＝アクター番号（\texttt{\_\_snd}） \\
@@ -2662,10 +2662,8 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 
 \begin{itemize}
 \item \textbf{実機（Xinu / Pi 3・Pi 4・Pi 5）で動く範囲は正典の部分集合である。}
-  Pi 4・Pi 5 は\textbf{全機能}が動く。Pi 3 は \ty{float}・配列・
-  数学組込み・自メソッド呼び出しが無い（\texttt{.avm} の値表現が 32 ビットの
-  タグ付き整数のため）。型・効果・レベルの注釈はどの板も受理して捨てる
-  （検査は正典側で行う）。詳細は \S\ref{sec:xinu}。
+  \textbf{三台とも全機能が動く}。型・効果・レベルの注釈はどの板も受理して
+  捨てる（検査は正典側で行う）。詳細は \S\ref{sec:xinu}。
 \item \texttt{future} + \texttt{await} に分けて書くと効果伝播を逃れる
   （\S\ref{sec:effects} の「既知の穴」）。修正には
   \ty{future} の型に効果を載せる必要がある。
@@ -2718,10 +2716,11 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
   三台とも「名前つきアクタ表」を別に持つのではなく、\textbf{公開表}
   （\texttt{web\_expose} のもの）がそれである ---- 作った番号をその名前で載せるので、
   \texttt{remote("host","名前")} からも \texttt{/api/x/名前} からも同じものに届く。
-\item これで\textbf{正典 25 機能が実機で全部そろった}。Pi 3 だけは
-  \ty{float}・配列・数学組込み・自メソッド呼び出しが無い ----
-  いずれも \texttt{.avm} の値表現が 32 ビットのタグ付き整数であることに由来する
-  （21/25 から \texttt{spawn} を足して 22/25）。
+\item \textbf{Pi 3 に \ty{float}・配列・数学組込みを足した}。値のタグを
+  「そのビットが立っているか」から\textbf{上位 3 ビットのパターン}に改めて
+  種類を増やせるようにし（整数の範囲は従来どおり）、実数と配列は表に置いて
+  添字を配る。数学は Pi 4・Pi 5 と同じ級数で、三台が同じ出力になる。
+\item これで\textbf{三台とも正典 25 機能が実機で動く}。
 \end{itemize}
 
 \subsection{2026年09月05日 --- 三台の実機が同じ AIPL を受け取るようになった}

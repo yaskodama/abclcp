@@ -1956,10 +1956,10 @@ Strings (values, \texttt{++}, arguments) & yes & \\
 \texttt{ai\_call} & yes & on-board model (\S\ref{sec:xinu-ai}) \\
 \midrule
 Type / effect / level annotations & accepted, \textbf{discarded} & checked on the canonical side \\
-\ty{float} and float literals & no & values are integers and strings only \\
-Arrays (\texttt{array\_*}) & no & \texttt{avm: unsupported expression} \\
-Math builtins (\texttt{sqrt} etc.) & no & likewise \\
-\texttt{call} / calling one's own method & no & the VM has no call instruction \\
+\ty{float} and float literals & yes & boxed in a table; the tag is three bits wide \\
+Arrays (\texttt{array\_*}) & yes & \texttt{push}/\texttt{set} return a new array, canonically \\
+Math builtins (\texttt{sqrt} etc.) & yes & the same series as the Pi 4 and Pi 5 (\texttt{sqrt} by Newton) \\
+The \texttt{call} statement (a builtin called as a statement) & yes & checked on hardware \\
 Deadline without \texttt{else} (\ty{result}) & yes & failure is a reserved value; no new instruction \\
 \texttt{is\_ok} / \texttt{value} & yes & lowered to a comparison and a branch \\
 \texttt{replyto} / \texttt{answer} / parameter \texttt{reply} & yes & a reply destination is an actor id (\texttt{\_\_snd}) \\
@@ -3080,10 +3080,12 @@ accept}.
   \textbf{published table} (the one \texttt{web\_expose} fills) is that registry,
   so the new actor id goes in under that name and
   \texttt{remote("host","name")} and \texttt{/api/x/name} reach the same thing.
-\item \textbf{That completes the canonical 25 on hardware.} Only the Pi 3 still
-  lacks \ty{float}, arrays, the maths builtins and calling one's own method ---
-  all of which follow from \texttt{.avm} values being 32-bit tagged integers
-  (22 of 25).
+\item \textbf{The Pi 3 gained \ty{float}, arrays and the maths builtins.} Its
+  value tag became a \textbf{three-bit pattern} in the top bits rather than a set
+  of independent bits, which is what let more kinds of value in without narrowing
+  the integer range; reals and arrays are boxed in a table. The maths uses the
+  same series as the Pi 4 and Pi 5, so all three print the same thing.
+\item \textbf{That completes the canonical 25 on all three boards.}
 \end{itemize}
 
 \subsection*{2026-09-05 --- all three boards accept the same AIPL}
