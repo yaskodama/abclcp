@@ -952,6 +952,124 @@ type primitive_info = {
   pdesc : string;
 }
 
+(* ===== メッシュの通信路 =====================================================
+   remote(...) は「住所を一つ書いて同期に呼ぶ」形なので、経路が動くメッシュとは
+   噛み合わない。ここでは宛先表を持たず、UDP/9010 に同報で撒いて、返ってきた分
+   だけを拾う。実機 3 台（Pi 3 / Pi 4 / Pi 5）とホスト VM も同じ電文を話すので、
+   正典自身がそのまま 4 台目の相手になる。 *)
+
+let mesh_bcast_addr =
+  ref (try Sys.getenv "AIPL_MESH_BCAST" with Not_found -> "192.168.3.255")
+let mesh_next_id = ref 20000
+
+(* 自分が撒いた物は自分にも届く。自分の IP は答に混ぜない。 *)
+let mesh_self_ips () =
+  let acc = ref [] in
+  (try
+     let ic = Unix.open_process_in "ifconfig 2>/dev/null || ip -4 addr 2>/dev/null" in
+     (try while true do
+        let l = String.trim (input_line ic) in
+        let take pfx =
+          let n = String.length pfx in
+          if String.length l > n && String.sub l 0 n = pfx then
+            let rest = String.sub l n (String.length l - n) in
+            (match String.index_opt rest ' ' with
+             | Some k -> acc := String.sub rest 0 k :: !acc
+             | None   -> acc := rest :: !acc) in
+        take "inet "; take "inet addr:"
+      done with End_of_file -> ());
+     ignore (Unix.close_process_in ic)
+   with _ -> ());
+  "127.0.0.1" :: !acc
+
+let mesh_open () =
+  let sock = Unix.socket Unix.PF_INET Unix.SOCK_DGRAM 0 in
+  (try Unix.setsockopt sock Unix.SO_BROADCAST true with _ -> ());
+  sock
+
+let mesh_sendto sock line =
+  (try
+     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !mesh_bcast_addr, 9010) in
+     ignore (Unix.sendto sock (Bytes.of_string line) 0 (String.length line) [] addr)
+   with _ -> ())
+
+(* 撒いて、期限まで拾う。keep が Some を返した行だけを (送り主, 値) で集める。
+   同じ送り主からは最初の一つだけ。UDP なので 200ms ごとに出し直す。相手は
+   (送り主, reqid) の控えを持つので、二度走ることはない。 *)
+let mesh_collect line timeout_ms (keep : string -> string option) =
+  let sock = mesh_open () in
+  let mine = mesh_self_ips () in
+  let got : (string, string) Hashtbl.t = Hashtbl.create 8 in
+  let order = ref [] in
+  (try
+     mesh_sendto sock line;
+     let buf = Bytes.create 1024 in
+     let deadline = Unix.gettimeofday () +. float_of_int timeout_ms /. 1000.0 in
+     let last_tx = ref (Unix.gettimeofday ()) in
+     let rec loop () =
+       let now = Unix.gettimeofday () in
+       let left = deadline -. now in
+       if left <= 0.0 then ()
+       else begin
+         if now -. !last_tx >= 0.2 then (mesh_sendto sock line; last_tx := now);
+         let wait = if left < 0.2 then left else 0.2 in
+         (match Unix.select [sock] [] [] wait with
+          | ([], _, _) -> ()
+          | _ ->
+            let (n, from) = Unix.recvfrom sock buf 0 (Bytes.length buf) [] in
+            let who = (match from with
+                       | Unix.ADDR_INET (a, _) -> Unix.string_of_inet_addr a
+                       | _ -> "") in
+            let txt = String.trim (Bytes.sub_string buf 0 n) in
+            if who <> "" && not (List.mem who mine) && not (Hashtbl.mem got who) then
+              (match keep txt with
+               | Some v -> Hashtbl.replace got who v; order := who :: !order
+               | None -> ()));
+         loop ()
+       end in
+     loop ()
+   with _ -> ());
+  (try Unix.close sock with _ -> ());
+  List.rev_map (fun ip -> (ip, Hashtbl.find got ip)) !order
+
+let mesh_split_id kind id txt =
+  if String.length txt > 2 && txt.[0] = kind && txt.[1] = ' ' then begin
+    let rest = String.sub txt 2 (String.length txt - 2) in
+    match String.index_opt rest ' ' with
+    | Some k ->
+      if (try int_of_string (String.sub rest 0 k) = id with _ -> false)
+      then Some (String.sub rest (k+1) (String.length rest - k - 1)) else None
+    | None -> if (try int_of_string rest = id with _ -> false) then Some "" else None
+  end else None
+
+(* 引数は 1 個で、文字として運ぶ（型は運ばない）。両側の型は正典の型検査器が
+   合わせている前提の約束である ―― remote(...) と同じ。 *)
+let mesh_arg_text = function
+  | VInt n -> string_of_int n
+  | VFloat f -> Printf.sprintf "%.6f" f
+  | VString s -> s
+  | VBool b -> if b then "true" else "false"
+  | _ -> "0"
+
+let mesh_neighbors () =
+  let id = !mesh_next_id in incr mesh_next_id;
+  let q = Printf.sprintf "H %d\n" id in
+  List.map fst (mesh_collect q 300 (fun t ->
+    match mesh_split_id 'A' id t with Some _ -> Some "" | None -> None))
+
+let mesh_broadcast svc meth arg =
+  let id = !mesh_next_id in incr mesh_next_id;
+  let sock = mesh_open () in
+  let q = Printf.sprintf "B %d %s %s %s\n" id svc meth arg in
+  mesh_sendto sock q; mesh_sendto sock q;      (* UDP なので二度撒く *)
+  (try Unix.close sock with _ -> ())
+
+let mesh_gather svc meth arg ms =
+  let id = !mesh_next_id in incr mesh_next_id;
+  let q = Printf.sprintf "Q %d %s %s %s\n" id svc meth arg in
+  List.map snd (mesh_collect q (if ms > 0 then ms else 1)
+                  (fun t -> mesh_split_id 'R' id t))
+
 let static_primitive_catalog = [
   { pname = "sin"; capability = "Core.Math"; psig = "float -> float"; pdesc = "sine" };
   { pname = "cos"; capability = "Core.Math"; psig = "float -> float"; pdesc = "cosine" };
@@ -976,6 +1094,9 @@ let static_primitive_catalog = [
   { pname = "sdl_present"; capability = "UI.SDL"; psig = "() -> unit"; pdesc = "present SDL frame" };
   { pname = "sdl_line"; capability = "UI.SDL"; psig = "(number, number, number, number) -> unit"; pdesc = "draw a line" };
   { pname = "sdl_erase_line"; capability = "UI.SDL"; psig = "(number, number, number, number) -> unit"; pdesc = "erase a line" };
+  { pname = "neighbors"; capability = "Core.Mesh"; psig = "() -> string[]"; pdesc = "IP addresses of nodes answering right now" };
+  { pname = "broadcast"; capability = "Core.Mesh"; psig = "(string, string, int) -> unit"; pdesc = "send to every node; no reply expected" };
+  { pname = "gather"; capability = "Core.Mesh"; psig = "(string, string, int, int) -> int[]"; pdesc = "ask every node; keep the answers that arrive in time" };
   { pname = "array_empty"; capability = "Core.Array"; psig = "() -> any[]"; pdesc = "create an empty array" };
   { pname = "array_len"; capability = "Core.Array"; psig = "any[] -> int"; pdesc = "array length" };
   { pname = "array_get"; capability = "Core.Array"; psig = "(any[], int) -> any"; pdesc = "array lookup" };
@@ -1577,6 +1698,36 @@ let prim_table : (string, value list -> value) Hashtbl.t =
             let x1 = as_int x1 and y1 = as_int y1 and x2 = as_int x2 and y2 = as_int y2 in
                 Sdl_helper.sdl_erase_line x1 y1 x2 y2; VInt 0
         | _ -> failwith "sdl_erase_line(x1,y1,x2,y2): arity 4 expected"));
+    (* ===== メッシュの三つ ===================================================
+       宛先表を持たず、UDP/9010 に同報で撒いて、返ってきた分だけを拾う。
+       実機 3 台とホスト VM と同じ電文なので、正典自身が 4 台目の相手になる。
+
+         H <id>       誰かいますか（同報）。受けた側は A <id> を単送で返す
+         B <id> ...   返事の要らない一斉送信
+         Q <id> ...   同報で問い、期限まで R を拾う
+
+       gather の戻りが配列であること自体が仕様である。メッシュでは部分成功が
+       普通なので、「全員から返る」を前提にした型は嘘になる。 *)
+    ("neighbors",
+      (function
+        | [] ->
+            VArray (Array.of_list (List.map (fun ip -> VString ip) (mesh_neighbors ())), None)
+        | _  -> failwith "neighbors(): arity 0 expected"));
+    ("broadcast",
+      (function
+        | [VString svc; VString m; a] -> mesh_broadcast svc m (mesh_arg_text a); VInt 0
+        | _ -> failwith "broadcast(svc,method,arg): (string,string,int) expected"));
+    ("gather",
+      (function
+        | [VString svc; VString m; a; VInt ms] ->
+            let vs = mesh_gather svc m (mesh_arg_text a) ms in
+            (* 相手が err を返したもの（そのアクタを持たない節点）は入れない。
+               「届かなかった」と「持っていなかった」を配列の上で区別しない。 *)
+            let ns = List.filter_map (fun t ->
+                       match int_of_string_opt (String.trim t) with
+                       | Some n -> Some (VInt n) | None -> None) vs in
+            VArray (Array.of_list ns, None)
+        | _ -> failwith "gather(svc,method,arg,ms): (string,string,int,int) expected"));
     ("array_empty",
       (function
         | [] -> VArray ([||], None)

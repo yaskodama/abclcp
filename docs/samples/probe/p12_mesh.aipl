@@ -1,0 +1,25 @@
+// p12 — メッシュの三つ（neighbors / broadcast / gather）
+// ★ 単独の節点で走らせると、近隣は空・gather も空になる。それが正しい姿である。
+//   「メッシュは相手が居て初めて中身が入る」ことを、この標本自身が示している。
+//   宛先はどこにも書かれていない ―― それがメッシュ向けの構文である理由。
+class Probe {
+  var seen = 0;
+
+  method count(x) : int !{mut} { seen = seen + x; reply(seen); }
+
+  method survey() : unit !{mesh, log} {
+    var ns = neighbors();
+    print("nodes=" ++ array_len(ns));
+
+    // 返事を求めない一斉送信
+    broadcast("probe", "count", 1);
+
+    // 期限までに届いた分だけ。全員から返る保証は無いので、戻りは配列
+    var rs = gather("probe", "count", 2, 500);
+    print("got=" ++ array_len(rs));
+  }
+}
+
+var p = new Probe();
+web_expose("/probe", "p");
+send p.survey();
