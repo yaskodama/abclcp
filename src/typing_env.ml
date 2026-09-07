@@ -91,7 +91,11 @@ let () =
   set_eff [ "aios_register_service"; "aios_services"; "aios_service_actor";
             "aios_service_info" ] ["log"];
   (* Actor : 動的生成 *)
-  set_eff [ "spawn" ] ["mem"]
+  set_eff [ "spawn" ] ["mem"];
+  (* ★ mesh 効果 ―― net と分ける。net は「網へ出る」だけだが、mesh は
+     経路が動的で途中で切れうることまで言う。実時間ノードが
+     node_allow(...) で mesh を弾けるようにするための区別である。 *)
+  set_eff [ "neighbors"; "broadcast"; "gather" ] ["mesh"]
 
 let prim_eff (name : string) : SSet.t =
   match Hashtbl.find_opt prim_effs name with
@@ -276,6 +280,22 @@ let prelude () : env =
   add_mono e "sdl_init" (TFun ([TInt;   TInt  ], TUnit));
 
   add_mono e "spawn" (TFun ([TString; TString], TUnit));
+
+  (* ---- メッシュ（MANET）向けの三つ ------------------------------------
+     メッシュでは宛先を書き下せないのが本質である。ノードは動き、経路は
+     変わり、全員から返る保証もない。remote(...) は「住所を一つ固定して
+     同期に呼ぶ」形なので、その前提と噛み合わない。
+
+     neighbors  … いま見えているノード。HELLO で自動的に埋まる
+     broadcast  … 役（公開名）で一斉に送る。返信は待たない
+     gather     … 一斉に問い、期限までに届いた分だけ配列で返す
+
+     ★ gather の戻りが配列であること自体が仕様の表明である。メッシュでは
+       部分成功が普通で、「全員から返る」を前提にした型は嘘になる。
+       失敗機構は増やさない ―― 足りない分は単に配列に入らない。 *)
+  add_mono e "neighbors" (TFun ([], TArray TString));
+  add_mono e "broadcast" (TFun ([TString; TString; TInt], TUnit));
+  add_mono e "gather"    (TFun ([TString; TString; TInt; TInt], TArray TInt));
 
   (* sdl_clear : unit -> unit *)
   add_mono e "sdl_clear" (TFun ([], TUnit));

@@ -159,7 +159,10 @@ let reset_method_rets () : unit = Hashtbl.reset method_ret_tys
    net を持たないので、「AI を使うが機外へは出ない」がシグネチャに現れる。 *)
 (* SSet は ty の定義より前に置いてある（future が効果キー集合を持つため） *)
 
-let all_effects = ["mut"; "time"; "io"; "mem"; "net"; "ai"; "fs"; "log"]
+(* mesh ―― 多ホップの網へ出る。net と分けてあるのは、mesh が「経路が動的で
+   途中で切れうる」ことまで言うためである。実時間ノードは node_allow(...) で
+   net は許すが mesh は許さない、という書き方ができる。 *)
+let all_effects = ["mut"; "time"; "io"; "mem"; "net"; "ai"; "fs"; "log"; "mesh"]
 
 let eff_of_list (l : string list) : SSet.t =
   List.fold_left (fun s e -> SSet.add e s) SSet.empty l
