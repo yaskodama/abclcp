@@ -2545,6 +2545,103 @@ waiting
 timed out
 \end{term}
 
+\subsection{Three mesh verbs --- addressing nobody}
+\label{sec:xinu-mesh}
+
+\texttt{remote} writes one address and calls it synchronously. That is fine when
+the peer is fixed. A mesh is different: nodes move, routes change, and nothing
+guarantees that everyone answers. \textbf{Not being able to write the address
+down is the point.}
+
+So three verbs were added, under the effect \texttt{mesh}:
+
+\begin{lstlisting}
+neighbors() : string[]                  // IPs of the nodes answering right now
+broadcast(svc, method, arg) : unit      // send to all; expect no reply
+gather(svc, method, arg, ms) : int[]    // ask all; keep what arrives in time
+\end{lstlisting}
+
+\begin{lstlisting}
+class Probe {
+  var seen = 0;
+  method count(x) : int !{mut} { seen = seen + x; reply(seen); }
+
+  method survey() : unit !{mesh, log} {
+    var ns = neighbors();
+    print("nodes=" ++ array_len(ns));
+    broadcast("probe", "count", 1);              // nothing comes back
+    var rs = gather("probe", "count", 2, 1500);  // only what arrives
+    print("got=" ++ array_len(rs));
+  }
+}
+var p = new Probe();
+web_expose("/probe", "p");
+send p.survey();
+\end{lstlisting}
+
+\textbf{No address appears anywhere.} That is the decisive difference from
+\texttt{remote}: when routes change or a node disappears, the program does not.
+
+\subsubsection*{Why \texttt{gather} returns an array}
+
+\textbf{The array in the return type is itself the specification.} In a mesh,
+partial success is the normal case, so a type that assumes everyone answers
+would be a lie. A node that did not answer simply is not in the array --- no
+new failure machinery was introduced (\texttt{result} and \texttt{timed\_out}
+are unchanged). A node that lacks the actor replies \texttt{err}, and that is
+dropped too: \textbf{"did not arrive" and "did not have it" are deliberately
+indistinguishable in the array.}
+
+\subsubsection*{Why \texttt{mesh} is separate from \texttt{net}}
+
+\texttt{net} says only "this leaves the machine". \texttt{mesh} says, in
+addition, that \textbf{the route is dynamic and may break mid-flight}. Keeping
+them apart lets \texttt{node\_allow(...)} say "\texttt{net} yes, \texttt{mesh}
+no" at a node border. The check bites:
+
+\begin{term}
+method C.m declares {log} but its body has {log, mesh} (missing {mesh})
+\end{term}
+
+\subsubsection*{The wire}
+
+The same UDP port 9010 as \texttt{remote}. No peer table: the message goes to
+the subnet broadcast (\texttt{192.168.3.255} / \texttt{ff:ff:ff:ff:ff:ff}).
+
+\begin{term}
+H <id>                          anyone there?  (broadcast)
+A <id>                          yes  (the sender's IP is the answer)
+B <id> <svc> <method> <arg>     fire and forget; no reply
+Q <id> <svc> <method> <arg>     ask everyone; replies come back as R
+\end{term}
+
+\texttt{broadcast} got its own verb \texttt{B} for a reason. The first attempt
+reused "\texttt{Q} with reqid 0", but then the at-most-once cache collapses to
+a single \texttt{(sender, 0)} entry and \textbf{every later broadcast is
+silently dropped}. A separate verb keeps the cache usable as it is.
+
+\subsubsection*{Measured on the boards}
+
+Four nodes (Pi 3, Pi 4, Pi 5 and the Mac host VM) on wired Ethernet. From each
+node, \texttt{gather} collects the other three, every time.
+
+\begin{center}
+\begin{tabular}{lll}
+\hline
+Node & collected & runs \\
+\hline
+Pi 3 & 3 nodes & 6/6 \\
+Pi 4 & 3 nodes & 4/4 \\
+Pi 5 & 3 nodes & 4/4 \\
+\hline
+\end{tabular}
+\end{center}
+
+That \texttt{broadcast} works is confirmed not by counting replies but by
+\textbf{watching the value move}: no reply arrives, yet the peer's
+\texttt{seen} goes $2 \to 12$. Repeated broadcasts never make it $22$, which
+confirms the at-most-once cache at the same time.
+
 \subsection{\texttt{remote} --- calling an actor on another board}
 \label{sec:xinu-remote}
 
@@ -2991,6 +3088,33 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \section{Common pitfalls}
 
 \begin{itemize}
+\item \textbf{A tick count is not a time.} \texttt{timer\_ticks()} was treated
+  as 100\,Hz (10\,ms per tick); measurement on Pi 4 / Pi 5 says
+  \textbf{$\simeq$2\,ms per tick ($\simeq$500\,Hz)}. A retransmit meant to be
+  every 200\,ms went out every 40\,ms, and a window meant to be 1500\,ms closed
+  after 240\,ms. The symptom: a peer that answers in 1\,ms is collected, a peer
+  that needs 100\,ms is always lost. You cannot see this from inside the board
+  --- \textbf{line up the wall-clock times of the packets it sends}
+  (\texttt{42.558 / 42.598 / 42.678 \ldots}). The fix is to stop assuming a tick
+  rate and derive milliseconds from \texttt{cntpct\_el0} / \texttt{cntfrq\_el0}.
+  \textbf{\texttt{remote} carried the same bug}: \texttt{timeout 2000} really
+  expired after about 400\,ms.
+\item \textbf{Build a slow peer to bisect.} Put a responder on the Mac that
+  waits 300\,ms before answering and run it next to a fast one. If only the slow
+  one is lost, suspect the window, not the receive path.
+\item \textbf{"Only my own IP" drops every broadcast.} All three boards filtered
+  incoming packets on destination IP. Pi 4 / Pi 5 just needed a wider test, but
+  \textbf{Pi 3's Xinu \texttt{udpDemux} requires the device's local IP to equal
+  the destination IP}, so rather than patching the stack a second listener was
+  bound to the broadcast address (a blocking read cannot serve both).
+\item \textbf{Replies go to the source port of the request.} Pi 3 opened its
+  sending device with local port 0 (any), so answers landed on an ephemeral port
+  that nothing was reading. \textbf{The other board's instrument said so}: Pi 4's
+  \texttt{rx\_q} counted 8 broadcasts from Pi 3 while Pi 3's \texttt{gather}
+  stayed at 0 --- it goes out, the return does not line up.
+\end{itemize}
+
+\begin{itemize}
 \item \textbf{\texttt{now} is an expression.} \texttt{now x.m();} is a syntax
   error; always receive it, as in
   \texttt{var r = now x.m() timeout 100 else 0;}.
@@ -3051,6 +3175,19 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \end{itemize}
 
 \section{Changes from the previous edition}
+
+\subsection{2026-09-07 --- three mesh verbs}
+
+\texttt{neighbors} / \texttt{broadcast} / \texttt{gather}, which name no
+destination, plus the effect \texttt{mesh} (\S\ref{sec:xinu-mesh}). All four
+implementations (canonical, host VM, Pi 3, Pi 4 / Pi 5) speak the same wire, so
+the canonical is itself the fourth node. Verified on four wired nodes: from each
+one, \texttt{gather} collects the other three every time.
+
+Three latent hardware bugs were fixed along the way: a tick count mistaken for a
+time (which also made \texttt{remote} deadlines expire five times early), a
+missing at-most-once answer cache on Pi 4, and Pi 3's reply-port mismatch.
+
 \label{sec:migrate-en}
 
 \subsection*{2026-09-06 --- the canonical 25 features now run on hardware}

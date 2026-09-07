@@ -2215,6 +2215,100 @@ waiting
 timed out
 \end{term}
 
+\subsection{メッシュの三つ --- 宛先を書かずに撒く}
+\label{sec:xinu-mesh}
+
+\texttt{remote} は「住所を一つ書いて同期に呼ぶ」形である。相手が決まっていて
+動かないなら、これでよい。しかしメッシュでは事情が違う。節点は動き、経路は
+変わり、全員から返る保証もない。宛先を書き下せないのが本質である。
+
+そこで三つを足した。効果は \texttt{mesh} である。
+
+\begin{lstlisting}
+neighbors() : string[]                        // いま返事をくれる相手の IP
+broadcast(役, メソッド, 引数) : unit           // 撒くだけ。返事は求めない
+gather(役, メソッド, 引数, ms) : int[]         // 期限までに届いた分だけ
+\end{lstlisting}
+
+\begin{lstlisting}
+class Probe {
+  var seen = 0;
+  method count(x) : int !{mut} { seen = seen + x; reply(seen); }
+
+  method survey() : unit !{mesh, log} {
+    var ns = neighbors();
+    print("nodes=" ++ array_len(ns));
+    broadcast("probe", "count", 1);              // 返事は来ない
+    var rs = gather("probe", "count", 2, 1500);  // 届いた分だけ
+    print("got=" ++ array_len(rs));
+  }
+}
+var p = new Probe();
+web_expose("/probe", "p");
+send p.survey();
+\end{lstlisting}
+
+\textbf{どこにも宛先が書かれていない。} これが \texttt{remote} との決定的な違いで、
+経路が変わっても誰が消えても、プログラムは書き換わらない。
+
+\subsubsection*{なぜ \texttt{gather} は配列を返すのか}
+
+\textbf{戻りが配列であること自体が仕様の表明である。} メッシュでは部分成功が
+普通なので、「全員から返る」を前提にした型は嘘になる。届かなかった相手は単に
+配列に入らない ---- 失敗の機構は増やしていない（\texttt{result} も
+\texttt{timed\_out} もそのままである）。そのアクターを持っていない節点は
+\texttt{err} を返すが、それも配列に入らない。\textbf{「届かなかった」と
+「持っていなかった」を配列の上で区別しない}のが約束である。
+
+\subsubsection*{効果 \texttt{mesh} を \texttt{net} と分けた理由}
+
+\texttt{net} は「網へ出る」としか言わない。\texttt{mesh} はそれに加えて
+\textbf{経路が動的で、途中で切れうる}ことまで言う。分けておくと、
+\texttt{node\_allow(...)} の入国審査で「\texttt{net} は許すが \texttt{mesh} は
+許さない」と書ける。検査は効く:
+
+\begin{term}
+method C.m declares {log} but its body has {log, mesh} (missing {mesh})
+\end{term}
+
+\subsubsection*{電文}
+
+\texttt{remote} と同じ UDP 9010 番に相乗りする。宛先表は持たず、自網の同報
+（\texttt{192.168.3.255} / \texttt{ff:ff:ff:ff:ff:ff}）へ撒く。
+
+\begin{term}
+H <id>                        誰かいますか（同報）
+A <id>                        います（送り主の IP が答そのもの）
+B <id> <役> <メソッド> <引数>  返事の要らない一斉送信
+Q <id> <役> <メソッド> <引数>  同報で問う。返りは R（remote と共通）
+\end{term}
+
+\texttt{broadcast} に \texttt{B} という別の動詞を与えたのには理由がある。
+当初は「\texttt{Q} の reqid を 0 にする」で済ませようとしたが、そうすると
+再送よけの控えが \texttt{(送り主, 0)} 一つに潰れ、\textbf{二度目以降の一斉送信が
+全部黙って捨てられる}。動詞を分ければ控えはそのまま使える。
+
+\subsubsection*{三台での実測}
+
+四節点（Pi 3 / Pi 4 / Pi 5 / Mac のホスト VM）を有線で並べ、各節点から
+\texttt{gather} を撃った。自分以外の 3 節点が毎回集まる。
+
+\begin{center}
+\begin{tabular}{lll}
+\hline
+節点 & 集めた数 & 回数 \\
+\hline
+Pi 3 & 3 節点 & 6/6 \\
+Pi 4 & 3 節点 & 4/4 \\
+Pi 5 & 3 節点 & 4/4 \\
+\hline
+\end{tabular}
+\end{center}
+
+\texttt{broadcast} が効いていることは、返事の数ではなく\textbf{値の動き}で
+確かめる。返事は 0 通のまま、相手の \texttt{seen} が $2 \to 12$ と進む。
+何度撒いても $22$ にならないので、控え（高々一度）も同時に確かめられる。
+
 \subsection{\texttt{remote} --- 板をまたいでアクターを呼ぶ}
 \label{sec:xinu-remote}
 
@@ -2366,6 +2460,31 @@ AIPL を書く側には見えないが、\textbf{同じ形の穴を二台以上�
   ことがある。\textbf{有無ではなく時刻を見る}。相手側に送受の時刻を出させ、
   板の中には「届いた数」と「待っていた数」を\textbf{別々に}持たせる。
   この誤読で真因（\S\ref{sec:xinu-remote} の受信の窓）に辿り着くのが一往復遅れた。
+\item \textbf{刻み数を時間だと思ってはいけない。} \texttt{timer\_ticks()} を
+  「100Hz ＝ 1 刻み 10ms」として扱っていたが、Pi 4 / Pi 5 の実測は
+  \textbf{1 刻み $\simeq$ 2ms（約 500Hz）}だった。結果、200ms ごとのつもりの
+  再送は 40ms 間隔で出て、1500ms のつもりの窓は 240ms で閉じていた。
+  症状は「速い相手（1ms で返す Mac）は拾えるが、遅い相手（100ms 超かかる板）は
+  必ず落ちる」である。板の中を見ても分からない ---- \textbf{撒いた電文の実時刻を
+  外から並べる}と一目で出る（\texttt{42.558 / 42.598 / 42.678 …}）。
+  刻みの速さを仮定するのをやめ、\texttt{cntpct\_el0} と \texttt{cntfrq\_el0} から
+  直に ms を作った。板ごとの定数も要らない。
+  \textbf{同じ誤りを \texttt{remote} の期限も抱えていた} ---- \texttt{timeout 2000}
+  と書いても実際は約 400ms で切れていた。速い相手しか使っていなかったので
+  表に出ていなかっただけである。
+\item \textbf{切り分けには「遅く返す相手」を自分で作る。} Mac に 300ms 待って
+  から返す小さな受け口を置き、速い相手と並べる。遅い側だけが落ちるなら、
+  疑うべきは受信路ではなく\textbf{窓の長さ}である。
+\item \textbf{同報は「自分宛だけ」を見ていると一通も届かない。} 三台とも
+  受信の入口で宛先 IP が自分と一致するかだけを見ていた。Pi 4 / Pi 5 は判定を
+  広げれば済むが、\textbf{Pi 3 は Xinu の \texttt{udpDemux} が装置の局所 IP と
+  宛先 IP の一致を要求する}ので、振り分けには手を入れず、同報の宛て先に結んだ
+  受け口をもう一本立てた（読みは塞ぐので 1 本では兼ねられない）。
+\item \textbf{返事は「要求が来た送信元ポート」へ返る。} Pi 3 の送信装置を
+  局所ポート 0（任意）で開いていたため、返事はその場限りのポートに届き、
+  待っている装置は永遠に見なかった。\textbf{相手側の計器がこれを言い当てた}
+  ---- Pi 4 の \texttt{rx\_q} は Pi 3 の同報を 8 通数えているのに、Pi 3 の
+  \texttt{gather} は 0 のままだった（＝出てはいる、返りが噛み合わない）。
 \item \textbf{焼いたあと、HTTP が応答することを「再起動した」の証拠にしない。}
   電源を入れ直すまで板は前のカーネルで応答し続けるので、ポーリングでは区別がつかない。
   症状は「直したはずの機能が無い」で、実装を疑って時間を溶かす。
@@ -2694,6 +2813,18 @@ AIOS_STRICT_DEADLINE=1 ./src/abclrepl_thread -q -f run.repl
 \label{sec:migrate}
 
 前版（2026年07月30日版）以降の変化を挙げる。
+
+\subsection{2026年09月07日 --- メッシュ向けの三つ}
+
+宛先を書かない \texttt{neighbors} / \texttt{broadcast} / \texttt{gather} と、
+効果 \texttt{mesh} を足した（\S\ref{sec:xinu-mesh}）。四つの実装
+（正典・ホスト VM・Pi 3・Pi 4 / Pi 5）すべてが同じ電文を話すので、
+正典自身が 4 台目の節点になる。四節点の有線で、各節点から自分以外の
+3 節点が毎回集まることを確かめた。
+
+併せて、実機に潜んでいた三つの誤りを直した ---- 刻み数を時間と取り違えて
+いたこと（\texttt{remote} の期限も宣言の 1/5 で切れていた）、Pi 4 に応答の
+控え（高々一度）が無かったこと、Pi 3 の返信ポートの取り違えである。
 
 \subsection{2026年09月06日 --- 正典 25 機能が実機で揃った}
 

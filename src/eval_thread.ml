@@ -1054,7 +1054,7 @@ let mesh_arg_text = function
 let mesh_neighbors () =
   let id = !mesh_next_id in incr mesh_next_id;
   let q = Printf.sprintf "H %d\n" id in
-  List.map fst (mesh_collect q 300 (fun t ->
+  List.map fst (mesh_collect q 1000 (fun t ->
     match mesh_split_id 'A' id t with Some _ -> Some "" | None -> None))
 
 let mesh_broadcast svc meth arg =

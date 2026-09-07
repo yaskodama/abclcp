@@ -1,4 +1,4 @@
-\contentsline {part}{第I部\hspace {1\zw }はじめに}{4}{part.1}%
+\contentsline {part}{第I部\hspace {1\zw }はじめに}{5}{part.1}%
 \contentsline {section}{\numberline {1}AIPL とは}{5}{section.1}%
 \contentsline {section}{\numberline {2}三つの静的な仕組み}{5}{section.2}%
 \contentsline {subsection}{\numberline {2.1}型 --- 何を返すか}{5}{subsection.2.1}%
@@ -8,7 +8,7 @@
 \contentsline {section}{\numberline {3}5 分で動かす}{6}{section.3}%
 \contentsline {subsection}{\numberline {3.1}処理系のビルド}{6}{subsection.3.1}%
 \contentsline {subsection}{\numberline {3.2}プログラムを走らせる}{6}{subsection.3.2}%
-\contentsline {subsection}{\numberline {3.3}型検査だけを走らせる}{6}{subsection.3.3}%
+\contentsline {subsection}{\numberline {3.3}型検査だけを走らせる}{7}{subsection.3.3}%
 \contentsline {part}{第II部\hspace {1\zw }言語ガイド}{7}{part.2}%
 \contentsline {section}{\numberline {4}プログラムの構成}{7}{section.4}%
 \contentsline {section}{\numberline {5}字句}{8}{section.5}%
@@ -75,19 +75,23 @@
 \contentsline {subsection}{\numberline {39.6}Pi 3 は一度に一つのモジュールしか持てない}{35}{subsection.39.6}%
 \contentsline {subsection}{\numberline {39.7}正典ガイド 10 本の実機確認}{35}{subsection.39.7}%
 \contentsline {subsection}{\numberline {39.8}Pi 5 --- もう一つの実機}{36}{subsection.39.8}%
-\contentsline {subsection}{\numberline {39.9}三台に共通する落とし穴（実装側）}{42}{subsection.39.9}%
-\contentsline {subsection}{\numberline {39.10}Pi 4 --- 三台目の実機}{43}{subsection.39.10}%
-\contentsline {part}{第VII部\hspace {1\zw }付録}{45}{part.7}%
-\contentsline {section}{\numberline {40}文法の要約}{45}{section.40}%
-\contentsline {section}{\numberline {41}処理系の環境変数}{46}{section.41}%
-\contentsline {section}{\numberline {42}よくある落とし穴}{47}{section.42}%
-\contentsline {section}{\numberline {43}現状の限界}{47}{section.43}%
-\contentsline {section}{\numberline {44}前版からの変更点}{48}{section.44}%
-\contentsline {subsection}{\numberline {44.1}2026年09月05日 --- 三台の実機が同じ AIPL を受け取るようになった}{48}{subsection.44.1}%
-\contentsline {subsection}{\numberline {44.2}2026年09月03日 --- Pi 5 実機の対応範囲が広がった}{48}{subsection.44.2}%
-\contentsline {subsection}{\numberline {44.3}言語から外したもの}{49}{subsection.44.3}%
-\contentsline {subsection}{\numberline {44.4}足したもの}{49}{subsection.44.4}%
-\contentsline {subsection}{\numberline {44.5}厳しくなったもの}{49}{subsection.44.5}%
-\contentsline {subsection}{\numberline {44.6}拡張子}{49}{subsection.44.6}%
-\contentsline {subsection}{\numberline {44.7}核と拡張 --- 言語は二層である}{49}{subsection.44.7}%
-\contentsline {section}{\numberline {45}関連文書}{50}{section.45}%
+\contentsline {subsection}{\numberline {39.9}メッシュの三つ --- 宛先を書かずに撒く}{42}{subsection.39.9}%
+\contentsline {subsection}{\numberline {39.10}\texttt {remote} --- 板をまたいでアクターを呼ぶ}{44}{subsection.39.10}%
+\contentsline {subsection}{\numberline {39.11}三台に共通する落とし穴（実装側）}{45}{subsection.39.11}%
+\contentsline {subsection}{\numberline {39.12}Pi 4 --- 三台目の実機}{47}{subsection.39.12}%
+\contentsline {part}{第VII部\hspace {1\zw }付録}{49}{part.7}%
+\contentsline {section}{\numberline {40}文法の要約}{49}{section.40}%
+\contentsline {section}{\numberline {41}処理系の環境変数}{50}{section.41}%
+\contentsline {section}{\numberline {42}よくある落とし穴}{51}{section.42}%
+\contentsline {section}{\numberline {43}現状の限界}{51}{section.43}%
+\contentsline {section}{\numberline {44}前版からの変更点}{52}{section.44}%
+\contentsline {subsection}{\numberline {44.1}2026年09月07日 --- メッシュ向けの三つ}{52}{subsection.44.1}%
+\contentsline {subsection}{\numberline {44.2}2026年09月06日 --- 正典 25 機能が実機で揃った}{52}{subsection.44.2}%
+\contentsline {subsection}{\numberline {44.3}2026年09月05日 --- 三台の実機が同じ AIPL を受け取るようになった}{52}{subsection.44.3}%
+\contentsline {subsection}{\numberline {44.4}2026年09月03日 --- Pi 5 実機の対応範囲が広がった}{53}{subsection.44.4}%
+\contentsline {subsection}{\numberline {44.5}言語から外したもの}{53}{subsection.44.5}%
+\contentsline {subsection}{\numberline {44.6}足したもの}{53}{subsection.44.6}%
+\contentsline {subsection}{\numberline {44.7}厳しくなったもの}{54}{subsection.44.7}%
+\contentsline {subsection}{\numberline {44.8}拡張子}{54}{subsection.44.8}%
+\contentsline {subsection}{\numberline {44.9}核と拡張 --- 言語は二層である}{54}{subsection.44.9}%
+\contentsline {section}{\numberline {45}関連文書}{54}{section.45}%
