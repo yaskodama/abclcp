@@ -279,6 +279,7 @@ let load_decls ?filename (decls : Ast.program) =
 
 let load_file (fname : string) : Ast.program option =
   try
+    Eval_thread.trace_src fname;
     let ic = open_in fname in
     let len = in_channel_length ic in
     let src = really_input_string ic len in

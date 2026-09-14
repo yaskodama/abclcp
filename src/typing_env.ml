@@ -95,7 +95,13 @@ let () =
   (* ★ mesh 効果 ―― net と分ける。net は「網へ出る」だけだが、mesh は
      経路が動的で途中で切れうることまで言う。実時間ノードが
      node_allow(...) で mesh を弾けるようにするための区別である。 *)
-  set_eff [ "neighbors"; "broadcast"; "gather" ] ["mesh"]
+  set_eff [ "neighbors"; "broadcast"; "gather" ] ["mesh"];
+  (* ★ 実機の腕とカメラ（2026-09-14）。remote_call は「住所を一つ書いて同期に呼び、
+     答を一つ受け取る」―― メッシュの gather と同じ電文（UDP/9010 の Q/R）を単送で使う。
+     arm_cmd は DOFBOT の腕に角度と時間を書く（io）。正典では板の /arm 口へ HTTP で
+     運び、Xinu の板の上では同名の組込みが I2C に直接書く。 *)
+  set_eff [ "remote_call" ] ["net"];
+  set_eff [ "arm_cmd" ] ["io"]
 
 let prim_eff (name : string) : SSet.t =
   match Hashtbl.find_opt prim_effs name with
@@ -296,6 +302,8 @@ let prelude () : env =
   add_mono e "neighbors" (TFun ([], TArray TString));
   add_mono e "broadcast" (TFun ([TString; TString; TInt], TUnit));
   add_mono e "gather"    (TFun ([TString; TString; TInt; TInt], TArray TInt));
+  add_mono e "remote_call" (TFun ([TString; TString; TString; TString; TInt], TString));
+  add_mono e "arm_cmd"     (TFun ([TString], TString));
 
   (* sdl_clear : unit -> unit *)
   add_mono e "sdl_clear" (TFun ([], TUnit));

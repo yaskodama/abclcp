@@ -960,7 +960,9 @@ type primitive_info = {
 
 let mesh_bcast_addr =
   ref (try Sys.getenv "AIPL_MESH_BCAST" with Not_found -> "192.168.3.255")
-let mesh_next_id = ref 20000
+(* reqid は実行のたびに違う所から始める。相手は (送り主, reqid) で「同じ要求の再送」を
+   見分けて前の答えを返すので、毎回 20000 から始めると前回の答えが返ってくる（実測）。 *)
+let mesh_next_id = ref (20000 + (int_of_float (Unix.gettimeofday () *. 1000.0)) mod 900000000)
 
 (* 自分が撒いた物は自分にも届く。自分の IP は答に混ぜない。 *)
 let mesh_self_ips () =
@@ -1070,7 +1072,118 @@ let mesh_gather svc meth arg ms =
   List.map snd (mesh_collect q (if ms > 0 then ms else 1)
                   (fun t -> mesh_split_id 'R' id t))
 
+(* ---- 実行位置の通知（Xinu シミュレータの「AIPL program」窓が反転表示する） ----
+   文を一つ実行するたびに UDP で "PC <line> <col> <actor> <file>" を撒く（既定 127.0.0.1:9011、
+   環境変数 AIPL_TRACE で変更、"off" で止める）。届かなくても構わない一方通行。 *)
+let trace_file = ref ""
+let trace_dest =
+  let v = (try Sys.getenv "AIPL_TRACE" with Not_found -> "127.0.0.1:9011") in
+  if v = "off" then None
+  else match String.split_on_char ':' v with
+    | [h; p] -> (try Some (Unix.ADDR_INET (Unix.inet_addr_of_string h, int_of_string p)) with _ -> None)
+    | _ -> None
+let trace_sock = lazy (Unix.socket Unix.PF_INET Unix.SOCK_DGRAM 0)
+let trace_pc (loc : Location.t) (actor : string) =
+  match trace_dest with
+  | None -> ()
+  | Some addr ->
+    if loc.Location.line > 0 then begin
+      let line = Printf.sprintf "PC %d %d %s %s\n" loc.Location.line loc.Location.col actor !trace_file in
+      (try ignore (Unix.sendto (Lazy.force trace_sock) (Bytes.of_string line) 0 (String.length line) [] addr) with _ -> ())
+    end
+let trace_src (file : string) =
+  trace_file := file;
+  match trace_dest with
+  | None -> ()
+  | Some addr ->
+    let line = Printf.sprintf "SRC %s\n" file in
+    (try ignore (Unix.sendto (Lazy.force trace_sock) (Bytes.of_string line) 0 (String.length line) [] addr) with _ -> ())
+
+(* ---- 実機の腕とカメラ（2026-09-14） ------------------------------------------
+   remote_call(hostport, actor, method, arg, ms): 単送の Q/R。gather と同じ電文を
+   一つの住所に送り、その住所からの R <id> だけを受ける。200ms ごとに出し直し、
+   期限までに来なければ "err"。相手は (送り主, reqid) の控えで高々一度しか走らない。 *)
+let remote_call hostport actor meth arg ms =
+  let host, port =
+    match String.split_on_char ':' hostport with
+    | [h; p] -> (h, (try int_of_string p with _ -> 9010))
+    | [h] -> (h, 9010)
+    | _ -> (hostport, 9010) in
+  let id = !mesh_next_id in incr mesh_next_id;
+  let line = Printf.sprintf "Q %d %s %s %s\n" id actor meth arg in
+  let sock = Unix.socket Unix.PF_INET Unix.SOCK_DGRAM 0 in
+  let result = ref "err" in
+  (try
+     let ip = (try Unix.inet_addr_of_string host
+               with _ -> (Unix.gethostbyname host).Unix.h_addr_list.(0)) in
+     let addr = Unix.ADDR_INET (ip, port) in
+     let tx () = ignore (Unix.sendto sock (Bytes.of_string line) 0 (String.length line) [] addr) in
+     tx ();
+     let buf = Bytes.create 1024 in
+     let deadline = Unix.gettimeofday () +. float_of_int (if ms > 0 then ms else 1) /. 1000.0 in
+     let last_tx = ref (Unix.gettimeofday ()) in
+     let fin = ref false in
+     while not !fin do
+       let now = Unix.gettimeofday () in
+       let left = deadline -. now in
+       if left <= 0.0 then fin := true
+       else begin
+         if now -. !last_tx >= 0.2 then (tx (); last_tx := now);
+         let wait = if left < 0.2 then left else 0.2 in
+         match Unix.select [sock] [] [] wait with
+         | ([], _, _) -> ()
+         | _ ->
+           let (n, _from) = Unix.recvfrom sock buf 0 (Bytes.length buf) [] in
+           let txt = String.trim (Bytes.sub_string buf 0 n) in
+           (match mesh_split_id 'R' id txt with
+            | Some v -> result := v; fin := true
+            | None -> ())
+       end
+     done
+   with _ -> ());
+  (try Unix.close sock with _ -> ());
+  !result
+
+(* arm_cmd(s): 正典（Mac 等）では DOFBOT を載せた Xinu 板の HTTP 口 /arm?cmd= に運ぶ。
+   板は AIPL_ARM_HOST（既定 192.168.3.101）。返るのは板の答の本文（"ok pose ..." など）。 *)
+let arm_host () = try Sys.getenv "AIPL_ARM_HOST" with Not_found -> "192.168.3.101"
+let http_get_body host path =
+  let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  let body = Buffer.create 256 in
+  (try
+     let ip = (try Unix.inet_addr_of_string host
+               with _ -> (Unix.gethostbyname host).Unix.h_addr_list.(0)) in
+     Unix.setsockopt_float sock Unix.SO_RCVTIMEO 20.0;
+     Unix.connect sock (Unix.ADDR_INET (ip, 80));
+     let req = Printf.sprintf "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n" path host in
+     ignore (Unix.write_substring sock req 0 (String.length req));
+     let buf = Bytes.create 4096 in
+     let all = Buffer.create 1024 in
+     let fin = ref false in
+     while not !fin do
+       let n = (try Unix.read sock buf 0 (Bytes.length buf) with _ -> 0) in
+       if n <= 0 then fin := true else Buffer.add_subbytes all buf 0 n
+     done;
+     let s = Buffer.contents all in
+     (* ヘッダ末尾（空行）を自前で探す。Str に依存しない。 *)
+     let n = String.length s in
+     let rec find k = if k + 3 >= n then -1
+       else if s.[k] = '\r' && s.[k+1] = '\n' && s.[k+2] = '\r' && s.[k+3] = '\n' then k
+       else find (k + 1) in
+     let k = find 0 in
+     if k >= 0 then Buffer.add_string body (String.sub s (k + 4) (n - k - 4))
+     else Buffer.add_string body s
+   with _ -> ());
+  (try Unix.close sock with _ -> ());
+  String.trim (Buffer.contents body)
+let arm_cmd s =
+  let enc = String.concat "+" (String.split_on_char ' ' (String.trim s)) in
+  let r = http_get_body (arm_host ()) ("/arm?cmd=" ^ enc) in
+  if r = "" then "err" else r
+
 let static_primitive_catalog = [
+  { pname = "remote_call"; capability = "Core.Mesh"; psig = "(string, string, string, string, int) -> string"; pdesc = "ask one node (host:port) and wait for its single answer" };
+  { pname = "arm_cmd"; capability = "Device.Arm"; psig = "string -> string"; pdesc = "DOFBOT arm: pose a1..a6 [ms] | set id ang [ms] | read | rgb | buzz | torque" };
   { pname = "sin"; capability = "Core.Math"; psig = "float -> float"; pdesc = "sine" };
   { pname = "cos"; capability = "Core.Math"; psig = "float -> float"; pdesc = "cosine" };
   { pname = "tan"; capability = "Core.Math"; psig = "float -> float"; pdesc = "tangent" };
@@ -1717,6 +1830,14 @@ let prim_table : (string, value list -> value) Hashtbl.t =
       (function
         | [VString svc; VString m; a] -> mesh_broadcast svc m (mesh_arg_text a); VInt 0
         | _ -> failwith "broadcast(svc,method,arg): (string,string,int) expected"));
+    ("remote_call",
+      (function
+        | [VString hp; VString a; VString m; arg; VInt ms] -> VString (remote_call hp a m (mesh_arg_text arg) ms)
+        | _ -> failwith "remote_call(hostport,actor,method,arg,ms): (string,string,string,string,int) expected"));
+    ("arm_cmd",
+      (function
+        | [VString s] -> VString (arm_cmd s)
+        | _ -> failwith "arm_cmd(s): string expected"));
     ("gather",
       (function
         | [VString svc; VString m; a; VInt ms] ->
@@ -2230,6 +2351,7 @@ let rec eval_expr (actor:actor) (e : expr) =
                  | None   -> eval_expr actor alt))
        | v -> failwith ("await: expected future, got " ^ type_name_of_value v))
 and eval_stmt (actor:actor) (s : Ast.stmt) =
+  trace_pc s.sloc actor.name;
   match s.sdesc with
   | Assign (x, e) -> set_var_a actor x (eval_expr actor e)
   | VarDecl (name, rhs) -> (
