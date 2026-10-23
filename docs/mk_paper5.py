@@ -45,10 +45,10 @@ def R(t):
 # 前文（プリアンブル）は paper4 から流用し、表題だけ差し替える
 pre = s[:s.index('\\title{')]
 pre = pre.replace("""% 型付き AI エージェント言語
-% AIPL: Actor based Intelligence Parallel Language — 設計から実現 —（第4版）
+% AIPL: Actor based Intelligent Parallel Language — 設計から実現 —（第4版）
 %   lualatex -interaction=nonstopmode aipl_paper4_ja.tex   （3回）""",
 """% 型付き AI エージェント言語
-% AIPL: Actor based Intelligence Parallel Language — 設計から実現 —（第5版）
+% AIPL: Actor based Intelligent Parallel Language — 設計から実現 —（第5版）
 %   lualatex -interaction=nonstopmode aipl_paper5_ja.tex   （3回）""")
 # become はもう言語に無いので、色づけの語彙からも外す
 pre = pre.replace("morekeywords={class,method,var,new,now,future,await,reply,send,become,",
@@ -60,7 +60,7 @@ out = [pre]
 # 表紙とアブストラクト
 # =====================================================================
 out.append(r"""\title{\bfseries 型付き AI エージェント言語\\[1.5mm]
-       \bfseries AIPL: Actor based Intelligence Parallel Language\\[2mm]
+       \bfseries AIPL: Actor based Intelligent Parallel Language\\[2mm]
        \large --- 設計から実現 ---\\[1mm]
        \normalsize 第 5 版：現在の仕様と、二つの源流からの採否}
 \author{児玉靖司\\\small 法政大学経営学部\\\small \texttt{yass@hosei.ac.jp}}
@@ -76,7 +76,7 @@ AI エージェントは、外部のモデルを呼び、他のエージェン�
 何を待っているのか、何を汚すのか、返らなかったらどうなるのかが、
 プログラムの表面に現れない。
 
-本稿は、この隙間を埋めるために作った言語 AIPL（Actor based Intelligence
+本稿は、この隙間を埋めるために作った言語 AIPL（Actor based Intelligent
 Parallel Language、処理系名 ABCLc+）の\textbf{現在の仕様}と、
 その設計判断をまとめる。
 AIPL はアクターを単位とする\textbf{型付き並行言語}であり、
