@@ -2353,6 +2353,14 @@ let rec eval_expr (actor:actor) (e : expr) =
 and eval_stmt (actor:actor) (s : Ast.stmt) =
   trace_pc s.sloc actor.name;
   match s.sdesc with
+  (* ★ 代入の右辺が new のときは、ここでアクターを作る。
+     eval_expr の New は failwith するので、init の中で
+     `l = new Leaf(5);` とフィールドを作り直すと例外で init が止まり、
+     初期化子で作った古いアクターが使われ続けていた。
+     名前はフィールド初期化と同じく「親#欄」。 *)
+  | Assign (x, ({ desc = New (cls, args); _ })) ->
+      set_var_a actor x
+        (spawn_new_actor ~name:(actor.name ^ "#" ^ x) ~cls ~args ~caller:actor)
   | Assign (x, e) -> set_var_a actor x (eval_expr actor e)
   | VarDecl (name, rhs) -> (
     match rhs.desc with
