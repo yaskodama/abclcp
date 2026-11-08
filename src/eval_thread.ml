@@ -2526,11 +2526,19 @@ and eval_stmt (actor:actor) (s : Ast.stmt) =
    メッセージを一つも処理しないまま黙って消えていた。 *)
 and spawn_new_actor ~(name:string) ~(cls:string) ~(args:Ast.expr list)
                         ~(caller:actor) : value =
-  ignore caller;
+  (* ★ init の引数は呼び出し側の環境でいま評価し、値として運ぶ。
+     以前は式のまま新しいアクターへ送っていたため、呼び出し側の局所変数
+     （`var t = new Trial(s);` の s）が新しいアクターの環境で引けず 0 になっていた。
+     send と同じく値→式に戻して運ぶ。 *)
+  let args =
+    List.map (fun e -> mk_expr (expr_of_value (eval_expr caller e))) args in
   let cobj = find_class_exn cls in
   register_instance_source name cobj;
   let obj = { cobj with cname = cls } in
-  let actor_inst = create_actor obj.cname cls in
+  (* ★ アクターの名前はインスタンス名。以前はクラス名を入れていたため、
+     `send self.m()` の宛先がクラス名になり「Actor C not found」で落ち、
+     sender もクラス名を指していた。 *)
+  let actor_inst = create_actor name cls in
   List.iter
     (fun (st:Ast.stmt) ->
       match st.sdesc with
